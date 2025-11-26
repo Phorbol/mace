@@ -2,7 +2,7 @@ import os
 import torch
 from ase.io import read, write
 from mace.calculators import MACECalculator
-from mace.calculators.batch_relaxer import BatchRelaxer
+from mace.calculators.batch_relaxer0 import BatchRelaxer
 
 # ================= 1. 多卡环境感知 =================
 def setup_distributed_env():
@@ -34,7 +34,7 @@ def main():
 
     # 1. 加载所有数据 (每个进程都读取，开销很小；如果数据极大建议分文件读)
     # 假设 all_atoms 有 1000 个
-    all_atoms = read("/home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/train.xyz", index=":")
+    all_atoms = read("/home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/train.xyz", index=":")[:800]
 
     # 2. 数据切分 (Data Sharding)
     # 只有属于当前 rank 的数据才会被处理
@@ -58,23 +58,24 @@ def main():
     )
 
     # 4. 初始化 BatchRelaxer
-    relaxer = BatchRelaxer(calc, max_edges_per_batch=40000, device=device)
+    relaxer = BatchRelaxer(calc, max_edges_per_batch=100000, device=device)
 
     # 5. 设置独立的输出目录，防止文件冲突
     # 建议每个 Rank 写到不同的子文件夹，或者不同的文件名
-    output_dir = f"trajs_rank_{rank}"
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = f"result_rank_{rank}.xyz"
+    #os.makedirs(output_dir, exist_ok=True)
 
     # 6. 开始运行
     relaxed_results = relaxer.relax(
         my_atoms,
-        fmax=0.02,
-        trajectory_dir=output_dir, # 每个 Rank 写自己的文件夹
+        fmax=0.05,
+        append_trajectory_file=output_dir,
+        verbose=True,
+        trajectory_dir=None, # 每个 Rank 写自己的文件夹
         save_log_file=f"log_rank_{rank}.txt" # 每个 Rank 写自己的日志
     )
 
     # 7. 保存该分片的结果
-    write(f"relaxed_rank_{rank}.xyz", relaxed_results)
     print(f"[Rank {rank}] Finished.")
 
 if __name__ == "__main__":
