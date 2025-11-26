@@ -1,5 +1,5 @@
 # MACE Batch Relaxer (English)
-
+# 2025.11.27 Jerry ECUST
 
 
 A high-throughput structure relaxation tool based on [MACE](https://github.com/ACEsuit/mace) and [ASE](https://wiki.fysik.dtu.dk/ase/). Designed for GPUs, it utilizes **Dynamic Batching** to mix atomic structures of varying sizes and convergence speeds, maximizing GPU saturation and throughput.↳
@@ -147,3 +147,6 @@ relaxer.relax(atoms_list, trajectory_dir="results")
 | `save_log_file`       | Path to save detailed execution logs.                        | "relax.log"                           |
 | `inplace`             | Whether to modify the input atoms list in-place.             | True                                  |
 
+
+scripts/plot.py is a unify script can batch inference and plot many data like descriptors, energy, forces, stress,...
+you can run `python plot.py --help` to get information

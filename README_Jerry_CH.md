@@ -1,5 +1,5 @@
 # MACE Batch Relaxer (High-Performance GPU Optimization)
-
+#2025.11.27 Jerry ECUST
 
 
 
@@ -172,4 +172,4 @@ relaxer.relax(atoms_list, trajectory_dir="results")
 | `inplace`             | 是否直接修改输入的 atoms 对象列表。                          | True                                |
 
 ------
-
+最后还在scripts/plot.py给了一个我自己用的批量推理和可视化的脚本，python plot.py --help 即可获取用法，可以自行探索，个人评价功能还是比较齐全
