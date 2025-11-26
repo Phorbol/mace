@@ -30,7 +30,8 @@
    - 自动生成独立的 `.traj` 轨迹文件。
    - 支持通过 `atoms.info['name']` 自定义文件名。
    - 修复了 ASE 默认优化器产生的空文件 Bug。
-
+5. **通过scripts/路径下的mace-relax.sh和run_relax_mace.py实现了slurm和单机下(srun和torchrun后端启动)的多卡批量relax**
+- 支持单机单卡，单机多卡，多机多卡自动切分
 
 
 ### 🛠️ 安装依赖
