@@ -1,4 +1,3 @@
-#2025.11.27 Jerry ECUST
 import os
 import logging
 from time import time
@@ -250,6 +249,7 @@ class BatchRelaxer:
         if len(calculator.models) != 1:
             raise ValueError("BatchRelaxer only supports single-model calculators.")
 
+
     def relax(
         self, 
         atoms_list: List[Atoms], 
@@ -260,8 +260,8 @@ class BatchRelaxer:
         inplace: bool = True,
         
         # --- 路径控制参数 ---
-        trajectory_dir: Optional[str] = None,       # 控制是否保存【过程轨迹】 (.traj)
-        append_trajectory_file: Optional[str] = None, # 控制是否流式保存【最终结果】 (.xyz)
+        trajectory_dir: Optional[str] = None,         # 过程轨迹 (.traj) 存放目录，None 为不保存
+        append_trajectory_file: Optional[str] = None, # 最终结果 (.xyz) 流式输出路径，None 为不保存
         # ------------------
 
         save_log_file: Optional[str] = None,
@@ -269,20 +269,13 @@ class BatchRelaxer:
         optimizer_kwargs: Dict = None
     ) -> List[Atoms]:
         """
-        Run batch relaxation.
-
-        Args:
-            atoms_list: List of ASE atoms to relax.
-            trajectory_dir: If set, saves optimization history for EACH structure (e.g. dir/0.traj). 
-                            Set to None to DISABLE process trajectory generation (saves disk space).
-            append_trajectory_file: If set, appends the FINAL relaxed structure of each atom 
-                                    to this single file (e.g. 'relaxed.xyz') immediately upon convergence.
+        Run batch relaxation with dynamic batching, multi-gpu support, and streaming I/O.
         """
         
-        # 1. 确定 relax_cell
+        # --- 1. 确定是否使用 Cell Relax ---
         use_relax_cell = relax_cell if relax_cell is not None else self.default_relax_cell
 
-        # 2. Head 检测
+        # --- 2. Head 检测逻辑 ---
         available_heads = getattr(self.calc, "available_heads", ["Default"])
         if available_heads is None: available_heads = ["Default"]
         
@@ -300,7 +293,13 @@ class BatchRelaxer:
             else:
                 target_heads_list = ["Default"]
         
-        # Logging
+        # --- 3. 环境与日志设置 ---
+        # 尝试获取 Rank ID 用于进度条显示
+        try:
+            rank = int(os.environ.get("SLURM_PROCID", os.environ.get("RANK", 0)))
+        except:
+            rank = 0
+
         log_level = logging.DEBUG if verbose else logging.INFO
         logger.setLevel(log_level)
         if not logger.handlers:
@@ -324,10 +323,12 @@ class BatchRelaxer:
         # 准备流式输出文件句柄
         stream_obj = None
         if append_trajectory_file:
+            # 使用 extxyz 格式以保留 energy/forces 等信息
             stream_obj = open(append_trajectory_file, 'w')
 
         filter_cls = FrechetCellFilter if use_relax_cell else None
 
+        # --- 4. 初始化 Worker ---
         worker = RelaxBatch(
             self.calc,
             optimizer_cls=self.optimizer_cls,
@@ -339,17 +340,29 @@ class BatchRelaxer:
             target_heads=target_heads_list
         )
 
-        pbar = tqdm(total=len(atoms_list), desc="Batch Relaxing", unit="struct")
+        # --- 5. 初始化进度条 (带 Rank 和 负载监控) ---
+        pbar = tqdm(
+            total=len(atoms_list), 
+            desc=f"[Rank {rank}] Relaxing", 
+            unit="struct"
+        )
         
+        # 引入 ase.io.write (确保已导入)
+        from ase.io import write as ase_write
+
         try:
             while len(queue) > 0 or worker.num_active > 0:
+                
+                # --- A. 填充 (FILL) ---
                 keys_to_remove = []
                 for idx in list(queue.keys()):
+                    # 检查显存负载
                     if worker.total_edges >= self.max_edges and worker.num_active > 0:
                         break
                     
                     atoms = queue[idx]
                     try:
+                        # 预计算边数 (使用正确的 head)
                         data_obj = _get_mace_config_and_data(atoms, self.calc, heads=target_heads_list)
                         n_edges = data_obj.edge_index.shape[1]
                     except Exception as e:
@@ -358,38 +371,47 @@ class BatchRelaxer:
                         pbar.update(1)
                         continue
 
+                    # 再次检查单个结构是否会导致溢出
                     if n_edges > self.max_edges and worker.num_active > 0:
                         break
                     
-                    # --- 核心逻辑: 控制过程轨迹 ---
+                    # 决定是否生成调试用的过程轨迹
                     traj_path = None
                     if trajectory_dir:
-                        # 只有当 trajectory_dir 不为 None 时，才生成路径
                         name = atoms.info.get('name', atoms.info.get('ID', f"{idx}"))
                         traj_path = os.path.join(trajectory_dir, f"{name}.traj")
-                    # ---------------------------
                     
                     worker.insert(atoms, n_edges, idx, logfile=None, traj_file=traj_path)
                     del queue[idx]
                 
+                # --- B. 计算 (COMPUTE) ---
                 if worker.num_active > 0:
                     worker.step()
                 
+                # --- C. 清理 (PURGE) ---
                 converged = worker.pop_converged()
                 if converged:
                     for idx, atoms in converged:
                         relaxed_results[idx] = atoms
                         pbar.update(1)
                         
-                        # --- 流式写入最终结果 ---
+                        # 流式写入最终结果
                         if stream_obj:
                             ase_write(stream_obj, atoms, format='extxyz')
-                            stream_obj.flush() # 确保实时写入
-                        # ---------------------
+                            stream_obj.flush() 
+                
+                # --- D. 更新监控信息 ---
+                pbar.set_postfix(
+                    active=worker.num_active, 
+                    edges=f"{worker.total_edges/1000:.1f}k"
+                )
+
         finally:
+            # 确保关闭文件句柄
             if stream_obj:
                 stream_obj.close()
             pbar.close()
 
         logger.info(f"Relaxation finished.")
+        # 按原始顺序返回结果
         return [relaxed_results.get(i, None) for i in range(len(atoms_list))]
