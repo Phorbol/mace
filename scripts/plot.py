@@ -82,7 +82,18 @@ def read_chunks(filename: str, chunk_size: int) -> Generator[List[Atoms], None, 
 def _process_single_atom_config(image: Atoms, head_name: str):
     """Worker: Atoms -> Config."""
     try:
-        keyspec = data.KeySpecification(info_keys={}, arrays_keys={"charges": "Qs"})
+        # --- 修改开始 ---
+        # 1. 定义映射关系： 'Model_Expected_Key': 'Atoms_Info_Key'
+        # 如果你的 xyz 文件里 charge 叫 'Q', 这里就写 'charge': 'Q'
+        info_map = {"total_charge": "charge", "total_spin": "spin"}
+        
+        # 2. 传入 info_keys
+        keyspec = data.KeySpecification(
+            info_keys=info_map, 
+            arrays_keys={"charges": "Qs"} # 保持原有的原子电荷映射
+        )
+        # --- 修改结束 ---
+        
         config = data.config_from_atoms(image, key_specification=keyspec, head_name=[head_name])
         return config, None
     except Exception as e:
