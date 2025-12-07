@@ -1,0 +1,30 @@
+# 全局设置
+output_dir: "./analysis_output"  # 结果保存文件夹
+n_jobs: -1                       # 并行核数 (-1 代表使用所有核心)
+nbins: 120                       # 直方图分辨率
+
+# 轨迹文件列表
+trajectories:
+  - path: "/mnt/c/Users/user/Downloads/xtb/OUTCAR1_MACE_Aniso_LES_0.25_rcut6.traj"
+    label: "MACE-Aniso"
+  
+  - path: "/mnt/c/Users/user/Downloads/OUTCAR.traj"
+    label: "AIMD"
+
+  # 你可以随意添加更多...
+  # - path: "./another_model.traj"
+  #   label: "New-Model"
+
+# 分析任务列表
+tasks:
+  - pair: ["Ti", "O"]
+    rmax: 4.0        # 画图画到 4.0 A
+    cn_cutoff: 2.45  # 在 2.45 A 处打印配位数 (吸附层)
+
+  - pair: ["O", "H"]
+    rmax: 3.5
+    cn_cutoff: 2.45  # 氢键 + 共价键
+
+  - pair: ["O", "O"]
+    rmax: 6.0        # 长程结构 (会自动扩胞)
+    cn_cutoff: 3.40  # 第一配位层
