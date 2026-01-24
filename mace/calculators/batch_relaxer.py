@@ -1,7 +1,7 @@
 import os
 import logging
 from time import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -29,10 +29,16 @@ def _get_mace_config_and_data(atoms: Atoms, calculator, heads: List[str]) -> dat
         arrays_keys={calculator.charges_key: "Qs"} if hasattr(calculator, "charges_key") else {}
     )
 
+    head_name: str
+    if isinstance(heads, list):
+        head_name = heads[0] if len(heads) > 0 else "Default"
+    else:
+        head_name = str(heads)
+
     config = data.config_from_atoms(
         atoms,
         key_specification=key_spec,
-        head_name=heads 
+        head_name=head_name
     )
 
     atomic_data = data.AtomicData.from_config(
@@ -55,7 +61,9 @@ class RelaxBatch:
         max_n_steps: int = 500,
         device: str = 'cuda',
         optimizer_kwargs: Dict = None,
-        target_heads: List[str] = None 
+        target_heads: List[str] = None,
+        compute_stress: Optional[bool] = None,
+        data_builder: Optional[Callable[[Atoms], data.AtomicData]] = None,
     ):
         self.calc = calculator
         self.model = calculator.models[0]
@@ -66,6 +74,12 @@ class RelaxBatch:
         self.device = device
         self.optimizer_kwargs = optimizer_kwargs or {}
         self.target_heads = target_heads if target_heads else ["Default"]
+        self.compute_stress = compute_stress
+        self.data_builder = (
+            data_builder
+            if data_builder is not None
+            else (lambda atoms: _get_mace_config_and_data(atoms, self.calc, heads=self.target_heads))
+        )
 
         # Batch State
         self.opt_list: List[Optimizer] = []
@@ -73,6 +87,7 @@ class RelaxBatch:
         self.edge_counts: List[int] = [] 
         self.opt_flags: List[bool] = []  
         self.ids: List[Any] = []
+        self.cached_data: List[Optional[data.AtomicData]] = []
         
         self.trajectories: List[Union[Trajectory, None]] = []
         self.total_edges: int = 0
@@ -81,7 +96,15 @@ class RelaxBatch:
     def num_active(self) -> int:
         return sum(self.opt_flags)
 
-    def insert(self, atoms: Atoms, num_edges: int, idx: Any, logfile=None, traj_file=None) -> None:
+    def insert(
+        self,
+        atoms: Atoms,
+        num_edges: int,
+        idx: Any,
+        logfile=None,
+        traj_file=None,
+        data_obj: Optional[data.AtomicData] = None,
+    ) -> None:
         """Insert a new atoms object into the batch."""
         atoms.calc = SinglePointCalculator(atoms)
 
@@ -117,6 +140,7 @@ class RelaxBatch:
         self.edge_counts.append(num_edges)
         self.opt_flags.append(True)
         self.ids.append(idx)
+        self.cached_data.append(data_obj)
         self.trajectories.append(traj_handler)
         
         self.total_edges += num_edges
@@ -127,6 +151,7 @@ class RelaxBatch:
         new_all_atoms = []
         new_edge_counts = []
         new_ids = []
+        new_cached_data = []
         new_trajectories = []
         
         converged_items = []
@@ -137,6 +162,7 @@ class RelaxBatch:
                 new_all_atoms.append(self.all_atoms[i])
                 new_edge_counts.append(self.edge_counts[i])
                 new_ids.append(self.ids[i])
+                new_cached_data.append(self.cached_data[i])
                 new_trajectories.append(self.trajectories[i])
             else:
                 converged_items.append((self.ids[i], self.all_atoms[i]))
@@ -147,6 +173,7 @@ class RelaxBatch:
         self.all_atoms = new_all_atoms
         self.edge_counts = new_edge_counts
         self.ids = new_ids
+        self.cached_data = new_cached_data
         self.trajectories = new_trajectories
         self.opt_flags = [True] * len(self.opt_list)
         self.total_edges = sum(self.edge_counts)
@@ -166,30 +193,35 @@ class RelaxBatch:
             else:
                 real_atoms_list.append(opt.atoms)
 
-        data_list = [
-            _get_mace_config_and_data(atoms, self.calc, heads=self.target_heads)
-            for atoms in real_atoms_list
-        ]
+        data_list: List[data.AtomicData] = []
+        for i, atoms in enumerate(real_atoms_list):
+            cached = self.cached_data[i]
+            if cached is not None:
+                data_list.append(cached)
+                self.cached_data[i] = None
+            else:
+                data_list.append(self.data_builder(atoms))
 
-        loader = torch_geometric.dataloader.DataLoader(
-            dataset=data_list,
-            batch_size=len(data_list),
-            shuffle=False,
-            drop_last=False
-        )
-        batch = next(iter(loader)).to(self.device)
+        self.edge_counts = [int(d.edge_index.shape[1]) for d in data_list]
+        self.total_edges = sum(self.edge_counts)
+
+        batch = torch_geometric.Batch.from_data_list(data_list).to(self.device)
 
         # 2. Compute
-        batch_clone = batch.clone()
         use_compile = getattr(self.calc, "use_compile", False)
         
-        batch_clone["node_attrs"].requires_grad_(True)
-        batch_clone["positions"].requires_grad_(True)
+        batch["node_attrs"].requires_grad_(True)
+        batch["positions"].requires_grad_(True)
         
-        compute_stress = (self.calc.model_type in ["MACE", "EnergyDipoleMACE"]) and (not use_compile)
+        if self.compute_stress is not None:
+            compute_stress = self.compute_stress
+        else:
+            compute_stress = (self.calc.model_type in ["MACE", "EnergyDipoleMACE"]) and (
+                not use_compile
+            )
         
         out = self.model(
-            batch_clone.to_dict(),
+            batch.to_dict(),
             compute_stress=compute_stress,
             training=use_compile
         )
@@ -197,21 +229,30 @@ class RelaxBatch:
         energies = out["energy"].detach().cpu().numpy()
         node_forces = out["forces"].detach().cpu().numpy()
         stresses = out["stress"].detach().cpu().numpy() if compute_stress else None
-
-        pointer = 0
+        ptr = batch.ptr.detach().cpu().numpy()
         
         for i, opt in enumerate(self.opt_list):
             target_atoms = real_atoms_list[i]
-            n_atoms = len(target_atoms)
             
-            e = energies[i] * self.calc.energy_units_to_eV
-            f = node_forces[pointer : pointer + n_atoms] * self.calc.energy_units_to_eV / self.calc.length_units_to_A
-            pointer += n_atoms
+            start = int(ptr[i])
+            end = int(ptr[i + 1])
+
+            e = float(energies[i]) * self.calc.energy_units_to_eV
+            f = (
+                node_forces[start:end]
+                * self.calc.energy_units_to_eV
+                / self.calc.length_units_to_A
+            )
             
             s = None
             if stresses is not None:
+                stress_i = stresses[i]
+                if getattr(stress_i, "ndim", 0) == 3:
+                    stress_i = stress_i[0]
                 s = full_3x3_to_voigt_6_stress(
-                    stresses[i] * self.calc.energy_units_to_eV / self.calc.length_units_to_A**3
+                    stress_i
+                    * self.calc.energy_units_to_eV
+                    / self.calc.length_units_to_A**3
                 )
 
             target_atoms.calc = SinglePointCalculator(
@@ -258,6 +299,7 @@ class BatchRelaxer:
         head: Optional[str] = None, 
         max_n_steps: int = 200,
         inplace: bool = True,
+        compute_stress: Optional[bool] = None,
         
         # --- 路径控制参数 ---
         trajectory_dir: Optional[str] = None,         # 过程轨迹 (.traj) 存放目录，None 为不保存
@@ -302,14 +344,17 @@ class BatchRelaxer:
 
         log_level = logging.DEBUG if verbose else logging.INFO
         logger.setLevel(log_level)
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
-            logger.addHandler(handler)
+        logger.propagate = False
+        handlers: List[logging.Handler] = []
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+        logger.addHandler(stream_handler)
+        handlers.append(stream_handler)
         if save_log_file:
-            file_handler = logging.FileHandler(save_log_file, mode='w')
-            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+            file_handler = logging.FileHandler(save_log_file, mode="w")
+            file_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
             logger.addHandler(file_handler)
+            handlers.append(file_handler)
 
         if not inplace:
             atoms_list = [at.copy() for at in atoms_list]
@@ -328,6 +373,8 @@ class BatchRelaxer:
 
         filter_cls = FrechetCellFilter if use_relax_cell else None
 
+        get_data = lambda atoms: _get_mace_config_and_data(atoms, self.calc, heads=target_heads_list)
+
         # --- 4. 初始化 Worker ---
         worker = RelaxBatch(
             self.calc,
@@ -337,7 +384,9 @@ class BatchRelaxer:
             max_n_steps=max_n_steps,
             device=self.device,
             optimizer_kwargs=optimizer_kwargs,
-            target_heads=target_heads_list
+            target_heads=target_heads_list,
+            compute_stress=compute_stress,
+            data_builder=get_data,
         )
 
         # --- 5. 初始化进度条 (带 Rank 和 负载监控) ---
@@ -347,9 +396,6 @@ class BatchRelaxer:
             unit="struct"
         )
         
-        # 引入 ase.io.write (确保已导入)
-        from ase.io import write as ase_write
-
         try:
             while len(queue) > 0 or worker.num_active > 0:
                 
@@ -363,7 +409,7 @@ class BatchRelaxer:
                     atoms = queue[idx]
                     try:
                         # 预计算边数 (使用正确的 head)
-                        data_obj = _get_mace_config_and_data(atoms, self.calc, heads=target_heads_list)
+                        data_obj = get_data(atoms)
                         n_edges = data_obj.edge_index.shape[1]
                     except Exception as e:
                         logger.error(f"Failed to graph structure {idx}: {e}")
@@ -381,7 +427,7 @@ class BatchRelaxer:
                         name = atoms.info.get('name', atoms.info.get('ID', f"{idx}"))
                         traj_path = os.path.join(trajectory_dir, f"{name}.traj")
                     
-                    worker.insert(atoms, n_edges, idx, logfile=None, traj_file=traj_path)
+                    worker.insert(atoms, n_edges, idx, logfile=None, traj_file=traj_path, data_obj=data_obj)
                     del queue[idx]
                 
                 # --- B. 计算 (COMPUTE) ---
@@ -411,6 +457,12 @@ class BatchRelaxer:
             if stream_obj:
                 stream_obj.close()
             pbar.close()
+            for h in handlers:
+                logger.removeHandler(h)
+                try:
+                    h.close()
+                except Exception:
+                    pass
 
         logger.info(f"Relaxation finished.")
         # 按原始顺序返回结果
