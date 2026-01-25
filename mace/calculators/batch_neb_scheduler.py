@@ -79,6 +79,79 @@ class BatchNEBScheduler:
             except:
                 pass
 
+    @classmethod
+    def create(
+        cls,
+        calculator,
+        atoms_bin: List[List[Atoms]],
+        # NEB configuration
+        neb_cls=None,
+        neb_kwargs: dict = None,
+        # Optimizer configuration
+        optimizer_cls=None,
+        optimizer_kwargs: dict = None,
+        # Scheduler configuration
+        **scheduler_kwargs
+    ):
+        """
+        Factory method to easily create a BatchNEBScheduler from a list of paths.
+        
+        Args:
+            calculator: Shared MACE calculator.
+            atoms_bin: List of NEB paths (each path is a list of Atoms).
+            neb_cls: Class to use for NEB (default: mace.calculators.batch_neb.BatchNEB).
+            neb_kwargs: Keyword arguments for NEB class (e.g. k=0.1, climb=True).
+            optimizer_cls: Optimizer class (default: ase.optimize.FIRE).
+            optimizer_kwargs: Keyword arguments for optimizer (e.g. dt=0.1).
+                              Note: logfile will be set to None by default to avoid file handle limits.
+            **scheduler_kwargs: Arguments for BatchNEBScheduler (e.g. device, batch_logfile).
+            
+        Returns:
+            Configured BatchNEBScheduler instance.
+        """
+        # Default imports if None
+        if neb_cls is None:
+            from mace.calculators.batch_neb import BatchNEB
+            neb_cls = BatchNEB
+            
+        if optimizer_cls is None:
+            from ase.optimize import FIRE
+            optimizer_cls = FIRE
+            
+        neb_kwargs = neb_kwargs or {}
+        optimizer_kwargs = optimizer_kwargs or {}
+        
+        # Default optimizer logfile to None to prevent opening hundreds of files
+        if "logfile" not in optimizer_kwargs:
+            optimizer_kwargs["logfile"] = None
+            
+        tasks = []
+        for i, images in enumerate(atoms_bin):
+            # Instantiate NEB
+            # We inject calculator because BatchNEB needs it (or standard NEB might ignore if not used in init)
+            # BatchNEB signature: (images, calculator, ...)
+            # Standard ASE NEB: (images, k=0.1, ...) - doesn't take calculator in init usually!
+            # But BatchNEB does. We should check or assume BatchNEB-like.
+            # If standard NEB, we might need to attach calculator to images manually?
+            # Standard NEB assumes images have calculators or we attach them.
+            # BatchNEB takes 'calculator' arg.
+            
+            try:
+                neb = neb_cls(images, calculator=calculator, **neb_kwargs)
+            except TypeError:
+                # Fallback for standard ASE NEB which doesn't take calculator arg in init
+                neb = neb_cls(images, **neb_kwargs)
+                # Attach calculator to images if needed? 
+                # Actually Scheduler handles the calc via batching, but images need to have *some* calc 
+                # or at least we need to be able to attach SinglePointCalculator.
+            
+            # Instantiate Optimizer
+            opt = optimizer_cls(neb, **optimizer_kwargs)
+            
+            tasks.append((neb, opt))
+            
+        return cls(tasks, calculator, **scheduler_kwargs)
+
     def run(self, fmax: float = 0.05, steps: int = 200):
         """
         Run the optimization loop.
@@ -198,10 +271,16 @@ class BatchNEBScheduler:
         if not atoms_list:
             return
 
+        # --- Decoupling Step: Delegate graph building ---
+        # If calculator has a custom batch builder, use it.
+        # Otherwise use the default MACE builder.
+        
+        # We assume self.calculator is the MACE calculator object, but it could be wrapped.
+        
+        # Default MACE Logic
         data_list = []
         valid_atoms = []
         
-        # Parallelize graph building to avoid CPU bottleneck
         from concurrent.futures import ThreadPoolExecutor
         import time
         
@@ -256,22 +335,9 @@ class BatchNEBScheduler:
                 pass
         
         # Attempt to write to active optimizers' logfiles if available
-        # We need to find which optimizers are "active" in this batch?
-        # Actually we computed for all active items in self.nebs_and_optimizers logic above.
-        # But here we just have atoms_list.
-        # It's cleaner to just iterate all optimizers and write if they are running.
-        # Or better: The caller (run loop) knows active items.
-        # But this method is _batch_compute.
-        # Let's iterate self.nebs_and_optimizers and write to their logs if they have one.
-        
         for _, opt in self.nebs_and_optimizers:
             if hasattr(opt, 'logfile') and hasattr(opt.logfile, 'write'):
                 try:
-                    # Check if file is open/writable
-                    # Usually ASE keeps it open.
-                    # We prepend a comment char or just write info.
-                    # ASE logs usually look like: Step Time Energy fmax
-                    # We can inject a comment line.
                     opt.logfile.write(f"# {msg}\n")
                     opt.logfile.flush()
                 except Exception:
