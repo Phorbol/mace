@@ -1,0 +1,854 @@
+###########################################################################################
+# The ASE Calculator for MACE
+# Authors: Ilyes Batatia, David Kovacs
+# This program is distributed under the MIT License (see MIT.md)
+###########################################################################################
+
+import logging
+
+# pylint: disable=wrong-import-position
+import ast
+import json
+import os
+import re
+from glob import glob
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
+os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
+
+import numpy as np
+import torch
+from ase.calculators.calculator import Calculator, all_changes
+from ase.constraints import FixAtoms
+from ase.stress import full_3x3_to_voigt_6_stress
+try:
+    from ase.vibrations.data import VibrationsData
+except Exception:  # pylint: disable=broad-except
+    VibrationsData = None
+from e3nn import o3
+
+from mace import data as mace_data
+from mace import modules as mace_modules
+from mace.modules import blocks as mace_blocks
+from mace.modules.utils import extract_invariant
+from mace.tools import torch_geometric, torch_tools, utils
+from mace.tools.compile import prepare
+from mace.tools.scripts_utils import extract_model
+
+try:
+    from mace.cli.convert_e3nn_cueq import run as run_e3nn_to_cueq
+
+    CUEQQ_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    CUEQQ_AVAILABLE = False
+    run_e3nn_to_cueq = None
+
+try:
+    from mace.cli.convert_e3nn_oeq import run as run_e3nn_to_oeq
+
+    OEQ_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    OEQ_AVAILABLE = False
+    run_e3nn_to_oeq = None
+
+try:
+    import intel_extension_for_pytorch as ipex
+
+    has_ipex = True
+except ImportError:
+    has_ipex = False
+
+
+def get_model_dtype(model: torch.nn.Module) -> torch.dtype:
+    """Get the dtype of the model"""
+    mode_dtype = next(model.parameters()).dtype
+    if mode_dtype == torch.float64:
+        return "float64"
+    if mode_dtype == torch.float32:
+        return "float32"
+    raise ValueError(f"Unknown dtype {mode_dtype}")
+
+
+def _load_config_dict(path: Union[str, Path]) -> Dict[str, Any]:
+    text = Path(path).read_text(encoding="utf-8")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            import yaml  # type: ignore
+        except Exception as exc:  # pylint: disable=broad-except
+            raise RuntimeError(
+                "config 不是 JSON，且未安装 PyYAML，无法解析"
+            ) from exc
+        data = yaml.safe_load(text)
+    if not isinstance(data, dict):
+        raise ValueError("config 文件解析结果不是字典")
+    return data
+
+
+def _resolve_class(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    match = re.match(r"<class '([^']+)'>", value)
+    if not match:
+        return value
+    qualified = match.group(1)
+    if qualified.startswith("mace.modules.blocks."):
+        name = qualified.split(".")[-1]
+        return getattr(mace_blocks, name)
+    return value
+
+
+def _maybe_literal(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    if value in ("True", "False", "None"):
+        return ast.literal_eval(value)
+    if value.startswith("[") or value.startswith("{") or value.startswith("("):
+        try:
+            return ast.literal_eval(value)
+        except Exception:  # pylint: disable=broad-except
+            return value
+    return value
+
+
+def _convert_exported_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = dict(config)
+
+    for k in list(out.keys()):
+        out[k] = _maybe_literal(out[k])
+
+    out["interaction_cls"] = _resolve_class(out.get("interaction_cls"))
+    out["interaction_cls_first"] = _resolve_class(out.get("interaction_cls_first"))
+    if "readout_cls" in out:
+        out["readout_cls"] = _resolve_class(out.get("readout_cls"))
+
+    if "hidden_irreps" in out and isinstance(out["hidden_irreps"], str):
+        out["hidden_irreps"] = o3.Irreps(out["hidden_irreps"])
+    if "edge_irreps" in out and isinstance(out["edge_irreps"], str):
+        out["edge_irreps"] = o3.Irreps(out["edge_irreps"])
+    if "MLP_irreps" in out and isinstance(out["MLP_irreps"], str):
+        out["MLP_irreps"] = o3.Irreps(out["MLP_irreps"])
+
+    if "atomic_energies" in out:
+        out["atomic_energies"] = np.asarray(out["atomic_energies"])
+    if "atomic_numbers" in out:
+        out["atomic_numbers"] = [int(z) for z in out["atomic_numbers"]]
+
+    for k in ("r_max", "avg_num_neighbors"):
+        if k in out and out[k] is not None:
+            out[k] = float(out[k])
+    for k in ("num_bessel", "max_ell", "num_interactions", "num_elements", "correlation"):
+        if k in out and out[k] is not None:
+            out[k] = int(out[k])
+    if "num_polynomial_cutoff" in out and out["num_polynomial_cutoff"] is not None:
+        out["num_polynomial_cutoff"] = float(out["num_polynomial_cutoff"])
+    if "atomic_inter_scale" in out and out["atomic_inter_scale"] is not None:
+        out["atomic_inter_scale"] = np.asarray(out["atomic_inter_scale"]).tolist()
+    if "atomic_inter_shift" in out and out["atomic_inter_shift"] is not None:
+        out["atomic_inter_shift"] = np.asarray(out["atomic_inter_shift"]).tolist()
+
+    out["gate"] = torch.nn.functional.silu
+    return out
+
+
+def _load_model_from_checkpoint(
+    checkpoint: Dict[str, Any],
+    config_path: Union[str, Path],
+    device: str,
+    strict: bool = True,
+) -> torch.nn.Module:
+    model_config = _convert_exported_config(_load_config_dict(config_path))
+    model = mace_modules.ScaleShiftMACE(**model_config).to(device)
+    state_dict = checkpoint["model"] if "model" in checkpoint else checkpoint
+    model.load_state_dict(state_dict, strict=strict)
+    return model
+
+
+class MACECalculator(Calculator):
+    """MACE ASE Calculator
+    args:
+        model_paths: str, path to model or models if a committee is produced
+                to make a committee use a wild card notation like mace_*.model
+        device: str, device to run on (cuda or cpu or xpu)
+        energy_units_to_eV: float, conversion factor from model energy units to eV
+        length_units_to_A: float, conversion factor from model length units to Angstroms
+        default_dtype: str, default dtype of model
+        charges_key: str, Array field of atoms object where atomic charges are stored
+        model_type: str, type of model to load
+                    Options: [MACE, DipoleMACE, EnergyDipoleMACE]
+
+    Dipoles are returned in units of Debye
+    """
+
+    def __init__(
+        self,
+        model_paths: Union[list, str, None] = None,
+        models: Union[List[torch.nn.Module], torch.nn.Module, None] = None,
+        checkpoint_config_paths: Union[list, str, None] = None,
+        checkpoint_strict: bool = True,
+        device: str = "cpu",
+        energy_units_to_eV: float = 1.0,
+        length_units_to_A: float = 1.0,
+        default_dtype="",
+        charges_key="Qs",
+        info_keys=None,
+        arrays_keys=None,
+        model_type="MACE",
+        compile_mode=None,
+        fullgraph=True,
+        enable_cueq=False,
+        enable_oeq=False,
+        **kwargs,
+    ):
+        Calculator.__init__(self, **kwargs)
+        if enable_cueq or enable_oeq:
+            assert model_type == "MACE", "CuEq only supports MACE models"
+            if compile_mode is not None:
+                logging.warning(
+                    "CuEq or Oeq does not support torch.compile, setting compile_mode to None"
+                )
+                compile_mode = None
+        if enable_cueq and enable_oeq:
+            raise ValueError(
+                "CuEq and OEq cannot be used together, please choose one of them"
+            )
+        if enable_cueq and not CUEQQ_AVAILABLE:
+            raise ImportError(
+                "cuequivariance is not installed so CuEq acceleration cannot be used"
+            )
+        if enable_oeq and not OEQ_AVAILABLE:
+            raise ImportError(
+                "openequivariance is not installed so OEq acceleration cannot be used"
+            )
+        if "model_path" in kwargs:
+            deprecation_message = (
+                "'model_path' argument is deprecated, please use 'model_paths'"
+            )
+            if model_paths is None:
+                logging.warning(f"{deprecation_message} in the future.")
+                model_paths = kwargs["model_path"]
+            else:
+                raise ValueError(
+                    f"both 'model_path' and 'model_paths' given, {deprecation_message} only."
+                )
+
+        if (model_paths is None) == (models is None):
+            raise ValueError(
+                "Exactly one of 'model_paths' or 'models' must be provided"
+            )
+
+        self.results = {}
+        if info_keys is None:
+            info_keys = {"total_spin": "spin", "total_charge": "charge"}
+        if arrays_keys is None:
+            arrays_keys = {}
+        self.info_keys = info_keys
+        self.arrays_keys = arrays_keys
+
+        self.model_type = model_type
+        self.compute_atomic_stresses = False
+
+        if model_type not in [
+            "MACE",
+            "DipoleMACE",
+            "EnergyDipoleMACE",
+            "DipolePolarizabilityMACE",
+        ]:
+            raise ValueError(
+                f"Give a valid model_type: [MACE, DipoleMACE, DipolePolarizabilityMACE, EnergyDipoleMACE], {model_type} not supported"
+            )
+
+        # superclass constructor initializes self.implemented_properties to an empty list
+        if model_type in ["MACE", "EnergyDipoleMACE"]:
+            self.implemented_properties.extend(
+                [
+                    "energy",
+                    "energies",
+                    "free_energy",
+                    "node_energy",
+                    "forces",
+                    "stress",
+                ]
+            )
+            if kwargs.get("compute_atomic_stresses", False):
+                self.implemented_properties.extend(["stresses", "virials"])
+                self.compute_atomic_stresses = True
+        if model_type in ["EnergyDipoleMACE", "DipoleMACE", "DipolePolarizabilityMACE"]:
+            self.implemented_properties.extend(["dipole"])
+        if model_type == "DipolePolarizabilityMACE":
+            self.implemented_properties.extend(
+                [
+                    "charges",
+                    "polarizability",
+                    "polarizability_sh",
+                ]
+            )
+
+        if model_paths is not None:
+            if isinstance(model_paths, str):
+                # Find all models that satisfy the wildcard (e.g. mace_model_*.pt)
+                model_paths_glob = glob(model_paths)
+
+                if len(model_paths_glob) == 0:
+                    raise ValueError(f"Couldn't find MACE model files: {model_paths}")
+
+                model_paths = model_paths_glob
+            elif isinstance(model_paths, Path):
+                model_paths = [model_paths]
+
+            if len(model_paths) == 0:
+                raise ValueError("No mace file names supplied")
+            self.num_models = len(model_paths)
+
+            if checkpoint_config_paths is not None:
+                if isinstance(checkpoint_config_paths, (str, Path)):
+                    checkpoint_config_paths = [str(checkpoint_config_paths)]
+                if len(checkpoint_config_paths) == 1 and self.num_models > 1:
+                    checkpoint_config_paths = checkpoint_config_paths * self.num_models
+                if len(checkpoint_config_paths) != self.num_models:
+                    raise ValueError(
+                        "checkpoint_config_paths 必须为单个路径或与 model_paths 数量相同"
+                    )
+
+            # Load models from files
+            loaded_models: List[torch.nn.Module] = []
+            for i, model_path in enumerate(model_paths):
+                loaded = torch.load(f=model_path, map_location=device)
+                if isinstance(loaded, dict) and (
+                    "model" in loaded or "optimizer" in loaded or "lr_scheduler" in loaded
+                ):
+                    if checkpoint_config_paths is None:
+                        raise ValueError(
+                            f"检测到 checkpoint 文件 {model_path}，请同时提供 checkpoint_config_paths "
+                            "（run_train 导出的 config.yaml/json）以便重建模型结构"
+                        )
+                    model = _load_model_from_checkpoint(
+                        checkpoint=loaded,
+                        config_path=checkpoint_config_paths[i],
+                        device=device,
+                        strict=checkpoint_strict,
+                    )
+                    loaded_models.append(model)
+                else:
+                    loaded_models.append(loaded)
+            self.models = loaded_models
+
+        elif models is not None:
+            if not isinstance(models, list):
+                models = [models]
+
+            if len(models) == 0:
+                raise ValueError("No models supplied")
+
+            self.models = models
+            self.num_models = len(models)
+
+        if self.num_models > 1:
+            logging.info(f"Running committee mace with {self.num_models} models")
+
+            if model_type in ["MACE", "EnergyDipoleMACE"]:
+                self.implemented_properties.extend(
+                    ["energy_comm", "energy_var", "forces_comm", "stress_var"]
+                )
+            if model_type in [
+                "DipoleMACE",
+                "EnergyDipoleMACE",
+                "DipolePolarizabilityMACE",
+            ]:
+                self.implemented_properties.extend(["dipole_var"])
+
+        if compile_mode is not None:
+            logging.info(f"Torch compile is enabled with mode: {compile_mode}")
+            self.models = [
+                torch.compile(
+                    prepare(extract_model)(model=model, map_location=device),
+                    mode=compile_mode,
+                    fullgraph=fullgraph,
+                )
+                for model in self.models
+            ]
+            self.use_compile = True
+        else:
+            self.use_compile = False
+
+        # Ensure all models are on the same device
+        for model in self.models:
+            model.to(device)
+
+        if has_ipex and device == "xpu":
+            for model in self.models:
+                model = ipex.optimize(model)
+
+        r_maxs = [model.r_max.cpu() for model in self.models]
+        r_maxs = np.array(r_maxs)
+        if not np.all(r_maxs == r_maxs[0]):
+            raise ValueError(f"committee r_max are not all the same {' '.join(r_maxs)}")
+        self.r_max = float(r_maxs[0])
+
+        self.device = torch_tools.init_device(device)
+        self.energy_units_to_eV = energy_units_to_eV
+        self.length_units_to_A = length_units_to_A
+        self.z_table = utils.AtomicNumberTable(
+            [int(z) for z in self.models[0].atomic_numbers]
+        )
+        self.charges_key = charges_key
+
+        try:
+            self.available_heads: List[str] = self.models[0].heads  # type: ignore
+        except AttributeError:
+            self.available_heads = ["Default"]
+        kwarg_head = kwargs.get("head", None)
+        if kwarg_head is not None:
+            self.head = kwarg_head
+            if isinstance(self.head, str):
+                if self.head not in self.available_heads:
+                    last_head = self.available_heads[-1]
+                    logging.warning(
+                        f"Head {self.head} not found in available heads {self.available_heads}, defaulting to the last head: {last_head}"
+                    )
+                    self.head = last_head
+        elif len(self.available_heads) == 1:
+            self.head = self.available_heads[0]
+        else:
+            self.head = [
+                head for head in self.available_heads if head.lower() == "default"
+            ]
+            if len(self.head) == 0:
+                raise ValueError(
+                    "Head keyword was not provided, and no head in the model is 'default'. "
+                    "Please provide a head keyword to specify the head you want to use. "
+                    f"Available heads are: {self.available_heads}"
+                )
+            self.head = self.head[0]
+
+        logging.info(f"Using head {self.head} out of  {self.available_heads}")
+
+        model_dtype = get_model_dtype(self.models[0])
+        if default_dtype == "":
+            logging.warning(
+                f"No dtype selected, switching to {model_dtype} to match model dtype."
+            )
+            default_dtype = model_dtype
+        if model_dtype != default_dtype:
+            logging.warning(
+                f"Default dtype {default_dtype} does not match model dtype {model_dtype}, converting models to {default_dtype}."
+            )
+            if default_dtype == "float64":
+                self.models = [model.double() for model in self.models]
+            elif default_dtype == "float32":
+                self.models = [model.float() for model in self.models]
+        torch_tools.set_default_dtype(default_dtype)
+        if enable_cueq:
+            logging.info("Converting models to CuEq for acceleration")
+            self.models = [
+                run_e3nn_to_cueq(model, device=device).to(device)
+                for model in self.models
+            ]
+        if enable_oeq:
+            logging.info("Converting models to OEq for acceleration")
+            self.models = [
+                run_e3nn_to_oeq(model, device=device).to(device)
+                for model in self.models
+            ]
+        for model in self.models:
+            for param in model.parameters():
+                param.requires_grad = False
+
+    def check_state(self, atoms, tol: float = 1e-15) -> list:
+        """
+        Check for any system changes since the last calculation.
+
+        Args:
+            atoms (ase.Atoms): The atomic structure to check.
+            tol (float): Tolerance for detecting changes.
+
+        Returns:
+            list: A list of changes detected in the system.
+        """
+        state = super().check_state(atoms, tol=tol)
+        if (not state) and (self.atoms.info != atoms.info):
+            state.append("info")
+        return state
+
+    def _create_result_tensors(
+        self, num_models: int, num_atoms: int, batch, out: dict
+    ) -> dict:
+        # unfortunately, code is expecting shape that isn't always same as underlying model
+        # output tensor shape, e.g. stress is returned as 1x3x3 and we want 3x3
+        tensor_shapes = {
+            "energy": [],
+            "node_energy": [num_atoms],
+            "forces": [num_atoms, 3],
+            "stress": [3, 3],
+            "atomic_stresses": [num_atoms, 3, 3],
+            "atomic_virials": [num_atoms, 3, 3],
+            "dipole": [3],
+            "charges": [num_atoms],
+            "polarizability": [3, 3],
+            "polarizability_sh": [6],
+        }
+        dict_of_tensors = {}
+        for key in out:
+            if key not in tensor_shapes or out.get(key) is None:
+                continue
+            shape = [num_models] + tensor_shapes[key]
+            dict_of_tensors[key] = torch.zeros(*shape, device=self.device)
+
+        node_e0 = None
+        if "node_energy" in out:
+            node_heads = batch["head"][batch["batch"]]
+            num_atoms_arange = torch.arange(batch["positions"].shape[0])
+            node_e0 = (
+                self.models[0]
+                .atomic_energies_fn(batch["node_attrs"])[num_atoms_arange, node_heads]
+                .detach()
+                .cpu()
+                .numpy()
+            )
+
+        return dict_of_tensors, node_e0
+
+    def _atoms_to_batch(self, atoms):
+        self.arrays_keys.update({self.charges_key: "charges"})
+        keyspec = mace_data.KeySpecification(
+            info_keys=self.info_keys, arrays_keys=self.arrays_keys
+        )
+        config = mace_data.config_from_atoms(
+            atoms, key_specification=keyspec, head_name=self.head
+        )
+        data_loader = torch_geometric.dataloader.DataLoader(
+            dataset=[
+                mace_data.AtomicData.from_config(
+                    config,
+                    z_table=self.z_table,
+                    cutoff=self.r_max,
+                    heads=self.available_heads,
+                )
+            ],
+            batch_size=1,
+            shuffle=False,
+            drop_last=False,
+        )
+        batch = next(iter(data_loader)).to(self.device)
+        return batch
+
+    def _clone_batch(self, batch):
+        batch_clone = batch.clone()
+        if self.use_compile:
+            batch_clone["node_attrs"].requires_grad_(True)
+            batch_clone["positions"].requires_grad_(True)
+        return batch_clone
+
+    # pylint: disable=dangerous-default-value
+    def calculate(self, atoms=None, properties=None, system_changes=all_changes):
+        """
+        Calculate properties.
+        :param atoms: ase.Atoms object
+        :param properties: [str], properties to be computed, used by ASE internally
+        :param system_changes: [str], system changes since last calculation, used by ASE internally
+        :return:
+        """
+        # call to base-class to set atoms attribute
+        Calculator.calculate(self, atoms)
+
+        batch_base = self._atoms_to_batch(atoms)
+
+        if self.model_type in ["MACE", "EnergyDipoleMACE"]:
+            compute_stress = not self.use_compile
+        else:
+            compute_stress = False
+
+        ret_tensors = None
+        node_e0 = None
+        # copy from output of model() call to ret_tensors
+        for i, model in enumerate(self.models):
+            batch = self._clone_batch(batch_base)
+            out = model(
+                batch.to_dict(),
+                compute_stress=compute_stress,
+                training=self.use_compile,
+                compute_edge_forces=self.compute_atomic_stresses,
+                compute_atomic_stresses=self.compute_atomic_stresses,
+            )
+            if i == 0:
+                ret_tensors, node_e0 = self._create_result_tensors(
+                    self.num_models, len(atoms), batch, out
+                )
+            for key, val in ret_tensors.items():
+                if out.get(key) is not None:
+                    val[i] = out[key].detach()
+
+        # covert from ret_tensors to calculator results dict
+        self.results = {}
+        scalar_tensors = set(["energy"])
+        results_store_ensemble = set(["energy", "forces", "stress", "dipole"])
+        for results_key, ret_key, unit_conv in [
+            ("energy", "energy", self.energy_units_to_eV),
+            ("node_energy", "node_energy", self.energy_units_to_eV),
+            ("forces", "forces", self.energy_units_to_eV / self.length_units_to_A),
+            ("stress", "stress", self.energy_units_to_eV / self.length_units_to_A**3),
+            (
+                "stresses",
+                "atomic_stresses",
+                self.energy_units_to_eV / self.length_units_to_A**3,
+            ),
+            (
+                "virials",
+                "atomic_virials",
+                self.energy_units_to_eV / self.length_units_to_A**3,
+            ),
+            ("dipole", "dipole", 1.0),
+            ("charges", "charges", 1.0),
+            ("polarizability", "polarizability", 1.0),
+            ("polarizability_sh", "polarizability_sh", 1.0),
+        ]:
+            if ret_tensors.get(ret_key) is not None:
+                data = torch.mean(ret_tensors[ret_key], dim=0).cpu()
+                if ret_key in scalar_tensors:
+                    data = data.item()
+                else:
+                    data = data.numpy()
+                self.results[results_key] = data * unit_conv
+
+                if self.num_models > 1 and results_key in results_store_ensemble:
+                    data = ret_tensors[results_key].cpu().numpy()
+                    data *= unit_conv
+                    self.results[results_key + "_comm"] = data
+
+                    data = torch.var(
+                        ret_tensors[results_key], dim=0, unbiased=False
+                    ).cpu()
+                    if ret_key in scalar_tensors:
+                        data = data.item()
+                    else:
+                        data = data.numpy()
+                    data *= unit_conv
+                    self.results[results_key + "_var"] = data
+
+        # special cases
+        if self.results.get("energy") is not None:
+            self.results["free_energy"] = self.results["energy"]
+        if self.results.get("node_energy") is not None:
+            self.results["energies"] = self.results["node_energy"].copy()
+            self.results["node_energy"] -= node_e0
+        if self.results.get("stress") is not None:
+            self.results["stress"] = full_3x3_to_voigt_6_stress(self.results["stress"])
+        if self.results.get("stresses") is not None:
+            self.results["stresses"] = np.asarray(
+                [
+                    full_3x3_to_voigt_6_stress(stress)
+                    for stress in self.results["stresses"]
+                ]
+            )
+
+    def get_dielectric_derivatives(self, atoms=None):
+        if atoms is None and self.atoms is None:
+            raise ValueError("atoms not set")
+        if atoms is None:
+            atoms = self.atoms
+        if self.model_type not in ["DipoleMACE", "DipolePolarizabilityMACE"]:
+            raise NotImplementedError(
+                "Only implemented for DipoleMACE or DipolePolarizabilityMACE models"
+            )
+        batch = self._atoms_to_batch(atoms)
+        outputs = [
+            model(
+                self._clone_batch(batch).to_dict(),
+                compute_dielectric_derivatives=True,
+                training=self.use_compile,
+            )
+            for model in self.models
+        ]
+        dipole_derivatives = [
+            output["dmu_dr"].clone().detach().cpu().numpy() for output in outputs
+        ]
+        if self.models[0].use_polarizability:
+            polarizability_derivatives = [
+                output["dalpha_dr"].clone().detach().cpu().numpy() for output in outputs
+            ]
+            if self.num_models == 1:
+                dipole_derivatives = dipole_derivatives[0]
+                polarizability_derivatives = polarizability_derivatives[0]
+            del outputs, batch, atoms
+            return dipole_derivatives, polarizability_derivatives
+        if self.num_models == 1:
+            return dipole_derivatives[0]
+        del outputs, batch, atoms
+        return dipole_derivatives
+
+    def get_hessian(self, atoms=None):
+        if atoms is None and self.atoms is None:
+            raise ValueError("atoms not set")
+        if atoms is None:
+            atoms = self.atoms
+        if self.model_type != "MACE":
+            raise NotImplementedError("Only implemented for MACE models")
+
+        hessian_indices = None
+        free_indices_np = None
+        if VibrationsData is not None:
+            free_indices_np = np.asarray(
+                VibrationsData.indices_from_constraints(atoms), dtype=int
+            )
+            if free_indices_np.shape[0] != len(atoms):
+                hessian_indices = torch.from_numpy(free_indices_np).to(self.device).long()
+        else:
+            fixed_indices = []
+            if atoms.constraints:
+                for constraint in atoms.constraints:
+                    if isinstance(constraint, FixAtoms):
+                        fixed_indices.extend(constraint.get_indices())
+            if fixed_indices:
+                fixed_indices = np.unique(fixed_indices)
+                all_indices = np.arange(len(atoms))
+                free_indices_np = np.setdiff1d(all_indices, fixed_indices)
+                hessian_indices = torch.from_numpy(free_indices_np).to(self.device).long()
+
+        batch = self._atoms_to_batch(atoms)
+        hessians = [
+            model(
+                self._clone_batch(batch).to_dict(),
+                compute_hessian=True,
+                compute_stress=False,
+                training=self.use_compile,
+                hessian_indices=hessian_indices,
+            )["hessian"]
+            for model in self.models
+        ]
+        hessians = [hessian.detach().cpu().numpy() for hessian in hessians]
+
+        if hessian_indices is not None:
+            full_hessians = []
+            n_atoms = len(atoms)
+            if free_indices_np is None:
+                free_indices_np = hessian_indices.cpu().numpy()
+            row_indices = (
+                np.repeat(free_indices_np, 3) * 3
+                + np.tile([0, 1, 2], len(free_indices_np))
+            )
+            for h in hessians:
+                # h shape is (3*n_free, n_atoms, 3)
+                full_h = np.zeros((3 * n_atoms, n_atoms, 3))
+                full_h[row_indices, :, :] = h
+                full_hessians.append(full_h)
+            hessians = full_hessians
+
+        if self.num_models == 1:
+            return hessians[0]
+        return hessians
+
+    def get_hessian_2d_free(self, atoms=None):
+        """
+        Example usage (ASE vibrations with constrained atoms):
+
+        ```python
+        from ase.constraints import FixAtoms
+
+        constraint = FixAtoms(
+            indices=[
+                atom.index
+                for atom in image_TS_initial1
+                if atom.position[2]
+                >= image_TS_initial1.positions[:, 2].mean() * 2 * 1 / 4
+            ]
+        )
+        image_TS_initial1.set_constraint(constraint)
+
+        hessian, free_indices = image_TS_initial1.calc.get_hessian_2d_free(
+            image_TS_initial1
+        )
+
+        from ase.vibrations.data import VibrationsData
+
+        # atoms is the equilibrium structure; hessian is a (3*N, 3*N) Hessian matrix
+        vib_data = VibrationsData.from_2d(
+            image_TS_initial1, hessian, indices=free_indices
+        )  # If indices is None, it is inferred from atoms.constraints
+        energies = vib_data.get_energies()
+        freq_cm1 = vib_data.get_frequencies()
+        print(vib_data.tabulate())
+        ```
+        """
+        if atoms is None and self.atoms is None:
+            raise ValueError("atoms not set")
+        if atoms is None:
+            atoms = self.atoms
+        if self.model_type != "MACE":
+            raise NotImplementedError("Only implemented for MACE models")
+
+        if VibrationsData is not None:
+            free_indices = np.asarray(
+                VibrationsData.indices_from_constraints(atoms), dtype=int
+            )
+        else:
+            fixed_indices = []
+            if atoms.constraints:
+                for constraint in atoms.constraints:
+                    if isinstance(constraint, FixAtoms):
+                        fixed_indices.extend(constraint.get_indices())
+            if fixed_indices:
+                fixed_indices = np.unique(fixed_indices)
+                all_indices = np.arange(len(atoms))
+                free_indices = np.setdiff1d(all_indices, fixed_indices)
+            else:
+                free_indices = np.arange(len(atoms))
+
+        def compact_3n_n_3_to_2d(h, free_idx):
+            m = h.shape[1]
+            n = int(len(free_idx))
+            h4 = h.reshape(m, 3, m, 3)
+            h4_sub = h4[np.ix_(free_idx, [0, 1, 2], free_idx, [0, 1, 2])]
+            return h4_sub.reshape(3 * n, 3 * n)
+
+        h = self.get_hessian(atoms)
+        if isinstance(h, list):
+            return [compact_3n_n_3_to_2d(hi, free_indices) for hi in h], free_indices
+        return compact_3n_n_3_to_2d(h, free_indices), free_indices
+
+    def get_descriptors(self, atoms=None, invariants_only=True, num_layers=-1):
+        """Extracts the descriptors from MACE model.
+        :param atoms: ase.Atoms object
+        :param invariants_only: bool, if True only the invariant descriptors are returned
+        :param num_layers: int, number of layers to extract descriptors from, if -1 all layers are used
+        :return: np.ndarray (num_atoms, num_interactions, invariant_features) of invariant descriptors if num_models is 1 or list[np.ndarray] otherwise
+        """
+        if atoms is None and self.atoms is None:
+            raise ValueError("atoms not set")
+        if atoms is None:
+            atoms = self.atoms
+        if self.model_type != "MACE":
+            raise NotImplementedError("Only implemented for MACE models")
+        num_interactions = int(self.models[0].num_interactions)
+        if num_layers == -1:
+            num_layers = num_interactions
+        batch = self._atoms_to_batch(atoms)
+        descriptors = [model(batch.to_dict())["node_feats"] for model in self.models]
+
+        irreps_out = o3.Irreps(str(self.models[0].products[0].linear.irreps_out))
+        l_max = irreps_out.lmax
+        num_invariant_features = irreps_out.dim // (l_max + 1) ** 2
+        per_layer_features = [irreps_out.dim for _ in range(num_interactions)]
+        per_layer_features[-1] = (
+            num_invariant_features  # Equivariant features not created for the last layer
+        )
+
+        if invariants_only:
+            descriptors = [
+                extract_invariant(
+                    descriptor,
+                    num_layers=num_layers,
+                    num_features=num_invariant_features,
+                    l_max=l_max,
+                )
+                for descriptor in descriptors
+            ]
+        to_keep = np.sum(per_layer_features[:num_layers])
+        descriptors = [
+            descriptor[:, :to_keep].detach().cpu().numpy() for descriptor in descriptors
+        ]
+
+        if self.num_models == 1:
+            return descriptors[0]
+        return descriptors
