@@ -82,6 +82,7 @@ class MACELES(ScaleShiftMACE):
         compute_atomic_stresses: bool = False,
         lammps_mliap: bool = False,
         compute_bec: bool = False,
+        compute_node_feats: bool = True,
     ) -> Dict[str, Optional[torch.Tensor]]:
         ctx = prepare_graph(
             data,
@@ -202,15 +203,21 @@ class MACELES(ScaleShiftMACE):
             node_qs_list.append(node_qs)
             node_es_list.append(node_es)
 
-        node_feats_out = torch.cat(node_feats_list, dim=-1)
-        node_inter_es = torch.sum(torch.stack(node_es_list, dim=0), dim=0)
+        node_feats_out = (
+            torch.cat(node_feats_list, dim=-1) if compute_node_feats else None
+        )
+        node_inter_es = node_es_list[0]
+        for i in range(1, len(node_es_list)):
+            node_inter_es = node_inter_es + node_es_list[i]
         node_inter_es = self.scale_shift(node_inter_es, node_heads)
         inter_e = scatter_sum(node_inter_es, data["batch"], dim=-1, dim_size=num_graphs)
 
         total_energy = e0 + inter_e
-        node_energy = node_e0.clone().double() + node_inter_es.clone().double()
+        node_energy = node_e0.to(torch.float64) + node_inter_es.to(torch.float64)
 
-        les_q = torch.sum(torch.stack(node_qs_list, dim=1), dim=1)
+        les_q = node_qs_list[0]
+        for i in range(1, len(node_qs_list)):
+            les_q = les_q + node_qs_list[i]
         les_result = self.les(
             latent_charges=les_q,
             positions=positions,

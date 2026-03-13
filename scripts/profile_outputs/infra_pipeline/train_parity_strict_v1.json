@@ -1,0 +1,59 @@
+{
+  "candidate_mode": "eager",
+  "candidate_compile_mode": "default",
+  "candidate_tf32": true,
+  "candidate_amp": "none",
+  "loss_rel_tol": 0.08,
+  "param_rel_tol": 0.08,
+  "rows": [
+    {
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "num_atoms": 96,
+      "steps": 10,
+      "baseline_final_loss": 5.325500011444092,
+      "candidate_final_loss": 5.515131950378418,
+      "final_loss_rel_diff": 0.03560828814698827,
+      "max_loss_abs_diff": 0.5816993713378906,
+      "param_rel_diff_max": 0.006108551751822233,
+      "pass": true
+    },
+    {
+      "structure_name": "TiO2.cif",
+      "size": 3,
+      "num_atoms": 324,
+      "steps": 10,
+      "baseline_final_loss": 2677.428955078125,
+      "candidate_final_loss": 2675.48681640625,
+      "final_loss_rel_diff": 0.0007253744933890616,
+      "max_loss_abs_diff": 5.5087890625,
+      "param_rel_diff_max": 0.00795047264546156,
+      "pass": true
+    },
+    {
+      "structure_name": "AlN_mp-661_computed.cif",
+      "size": 2,
+      "num_atoms": 32,
+      "steps": 10,
+      "baseline_final_loss": 48.79435348510742,
+      "candidate_final_loss": 48.796817779541016,
+      "final_loss_rel_diff": 5.05036803970736e-05,
+      "max_loss_abs_diff": 0.0333404541015625,
+      "param_rel_diff_max": 0.0004346249043010175,
+      "pass": true
+    },
+    {
+      "structure_name": "AlN_mp-661_computed.cif",
+      "size": 3,
+      "num_atoms": 108,
+      "steps": 10,
+      "baseline_final_loss": 1.00856351852417,
+      "candidate_final_loss": 0.9362783432006836,
+      "final_loss_rel_diff": 0.07167141582633237,
+      "max_loss_abs_diff": 0.4715137481689453,
+      "param_rel_diff_max": 0.0008234301349148154,
+      "pass": true
+    }
+  ],
+  "all_pass": true
+}

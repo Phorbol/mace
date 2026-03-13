@@ -76,6 +76,19 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default="float64",
     )
     parser.add_argument(
+        "--tf32",
+        help="enable TensorFloat32 (CUDA matmul/cuDNN)",
+        type=str2bool,
+        default=False,
+    )
+    parser.add_argument(
+        "--amp",
+        help="mixed precision mode on CUDA",
+        type=str,
+        choices=["none", "bf16", "fp16"],
+        default="none",
+    )
+    parser.add_argument(
         "--distributed",
         help="train in multi-GPU data parallel mode",
         action="store_true",
@@ -384,6 +397,18 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         help="Number of workers for data loading",
         type=int,
         default=0,
+    )
+    parser.add_argument(
+        "--persistent_workers",
+        help="Keep dataloader workers alive between epochs (when num_workers > 0)",
+        default=True,
+        type=str2bool,
+    )
+    parser.add_argument(
+        "--prefetch_factor",
+        help="Number of prefetched batches per worker (when num_workers > 0)",
+        type=int,
+        default=2,
     )
     parser.add_argument(
         "--pin_memory",
@@ -777,6 +802,24 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--scheduler_patience", help="Learning rate factor", type=int, default=50
+    )
+    parser.add_argument(
+        "--enable_compile_train",
+        help="Enable torch.compile for training model",
+        default=False,
+        type=str2bool,
+    )
+    parser.add_argument(
+        "--compile_mode_train",
+        help="Torch compile mode for training model",
+        type=str,
+        default="default",
+    )
+    parser.add_argument(
+        "--compile_fullgraph_train",
+        help="Use fullgraph mode in torch.compile for training model",
+        default=False,
+        type=str2bool,
     )
     parser.add_argument(
         "--lr_scheduler_gamma",

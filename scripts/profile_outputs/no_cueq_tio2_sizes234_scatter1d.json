@@ -1,0 +1,177 @@
+{
+  "device": "NVIDIA GeForce RTX 3060",
+  "torch": "2.8.0+cu128",
+  "cueq_enabled": false,
+  "compile_mode": "default",
+  "elapsed_s": 211.3187403678894,
+  "results": [
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "eager",
+      "num_atoms": 96,
+      "num_edges": 4544,
+      "train": {
+        "mean_ms": 56.22542357444763,
+        "p50_ms": 56.15359878540039,
+        "min_ms": 55.14137649536133,
+        "max_ms": 57.45868682861328,
+        "std_ms": 0.6584663167698589,
+        "steps_per_s": 17.785548537058293,
+        "peak_mem_mb": 1125.66650390625
+      },
+      "infer": {
+        "mean_ms": 33.01087085405985,
+        "p50_ms": 33.19193649291992,
+        "min_ms": 31.500255584716797,
+        "max_ms": 33.83808135986328,
+        "std_ms": 0.6430133722600679,
+        "steps_per_s": 30.29305117156625,
+        "peak_mem_mb": 407.90771484375
+      },
+      "infer_compute_force": true,
+      "note": ""
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "compile",
+      "num_atoms": 96,
+      "num_edges": 4544,
+      "train": {
+        "mean_ms": 91.58573818206787,
+        "p50_ms": 90.6015510559082,
+        "min_ms": 83.92704010009766,
+        "max_ms": 100.57830047607422,
+        "std_ms": 5.090061962333986,
+        "steps_per_s": 10.918730578030063,
+        "peak_mem_mb": 974.86572265625
+      },
+      "infer": {
+        "mean_ms": 11.074346542358398,
+        "p50_ms": 10.827263832092285,
+        "min_ms": 10.672127723693848,
+        "max_ms": 11.970560073852539,
+        "std_ms": 0.45181590914322245,
+        "steps_per_s": 90.29878161886015,
+        "peak_mem_mb": 559.76318359375
+      },
+      "infer_compute_force": false,
+      "note": "compile+force failed, fallback to energy-only: BackendCompilerFailed"
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 3,
+      "mode": "eager",
+      "num_atoms": 324,
+      "num_edges": 15336,
+      "train": {
+        "mean_ms": 231.41371059417725,
+        "p50_ms": 225.4028778076172,
+        "min_ms": 194.9654998779297,
+        "max_ms": 287.3825378417969,
+        "std_ms": 28.234992374767156,
+        "steps_per_s": 4.321265137801916,
+        "peak_mem_mb": 3572.96728515625
+      },
+      "infer": {
+        "mean_ms": 112.22403621673584,
+        "p50_ms": 110.39651107788086,
+        "min_ms": 106.74006652832031,
+        "max_ms": 120.55757141113281,
+        "std_ms": 4.210592976110088,
+        "steps_per_s": 8.910747053053072,
+        "peak_mem_mb": 1254.98681640625
+      },
+      "infer_compute_force": true,
+      "note": ""
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 3,
+      "mode": "compile",
+      "num_atoms": 324,
+      "num_edges": 15336,
+      "train": {
+        "mean_ms": 215.85766220092773,
+        "p50_ms": 209.65491485595703,
+        "min_ms": 170.9464569091797,
+        "max_ms": 279.1946105957031,
+        "std_ms": 33.46029042572165,
+        "steps_per_s": 4.632682434358831,
+        "peak_mem_mb": 3076.83203125
+      },
+      "infer": {
+        "mean_ms": 33.352319399515785,
+        "p50_ms": 33.65888023376465,
+        "min_ms": 32.01023864746094,
+        "max_ms": 35.13343811035156,
+        "std_ms": 0.8237051454072954,
+        "steps_per_s": 29.98292226760452,
+        "peak_mem_mb": 1724.0703125
+      },
+      "infer_compute_force": false,
+      "note": "compile+force failed, fallback to energy-only: BackendCompilerFailed"
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 4,
+      "mode": "eager",
+      "num_atoms": 768,
+      "num_edges": 36352,
+      "train": {
+        "mean_ms": 428.69898796081543,
+        "p50_ms": 401.80010986328125,
+        "min_ms": 399.2119140625,
+        "max_ms": 545.9793701171875,
+        "std_ms": 44.877026806174314,
+        "steps_per_s": 2.3326390499699605,
+        "peak_mem_mb": 8338.75634765625
+      },
+      "infer": {
+        "mean_ms": 237.55311266581217,
+        "p50_ms": 236.23782348632812,
+        "min_ms": 234.7461395263672,
+        "max_ms": 244.210693359375,
+        "std_ms": 2.8490923940863944,
+        "steps_per_s": 4.2095849167288835,
+        "peak_mem_mb": 2892.90576171875
+      },
+      "infer_compute_force": true,
+      "note": ""
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 4,
+      "mode": "compile",
+      "num_atoms": 768,
+      "num_edges": 36352,
+      "train": {
+        "mean_ms": 393.297269821167,
+        "p50_ms": 383.9134826660156,
+        "min_ms": 382.0533752441406,
+        "max_ms": 476.8009338378906,
+        "std_ms": 24.041958022459575,
+        "steps_per_s": 2.5426060050065993,
+        "peak_mem_mb": 7174.9501953125
+      },
+      "infer": {
+        "mean_ms": 65.31699148813884,
+        "p50_ms": 64.80383682250977,
+        "min_ms": 60.285953521728516,
+        "max_ms": 73.27436828613281,
+        "std_ms": 4.028023441757683,
+        "steps_per_s": 15.309951931597979,
+        "peak_mem_mb": 3982.5908203125
+      },
+      "infer_compute_force": false,
+      "note": "compile+force failed, fallback to energy-only: BackendCompilerFailed"
+    }
+  ]
+}

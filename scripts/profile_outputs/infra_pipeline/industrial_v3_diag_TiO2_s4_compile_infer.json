@@ -1,0 +1,197 @@
+{
+  "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+  "structure_name": "TiO2.cif",
+  "size": 4,
+  "mode": "compile",
+  "task": "infer",
+  "compute_force": false,
+  "note": "compile+infer force diagnostic failed, fallback to energy-only: BackendCompilerFailed",
+  "num_atoms": 768,
+  "num_edges": 36352,
+  "device": "NVIDIA GeForce RTX 3060",
+  "torch": "2.8.0+cu128",
+  "tf32": true,
+  "amp": "none",
+  "top_ops": [
+    {
+      "op": "aten::bmm",
+      "calls": 12,
+      "self_device_ms": 24.002837,
+      "device_total_ms": 24.117399,
+      "self_cpu_ms": 0.21645499999999812,
+      "self_device_mem_mb": 12.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "aten::mm",
+      "calls": 53,
+      "self_device_ms": 15.134380999999998,
+      "device_total_ms": 15.134380999999998,
+      "self_cpu_ms": 0.7441409999999937,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_64x64_16x6_tt_align4>(cutlass_80_tensorop_s1688gemm_64x64_16x6_tt_align4::Params)",
+      "calls": 2,
+      "self_device_ms": 12.161869,
+      "device_total_ms": 12.161869,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_scatter_add_60",
+      "calls": 1,
+      "self_device_ms": 7.3965459999999945,
+      "device_total_ms": 7.3965459999999945,
+      "self_cpu_ms": 0.005889999999999418,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "io_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_scatter_add_60",
+      "calls": 1,
+      "self_device_ms": 7.3965459999999945,
+      "device_total_ms": 7.3965459999999945,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "io_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_cat_scatter_add_15",
+      "calls": 1,
+      "self_device_ms": 5.510288,
+      "device_total_ms": 5.510288,
+      "self_cpu_ms": 0.006279999999999745,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "io_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_cat_scatter_add_15",
+      "calls": 1,
+      "self_device_ms": 5.510288,
+      "device_total_ms": 5.510288,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "io_bound_likely"
+    },
+    {
+      "op": "ampere_sgemm_32x128_nn",
+      "calls": 15,
+      "self_device_ms": 4.308358999999992,
+      "device_total_ms": 4.308358999999992,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "ampere_sgemm_32x128_tn",
+      "calls": 6,
+      "self_device_ms": 4.176998000000014,
+      "device_total_ms": 4.176998000000014,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_clone_31",
+      "calls": 1,
+      "self_device_ms": 4.160965,
+      "device_total_ms": 4.160965,
+      "self_cpu_ms": 0.009850000000000364,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_clone_31",
+      "calls": 1,
+      "self_device_ms": 4.160965,
+      "device_total_ms": 4.160965,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_256x64_16x4_nn_align4>(cutlass_80_tensorop_s1688gemm_256x64_16x4_nn_align4::Params)",
+      "calls": 3,
+      "self_device_ms": 3.622110999999999,
+      "device_total_ms": 3.622110999999999,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_clone_25",
+      "calls": 2,
+      "self_device_ms": 2.628823000000013,
+      "device_total_ms": 2.628823000000013,
+      "self_cpu_ms": 0.01700999999999931,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_clone_25",
+      "calls": 2,
+      "self_device_ms": 2.628823000000013,
+      "device_total_ms": 2.628823000000013,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int, float, float, float, float, false, true, true, false, 5, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",
+      "calls": 6,
+      "self_device_ms": 2.5289490000000097,
+      "device_total_ms": 2.5289490000000097,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "void gemv2N_kernel<int, int, float, float, float, float, 128, 2, 4, 4, 1, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",
+      "calls": 4,
+      "self_device_ms": 2.505302999999996,
+      "device_total_ms": 2.505302999999996,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_mm_55",
+      "calls": 1,
+      "self_device_ms": 2.4641169999999986,
+      "device_total_ms": 2.4641169999999986,
+      "self_cpu_ms": 0.004649999999999636,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_mm_55",
+      "calls": 1,
+      "self_device_ms": 2.4641169999999986,
+      "device_total_ms": 2.4641169999999986,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "ampere_sgemm_128x64_tt",
+      "calls": 3,
+      "self_device_ms": 2.376022999999999,
+      "device_total_ms": 2.376022999999999,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "void cutlass::Kernel2<cutlass_80_simt_sgemm_128x256_8x4_nn_align1>(cutlass_80_simt_sgemm_128x256_8x4_nn_align1::Params)",
+      "calls": 1,
+      "self_device_ms": 2.2623559999999996,
+      "device_total_ms": 2.2623559999999996,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    }
+  ]
+}

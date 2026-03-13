@@ -12,6 +12,10 @@ from typing import Optional
 import torch
 
 
+def _normalize_dim(dim: int, ndim: int) -> int:
+    return dim + ndim if dim < 0 else dim
+
+
 def _broadcast(src: torch.Tensor, other: torch.Tensor, dim: int):
     if dim < 0:
         dim = other.dim() + dim
@@ -33,6 +37,8 @@ def scatter_sum(
     reduce: str = "sum",
 ) -> torch.Tensor:
     assert reduce == "sum"  # for now, TODO
+    dim = _normalize_dim(dim, src.dim())
+
     index = _broadcast(index, src, dim)
     if out is None:
         size = list(src.size())

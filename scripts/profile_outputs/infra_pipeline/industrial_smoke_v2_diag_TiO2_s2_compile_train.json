@@ -1,0 +1,286 @@
+{
+  "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+  "structure_name": "TiO2.cif",
+  "size": 2,
+  "mode": "compile",
+  "task": "train",
+  "compute_force": false,
+  "num_atoms": 96,
+  "num_edges": 4544,
+  "device": "NVIDIA GeForce RTX 3060",
+  "torch": "2.8.0+cu128",
+  "tf32": true,
+  "amp": "bf16",
+  "top_ops": [
+    {
+      "op": "aten::bmm",
+      "calls": 99,
+      "self_device_ms": 18.996431000000012,
+      "device_total_ms": 19.209450000000004,
+      "self_cpu_ms": 0.8799670000000005,
+      "self_device_mem_mb": 18.57421875,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "aten::mm",
+      "calls": 238,
+      "self_device_ms": 7.304690000000012,
+      "device_total_ms": 7.304690000000012,
+      "self_cpu_ms": 2.1749840000000065,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_add_slice_backward_69",
+      "calls": 1,
+      "self_device_ms": 5.414508999999998,
+      "device_total_ms": 5.414508999999998,
+      "self_cpu_ms": 0.013690999999998893,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_add_slice_backward_69",
+      "calls": 1,
+      "self_device_ms": 5.414508999999998,
+      "device_total_ms": 5.414508999999998,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "aten::scatter_reduce_",
+      "calls": 5,
+      "self_device_ms": 5.340014000000002,
+      "device_total_ms": 5.340014000000002,
+      "self_cpu_ms": 0.0789820000000027,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "io_bound_likely"
+    },
+    {
+      "op": "void at::native::_scatter_gather_elementwise_kernel<128, 8, at::native::_cuda_scatter_gather_internal_kernel<true, c10::BFloat16, long>::operator()<at::native::ReduceAdd>(at::TensorIterator&, long, long, long, at::native::ReduceAdd const&)::{lambda(int)#1}>(int, at::native::_cuda_scatter_gather_internal_kernel<true, c10::BFloat16, long>::operator()<at::native::ReduceAdd>(at::TensorIterator&, long, long, long, at::native::ReduceAdd const&)::{lambda(int)#1})",
+      "calls": 5,
+      "self_device_ms": 5.340014000000002,
+      "device_total_ms": 5.340014000000002,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "io_bound_likely"
+    },
+    {
+      "op": "void cutlass::Kernel2<cutlass_75_wmma_tensorop_bf16_s161616gemm_bf16_32x32_32x1_nt_align1>(cutlass_75_wmma_tensorop_bf16_s161616gemm_bf16_32x32_32x1_nt_align1::Params)",
+      "calls": 8,
+      "self_device_ms": 3.7934869999999936,
+      "device_total_ms": 3.7934869999999936,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_32x1_nn_align8>(cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_32x1_nn_align8::Params)",
+      "calls": 29,
+      "self_device_ms": 3.305370000000009,
+      "device_total_ms": 3.305370000000009,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "void cutlass::Kernel2<cutlass_75_wmma_tensorop_bf16_s161616gemm_bf16_32x32_32x1_nn_align1>(cutlass_75_wmma_tensorop_bf16_s161616gemm_bf16_32x32_32x1_nn_align1::Params)",
+      "calls": 9,
+      "self_device_ms": 2.3354389999999965,
+      "device_total_ms": 2.3354389999999965,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "void gemv2N_kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, 128, 2, 4, 4, 1, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>)",
+      "calls": 12,
+      "self_device_ms": 1.8098490000000012,
+      "device_total_ms": 1.8098490000000012,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_32x1_tt_align8>(cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_32x1_tt_align8::Params)",
+      "calls": 6,
+      "self_device_ms": 1.785659999999998,
+      "device_total_ms": 1.785659999999998,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_32x1_tn_align8>(cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_32x1_tn_align8::Params)",
+      "calls": 6,
+      "self_device_ms": 1.7376280000000006,
+      "device_total_ms": 1.7376280000000006,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_32x1_nt_align8>(cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_32x1_nt_align8::Params)",
+      "calls": 8,
+      "self_device_ms": 1.4355549999999966,
+      "device_total_ms": 1.4355549999999966,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_add_slice_backward_41",
+      "calls": 1,
+      "self_device_ms": 1.41725,
+      "device_total_ms": 1.41725,
+      "self_cpu_ms": 0.007809999999999491,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_add_slice_backward_41",
+      "calls": 1,
+      "self_device_ms": 1.41725,
+      "device_total_ms": 1.41725,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "std::enable_if<true, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, true, true, true, false, 7, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>)",
+      "calls": 11,
+      "self_device_ms": 1.2567720000000027,
+      "device_total_ms": 1.2567720000000027,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "void gemmk1_kernel<int, float, 256, 5, false, false, false, false, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float, 0>(cublasGemmk1Params<float, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float, biasType<cublasGemvTensorStridedBatched<__nv_bfloat16>::value_type, float>::type>)",
+      "calls": 11,
+      "self_device_ms": 1.150984000000004,
+      "device_total_ms": 1.150984000000004,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_add_126",
+      "calls": 1,
+      "self_device_ms": 1.1357520000000003,
+      "device_total_ms": 1.1357520000000003,
+      "self_cpu_ms": 0.02712199999999939,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_add_126",
+      "calls": 1,
+      "self_device_ms": 1.1357520000000003,
+      "device_total_ms": 1.1357520000000003,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, false, true, true, false, 5, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>)",
+      "calls": 9,
+      "self_device_ms": 0.921739000000006,
+      "device_total_ms": 0.921739000000006,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_cat_30",
+      "calls": 1,
+      "self_device_ms": 0.7407520000000004,
+      "device_total_ms": 0.7407520000000004,
+      "self_cpu_ms": 0.0063100000000004,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_cat_30",
+      "calls": 1,
+      "self_device_ms": 0.7407520000000004,
+      "device_total_ms": 0.7407520000000004,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_32x1_tn_align8>(cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_32x1_tn_align8::Params)",
+      "calls": 15,
+      "self_device_ms": 0.5155429999999942,
+      "device_total_ms": 0.5155429999999942,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_clone_106",
+      "calls": 2,
+      "self_device_ms": 0.5128859999999986,
+      "device_total_ms": 0.5128859999999986,
+      "self_cpu_ms": 0.013390999999997802,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_clone_106",
+      "calls": 2,
+      "self_device_ms": 0.5128859999999986,
+      "device_total_ms": 0.5128859999999986,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_add_131",
+      "calls": 1,
+      "self_device_ms": 0.5032849999999999,
+      "device_total_ms": 0.5032849999999999,
+      "self_cpu_ms": 0.008090000000001964,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_add_131",
+      "calls": 1,
+      "self_device_ms": 0.5032849999999999,
+      "device_total_ms": 0.5032849999999999,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "void gemmk1_kernel<int, float, 256, 5, true, false, false, false, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float, 0>(cublasGemmk1Params<float, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float, biasType<cublasGemvTensorStridedBatched<__nv_bfloat16>::value_type, float>::type>)",
+      "calls": 4,
+      "self_device_ms": 0.4473520000000026,
+      "device_total_ms": 0.4473520000000026,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_64x1_nt_align8>(cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_64x1_nt_align8::Params)",
+      "calls": 6,
+      "self_device_ms": 0.4085350000000035,
+      "device_total_ms": 0.4085350000000035,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_64x1_tn_align8>(cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_64x1_tn_align8::Params)",
+      "calls": 7,
+      "self_device_ms": 0.381559999999994,
+      "device_total_ms": 0.381559999999994,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    }
+  ]
+}

@@ -1,0 +1,374 @@
+{
+  "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+  "structure_name": "TiO2.cif",
+  "size": 4,
+  "mode": "compile",
+  "task": "infer",
+  "compute_force": false,
+  "num_atoms": 768,
+  "num_edges": 36352,
+  "device": "NVIDIA GeForce RTX 3060",
+  "torch": "2.8.0+cu128",
+  "top_ops": [
+    {
+      "op": "aten::bmm",
+      "calls": 12,
+      "self_device_ms": 32.43923900000001,
+      "device_total_ms": 32.55508100000001,
+      "self_cpu_ms": 0.12129299999999785,
+      "self_device_mem_mb": 12.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "ampere_sgemm_128x128_tt",
+      "calls": 2,
+      "self_device_ms": 20.376255000000004,
+      "device_total_ms": 20.376255000000004,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "aten::mm",
+      "calls": 53,
+      "self_device_ms": 16.31222199999999,
+      "device_total_ms": 16.31222199999999,
+      "self_cpu_ms": 0.392976999999998,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_scatter_add_58",
+      "calls": 1,
+      "self_device_ms": 7.372872000000003,
+      "device_total_ms": 7.372872000000003,
+      "self_cpu_ms": 0.0030100000000002182,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "io_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_scatter_add_58",
+      "calls": 1,
+      "self_device_ms": 7.372872000000003,
+      "device_total_ms": 7.372872000000003,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "io_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_cat_scatter_add_15",
+      "calls": 1,
+      "self_device_ms": 5.507950000000001,
+      "device_total_ms": 5.507950000000001,
+      "self_cpu_ms": 0.007291000000001077,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "io_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_cat_scatter_add_15",
+      "calls": 1,
+      "self_device_ms": 5.507950000000001,
+      "device_total_ms": 5.507950000000001,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "io_bound_likely"
+    },
+    {
+      "op": "ampere_sgemm_32x128_nn",
+      "calls": 33,
+      "self_device_ms": 5.352932999999984,
+      "device_total_ms": 5.352932999999984,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "ampere_sgemm_32x128_tn",
+      "calls": 8,
+      "self_device_ms": 4.192859000000019,
+      "device_total_ms": 4.192859000000019,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_clone_31",
+      "calls": 1,
+      "self_device_ms": 4.159355,
+      "device_total_ms": 4.159355,
+      "self_cpu_ms": 0.0044399999999996,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_clone_31",
+      "calls": 1,
+      "self_device_ms": 4.159355,
+      "device_total_ms": 4.159355,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "ampere_sgemm_128x128_nn",
+      "calls": 3,
+      "self_device_ms": 3.8252049999999964,
+      "device_total_ms": 3.8252049999999964,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "ampere_sgemm_128x64_nn",
+      "calls": 5,
+      "self_device_ms": 2.931272999999994,
+      "device_total_ms": 2.931272999999994,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "ampere_sgemm_128x32_tt",
+      "calls": 3,
+      "self_device_ms": 2.882343999999992,
+      "device_total_ms": 2.882343999999992,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_clone_25",
+      "calls": 2,
+      "self_device_ms": 2.6319720000000086,
+      "device_total_ms": 2.6319720000000086,
+      "self_cpu_ms": 0.009951000000000022,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_clone_25",
+      "calls": 2,
+      "self_device_ms": 2.6319720000000086,
+      "device_total_ms": 2.6319720000000086,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int, float, float, float, float, false, true, true, false, 5, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",
+      "calls": 6,
+      "self_device_ms": 2.5496359999999987,
+      "device_total_ms": 2.5496359999999987,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "void gemv2N_kernel<int, int, float, float, float, float, 128, 2, 4, 4, 1, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",
+      "calls": 4,
+      "self_device_ms": 2.5044500000000096,
+      "device_total_ms": 2.5044500000000096,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "void gemv2N_kernel<int, int, float, float, float, float, 128, 1, 2, 4, 1, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",
+      "calls": 2,
+      "self_device_ms": 1.700887999999999,
+      "device_total_ms": 1.700887999999999,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_cat_52",
+      "calls": 2,
+      "self_device_ms": 1.6176549999999916,
+      "device_total_ms": 1.6176549999999916,
+      "self_cpu_ms": 0.006479999999999563,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_cat_52",
+      "calls": 2,
+      "self_device_ms": 1.6176549999999916,
+      "device_total_ms": 1.6176549999999916,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_mul_46",
+      "calls": 1,
+      "self_device_ms": 1.5468700000000026,
+      "device_total_ms": 1.5468700000000026,
+      "self_cpu_ms": 0.0036900000000005093,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_mul_46",
+      "calls": 1,
+      "self_device_ms": 1.5468700000000026,
+      "device_total_ms": 1.5468700000000026,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "std::enable_if<true, void>::type internal::gemvx::kernel<int, int, float, float, float, float, true, true, true, false, 6, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",
+      "calls": 1,
+      "self_device_ms": 1.4828050000000004,
+      "device_total_ms": 1.4828050000000004,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_bmm_42",
+      "calls": 1,
+      "self_device_ms": 1.4045320000000028,
+      "device_total_ms": 1.4045320000000028,
+      "self_cpu_ms": 0.006289999999999964,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_bmm_42",
+      "calls": 1,
+      "self_device_ms": 1.4045320000000028,
+      "device_total_ms": 1.4045320000000028,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_cat_56",
+      "calls": 1,
+      "self_device_ms": 1.2072179999999935,
+      "device_total_ms": 1.2072179999999935,
+      "self_cpu_ms": 0.0038100000000004003,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_cat_56",
+      "calls": 1,
+      "self_device_ms": 1.2072179999999935,
+      "device_total_ms": 1.2072179999999935,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_cat_54",
+      "calls": 1,
+      "self_device_ms": 0.7832429999999949,
+      "device_total_ms": 0.7832429999999949,
+      "self_cpu_ms": 0.0046710000000002765,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_cat_54",
+      "calls": 1,
+      "self_device_ms": 0.7832429999999949,
+      "device_total_ms": 0.7832429999999949,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "ampere_sgemm_64x64_nn",
+      "calls": 4,
+      "self_device_ms": 0.606345000000002,
+      "device_total_ms": 0.606345000000002,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_cat_49",
+      "calls": 1,
+      "self_device_ms": 0.595112000000001,
+      "device_total_ms": 0.595112000000001,
+      "self_cpu_ms": 0.0043100000000004,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_cat_49",
+      "calls": 1,
+      "self_device_ms": 0.595112000000001,
+      "device_total_ms": 0.595112000000001,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_cat_45",
+      "calls": 1,
+      "self_device_ms": 0.567464,
+      "device_total_ms": 0.567464,
+      "self_cpu_ms": 0.0034200000000000727,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_cat_45",
+      "calls": 1,
+      "self_device_ms": 0.567464,
+      "device_total_ms": 0.567464,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_cat_48",
+      "calls": 1,
+      "self_device_ms": 0.5662479999999996,
+      "device_total_ms": 0.5662479999999996,
+      "self_cpu_ms": 0.004279999999999745,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_cat_48",
+      "calls": 1,
+      "self_device_ms": 0.5662479999999996,
+      "device_total_ms": 0.5662479999999996,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_mul_silu_9",
+      "calls": 6,
+      "self_device_ms": 0.502117999999995,
+      "device_total_ms": 0.502117999999995,
+      "self_cpu_ms": 0.0194399999999996,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_mul_silu_9",
+      "calls": 6,
+      "self_device_ms": 0.502117999999995,
+      "device_total_ms": 0.502117999999995,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    },
+    {
+      "op": "triton_poi_fused_cat_mul_40",
+      "calls": 1,
+      "self_device_ms": 0.41210199999999897,
+      "device_total_ms": 0.41210199999999897,
+      "self_cpu_ms": 0.005159999999999855,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "mixed"
+    }
+  ]
+}

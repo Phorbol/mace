@@ -116,9 +116,11 @@ def get_model_output(
     batch: Dict[str, torch.Tensor],
     compute_stress: bool,
     compute_bec: bool,
+    return_descriptors: bool,
 ) -> Dict[str, torch.Tensor]:
     forward_args = {
         "compute_stress": compute_stress,
+        "compute_node_feats": return_descriptors,
     }
     if compute_bec:
         # Only add `compute_bec` if it is requested
@@ -189,7 +191,11 @@ def run(args: argparse.Namespace) -> None:
     for batch in data_loader:
         batch = batch.to(device)
         output = get_model_output(
-            model, batch.to_dict(), args.compute_stress, args.compute_bec
+            model,
+            batch.to_dict(),
+            args.compute_stress,
+            args.compute_bec,
+            args.return_descriptors,
         )
         energies_list.append(torch_tools.to_numpy(output["energy"]))
         if args.compute_stress:

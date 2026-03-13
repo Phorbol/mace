@@ -1,0 +1,62 @@
+{
+  "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+  "structure_name": "TiO2.cif",
+  "size": 2,
+  "mode": "compile",
+  "task": "train",
+  "compute_force": false,
+  "note": "",
+  "num_atoms": 96,
+  "num_edges": 4544,
+  "device": "NVIDIA GeForce RTX 3060",
+  "torch": "2.8.0+cu128",
+  "tf32": true,
+  "amp": "bf16",
+  "top_ops": [
+    {
+      "op": "aten::bmm",
+      "calls": 99,
+      "self_device_ms": 18.90441799999999,
+      "device_total_ms": 19.143414999999987,
+      "self_cpu_ms": 1.0011790000000147,
+      "self_device_mem_mb": 18.57421875,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "aten::mm",
+      "calls": 238,
+      "self_device_ms": 7.440114000000017,
+      "device_total_ms": 7.440114000000017,
+      "self_cpu_ms": 2.1276590000000053,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    },
+    {
+      "op": "aten::scatter_reduce_",
+      "calls": 5,
+      "self_device_ms": 5.4687819999999965,
+      "device_total_ms": 5.4687819999999965,
+      "self_cpu_ms": 0.07975199999999813,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "io_bound_likely"
+    },
+    {
+      "op": "void at::native::_scatter_gather_elementwise_kernel<128, 8, at::native::_cuda_scatter_gather_internal_kernel<true, c10::BFloat16, long>::operator()<at::native::ReduceAdd>(at::TensorIterator&, long, long, long, at::native::ReduceAdd const&)::{lambda(int)#1}>(int, at::native::_cuda_scatter_gather_internal_kernel<true, c10::BFloat16, long>::operator()<at::native::ReduceAdd>(at::TensorIterator&, long, long, long, at::native::ReduceAdd const&)::{lambda(int)#1})",
+      "calls": 5,
+      "self_device_ms": 5.4687819999999965,
+      "device_total_ms": 5.4687819999999965,
+      "self_cpu_ms": 0.0,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "io_bound_likely"
+    },
+    {
+      "op": "triton_poi_fused_add_slice_backward_69",
+      "calls": 1,
+      "self_device_ms": 5.418191999999996,
+      "device_total_ms": 5.418191999999996,
+      "self_cpu_ms": 0.013610000000000582,
+      "self_device_mem_mb": 0.0,
+      "intensity_hint": "compute_bound_likely"
+    }
+  ]
+}

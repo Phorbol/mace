@@ -1,0 +1,26 @@
+{
+  "amp": "none",
+  "tf32": true,
+  "energy_abs_tol": 0.2,
+  "energy_rel_tol": 0.03,
+  "force_abs_tol": 0.005,
+  "force_rel_tol": 0.05,
+  "rows": [
+    {
+      "structure_name": "TiO2.cif",
+      "size": 4,
+      "num_atoms": 768,
+      "num_edges": 36352,
+      "amp": "none",
+      "tf32": true,
+      "energy_abs_max": 7.62939453125e-06,
+      "energy_rel_max": 1.3631925810386747e-07,
+      "energy_rel_rms": 1.3631927992884434e-07,
+      "force_abs_max": 8.584186434745789e-05,
+      "force_rel_max": 1.954710602760315,
+      "force_rel_rms": 0.0004519968424438171,
+      "pass": true
+    }
+  ],
+  "all_pass": true
+}

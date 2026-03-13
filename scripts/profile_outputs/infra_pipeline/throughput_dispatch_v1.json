@@ -1,0 +1,49 @@
+{
+  "device": "NVIDIA GeForce RTX 3060",
+  "jobs": 24,
+  "dispatch_min_atoms": 200,
+  "tf32": true,
+  "amp": "none",
+  "rows": [
+    {
+      "variant": "eager",
+      "jobs": 24,
+      "elapsed_s": 2.1522981000016443,
+      "throughput_jobs_per_s": 11.150871712418304,
+      "mean_ms_per_job": 89.67908750006852,
+      "peak_mem_mb": 2744.06591796875,
+      "route_stats": {
+        "eager": 24,
+        "compile": 0
+      }
+    },
+    {
+      "variant": "compile",
+      "jobs": 24,
+      "elapsed_s": 1.6053102070000023,
+      "throughput_jobs_per_s": 14.950381487233617,
+      "mean_ms_per_job": 66.88792529166676,
+      "peak_mem_mb": 4426.443359375,
+      "route_stats": {
+        "eager": 0,
+        "compile": 24
+      }
+    },
+    {
+      "variant": "auto",
+      "jobs": 24,
+      "elapsed_s": 1.8942468029999873,
+      "throughput_jobs_per_s": 12.66994351633078,
+      "mean_ms_per_job": 78.92695012499946,
+      "peak_mem_mb": 4426.443359375,
+      "route_stats": {
+        "eager": 12,
+        "compile": 12
+      }
+    }
+  ],
+  "throughput_speedup_auto_vs_eager_x": 1.136228973221954,
+  "throughput_speedup_auto_vs_compile_x": 0.8474662353699709,
+  "peak_mem_auto_minus_eager_mb": 1682.37744140625,
+  "peak_mem_auto_minus_compile_mb": 0.0
+}

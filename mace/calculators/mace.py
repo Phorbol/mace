@@ -8,6 +8,7 @@ import logging
 
 # pylint: disable=wrong-import-position
 import os
+from contextlib import nullcontext
 from glob import glob
 from pathlib import Path
 from typing import List, Union
@@ -90,6 +91,10 @@ class MACECalculator(Calculator):
         model_type="MACE",
         compile_mode=None,
         fullgraph=True,
+        auto_compile_dispatch: bool = True,
+        compile_dispatch_min_atoms: int = 200,
+        tf32: bool = False,
+        amp: str = "none",
         enable_cueq=False,
         enable_oeq=False,
         **kwargs,
@@ -113,6 +118,17 @@ class MACECalculator(Calculator):
         if enable_oeq and not OEQ_AVAILABLE:
             raise ImportError(
                 "openequivariance is not installed so OEq acceleration cannot be used"
+            )
+        if (
+            compile_mode is None
+            and auto_compile_dispatch
+            and device == "cuda"
+            and not (enable_cueq or enable_oeq)
+        ):
+            compile_mode = "default"
+            logging.info(
+                "compile_mode not provided: enabling default compile mode "
+                "for automatic eager/compile dispatch on CUDA."
             )
         if "model_path" in kwargs:
             deprecation_message = (
@@ -141,6 +157,23 @@ class MACECalculator(Calculator):
 
         self.model_type = model_type
         self.compute_atomic_stresses = False
+        self.amp = amp
+        self.amp_dtype = None
+        if amp == "bf16":
+            self.amp_dtype = torch.bfloat16
+        elif amp == "fp16":
+            self.amp_dtype = torch.float16
+        elif amp != "none":
+            raise ValueError(f"Unsupported amp mode: {amp}")
+        if self.amp_dtype is not None and device != "cuda":
+            logging.warning("AMP requested but device is not CUDA; disabling AMP.")
+            self.amp_dtype = None
+        if device == "cuda":
+            torch.backends.cuda.matmul.allow_tf32 = tf32
+            torch.backends.cudnn.allow_tf32 = tf32
+            torch.set_float32_matmul_precision("high" if tf32 else "highest")
+        logging.info(f"Calculator TF32 enabled: {tf32}")
+        logging.info(f"Calculator AMP mode: {amp}")
 
         if model_type not in [
             "MACE",
@@ -224,19 +257,14 @@ class MACECalculator(Calculator):
             ]:
                 self.implemented_properties.extend(["dipole_var"])
 
-        if compile_mode is not None:
-            logging.info(f"Torch compile is enabled with mode: {compile_mode}")
-            self.models = [
-                torch.compile(
-                    prepare(extract_model)(model=model, map_location=device),
-                    mode=compile_mode,
-                    fullgraph=fullgraph,
-                )
-                for model in self.models
-            ]
-            self.use_compile = True
-        else:
-            self.use_compile = False
+        self.compile_mode = compile_mode
+        self.fullgraph = fullgraph
+        self.auto_compile_dispatch = auto_compile_dispatch
+        self.compile_dispatch_min_atoms = compile_dispatch_min_atoms
+        self.last_dispatch_mode = "eager"
+        self.models_eager = None
+        self.models_compiled = None
+        self.use_compile = False
 
         # Ensure all models are on the same device
         for model in self.models:
@@ -317,9 +345,46 @@ class MACECalculator(Calculator):
                 run_e3nn_to_oeq(model, device=device).to(device)
                 for model in self.models
             ]
+
+        self.models_eager = self.models
+        if self.compile_mode is not None:
+            logging.info(
+                "Torch compile prepared for calculator "
+                f"(mode={self.compile_mode}, fullgraph={self.fullgraph})"
+            )
+            self.models_compiled = [
+                torch.compile(
+                    prepare(extract_model)(model=model, map_location=device),
+                    mode=self.compile_mode,
+                    fullgraph=self.fullgraph,
+                )
+                for model in self.models_eager
+            ]
+            if self.auto_compile_dispatch:
+                self.models = self.models_eager
+                self.use_compile = False
+                self.last_dispatch_mode = "eager"
+                logging.info(
+                    "Auto eager/compile dispatch is enabled with "
+                    f"compile_dispatch_min_atoms={self.compile_dispatch_min_atoms}"
+                )
+            else:
+                self.models = self.models_compiled
+                self.use_compile = True
+                self.last_dispatch_mode = "compile"
+                logging.info("Auto dispatch disabled: always using compile path")
+        else:
+            self.models = self.models_eager
+            self.use_compile = False
+            self.last_dispatch_mode = "eager"
+
         for model in self.models:
             for param in model.parameters():
                 param.requires_grad = False
+        if self.models_compiled is not None:
+            for model in self.models_compiled:
+                for param in model.parameters():
+                    param.requires_grad = False
 
     def check_state(self, atoms, tol: float = 1e-15) -> list:
         """
@@ -406,6 +471,31 @@ class MACECalculator(Calculator):
             batch_clone["positions"].requires_grad_(True)
         return batch_clone
 
+    def _autocast_context(self):
+        if self.device.type == "cuda" and self.amp_dtype is not None:
+            return torch.autocast(device_type="cuda", dtype=self.amp_dtype)
+        return nullcontext()
+
+    def _activate_model_pool(self, num_atoms: int):
+        if self.models_compiled is None:
+            self.models = self.models_eager
+            self.use_compile = False
+            self.last_dispatch_mode = "eager"
+            return
+        if not self.auto_compile_dispatch:
+            self.models = self.models_compiled
+            self.use_compile = True
+            self.last_dispatch_mode = "compile"
+            return
+        if num_atoms >= self.compile_dispatch_min_atoms:
+            self.models = self.models_compiled
+            self.use_compile = True
+            self.last_dispatch_mode = "compile"
+        else:
+            self.models = self.models_eager
+            self.use_compile = False
+            self.last_dispatch_mode = "eager"
+
     # pylint: disable=dangerous-default-value
     def calculate(self, atoms=None, properties=None, system_changes=all_changes):
         """
@@ -417,6 +507,7 @@ class MACECalculator(Calculator):
         """
         # call to base-class to set atoms attribute
         Calculator.calculate(self, atoms)
+        self._activate_model_pool(len(atoms))
 
         batch_base = self._atoms_to_batch(atoms)
 
@@ -430,13 +521,14 @@ class MACECalculator(Calculator):
         # copy from output of model() call to ret_tensors
         for i, model in enumerate(self.models):
             batch = self._clone_batch(batch_base)
-            out = model(
-                batch.to_dict(),
-                compute_stress=compute_stress,
-                training=self.use_compile,
-                compute_edge_forces=self.compute_atomic_stresses,
-                compute_atomic_stresses=self.compute_atomic_stresses,
-            )
+            with self._autocast_context():
+                out = model(
+                    batch.to_dict(),
+                    compute_stress=compute_stress,
+                    training=self.use_compile,
+                    compute_edge_forces=self.compute_atomic_stresses,
+                    compute_atomic_stresses=self.compute_atomic_stresses,
+                )
             if i == 0:
                 ret_tensors, node_e0 = self._create_result_tensors(
                     self.num_models, len(atoms), batch, out
@@ -517,15 +609,18 @@ class MACECalculator(Calculator):
             raise NotImplementedError(
                 "Only implemented for DipoleMACE or DipolePolarizabilityMACE models"
             )
+        self._activate_model_pool(len(atoms))
         batch = self._atoms_to_batch(atoms)
-        outputs = [
-            model(
-                self._clone_batch(batch).to_dict(),
-                compute_dielectric_derivatives=True,
-                training=self.use_compile,
-            )
-            for model in self.models
-        ]
+        outputs = []
+        for model in self.models:
+            with self._autocast_context():
+                outputs.append(
+                    model(
+                        self._clone_batch(batch).to_dict(),
+                        compute_dielectric_derivatives=True,
+                        training=self.use_compile,
+                    )
+                )
         dipole_derivatives = [
             output["dmu_dr"].clone().detach().cpu().numpy() for output in outputs
         ]
@@ -550,6 +645,7 @@ class MACECalculator(Calculator):
             atoms = self.atoms
         if self.model_type != "MACE":
             raise NotImplementedError("Only implemented for MACE models")
+        self._activate_model_pool(len(atoms))
         batch = self._atoms_to_batch(atoms)
         hessians = [
             model(
@@ -578,11 +674,22 @@ class MACECalculator(Calculator):
             atoms = self.atoms
         if self.model_type != "MACE":
             raise NotImplementedError("Only implemented for MACE models")
+        self._activate_model_pool(len(atoms))
         num_interactions = int(self.models[0].num_interactions)
         if num_layers == -1:
             num_layers = num_interactions
         batch = self._atoms_to_batch(atoms)
-        descriptors = [model(batch.to_dict())["node_feats"] for model in self.models]
+        descriptors = []
+        for model in self.models:
+            with self._autocast_context():
+                descriptors.append(
+                    model(
+                        batch.to_dict(),
+                        compute_force=False,
+                        compute_stress=False,
+                        compute_node_feats=True,
+                    )["node_feats"]
+                )
 
         irreps_out = o3.Irreps(str(self.models[0].products[0].linear.irreps_out))
         l_max = irreps_out.lmax

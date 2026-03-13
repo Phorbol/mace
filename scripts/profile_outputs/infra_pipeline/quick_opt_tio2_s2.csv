@@ -1,0 +1,3 @@
+structure_name,size,mode,num_atoms,num_edges,amp,compile_bucket_atoms,compile_bucket_edges,train_mean_ms,train_steps_per_s,train_peak_mem_mb,infer_mean_ms,infer_steps_per_s,infer_peak_mem_mb
+TiO2.cif,2,eager,96,4544,none,,,183.7638931274414,5.441765425085404,1124.4794921875,34.35037612915039,29.11176274286501,407.90771484375
+TiO2.cif,2,compile,96,4544,none,256,,65.84524841308594,15.187124721990754,984.89208984375,10.110719919204712,98.90492546436376,575.32373046875

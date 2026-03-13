@@ -1,0 +1,21 @@
+{
+  "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+  "structure_name": "TiO2.cif",
+  "size": 4,
+  "mode": "eager",
+  "task": "train",
+  "compute_force": false,
+  "num_atoms": 768,
+  "num_edges": 36352,
+  "iters": 4,
+  "warmup": 1,
+  "device": "NVIDIA GeForce RTX 3060",
+  "torch": "2.8.0+cu128",
+  "mean_ms": 771.5159301757812,
+  "p50_ms": 595.4657135009766,
+  "min_ms": 472.1971130371094,
+  "max_ms": 1422.9351806640625,
+  "steps_per_s": 1.2961495166692945,
+  "peak_mem_mb": 8325.912109375,
+  "elapsed_s": 6.503953456878662
+}

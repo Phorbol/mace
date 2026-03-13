@@ -1,0 +1,392 @@
+{
+  "device": "NVIDIA GeForce RTX 3060",
+  "torch": "2.8.0+cu128",
+  "cueq_enabled": false,
+  "compile_mode": "default",
+  "tf32": true,
+  "amp": "none",
+  "compile_bucket_atoms": 0,
+  "compile_bucket_edges": 0,
+  "compile_cache_entries": 0,
+  "elapsed_s": 244.24738001823425,
+  "results": [
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "eager",
+      "num_atoms": 96,
+      "num_edges": 4544,
+      "train": {
+        "mean_ms": 167.07830683390299,
+        "p50_ms": 48.075103759765625,
+        "min_ms": 47.14662551879883,
+        "max_ms": 526.1958618164062,
+        "std_ms": 182.5584298812548,
+        "steps_per_s": 5.985217464491825,
+        "peak_mem_mb": 1124.4794921875
+      },
+      "infer": {
+        "mean_ms": 33.33708381652832,
+        "p50_ms": 28.644864082336426,
+        "min_ms": 28.189664840698242,
+        "max_ms": 65.32710266113281,
+        "std_ms": 12.098610817326062,
+        "steps_per_s": 29.99662494486714,
+        "peak_mem_mb": 407.90771484375
+      },
+      "infer_compute_force": true,
+      "amp": "none",
+      "compile_bucket": null,
+      "note": ""
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "compile",
+      "num_atoms": 96,
+      "num_edges": 4544,
+      "train": {
+        "mean_ms": 65.33495585123698,
+        "p50_ms": 65.84268951416016,
+        "min_ms": 63.75321578979492,
+        "max_ms": 66.48115539550781,
+        "std_ms": 1.1490502867906789,
+        "steps_per_s": 15.305742339168766,
+        "peak_mem_mb": 972.56298828125
+      },
+      "infer": {
+        "mean_ms": 18.345983862876892,
+        "p50_ms": 10.915328025817871,
+        "min_ms": 10.659839630126953,
+        "max_ms": 54.03033447265625,
+        "std_ms": 14.410353567127713,
+        "steps_per_s": 54.507842559673264,
+        "peak_mem_mb": 564.77587890625
+      },
+      "infer_compute_force": false,
+      "amp": "none",
+      "compile_bucket": {
+        "atoms": null,
+        "edges": null
+      },
+      "note": "compile+force failed, fallback to energy-only: BackendCompilerFailed"
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 3,
+      "mode": "eager",
+      "num_atoms": 324,
+      "num_edges": 15336,
+      "train": {
+        "mean_ms": 226.62946573893228,
+        "p50_ms": 223.28429412841797,
+        "min_ms": 196.6991424560547,
+        "max_ms": 276.1770324707031,
+        "std_ms": 26.78788125086755,
+        "steps_per_s": 4.412488891236934,
+        "peak_mem_mb": 3563.5361328125
+      },
+      "infer": {
+        "mean_ms": 120.22784042358398,
+        "p50_ms": 118.63500595092773,
+        "min_ms": 115.2757797241211,
+        "max_ms": 135.75885009765625,
+        "std_ms": 6.083939412211187,
+        "steps_per_s": 8.317541066002873,
+        "peak_mem_mb": 1247.54931640625
+      },
+      "infer_compute_force": true,
+      "amp": "none",
+      "compile_bucket": null,
+      "note": ""
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 3,
+      "mode": "compile",
+      "num_atoms": 324,
+      "num_edges": 15336,
+      "train": {
+        "mean_ms": 183.766357421875,
+        "p50_ms": 183.1393280029297,
+        "min_ms": 174.01446533203125,
+        "max_ms": 196.09805297851562,
+        "std_ms": 7.599258936992795,
+        "steps_per_s": 5.441692451378823,
+        "peak_mem_mb": 3067.2099609375
+      },
+      "infer": {
+        "mean_ms": 29.643263816833496,
+        "p50_ms": 29.87622356414795,
+        "min_ms": 28.846080780029297,
+        "max_ms": 30.314495086669922,
+        "std_ms": 0.5220988333318066,
+        "steps_per_s": 33.734476951628075,
+        "peak_mem_mb": 1751.48095703125
+      },
+      "infer_compute_force": false,
+      "amp": "none",
+      "compile_bucket": {
+        "atoms": null,
+        "edges": null
+      },
+      "note": "compile+force failed, fallback to energy-only: BackendCompilerFailed"
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 4,
+      "mode": "eager",
+      "num_atoms": 768,
+      "num_edges": 36352,
+      "train": {
+        "mean_ms": 441.39417521158856,
+        "p50_ms": 432.679443359375,
+        "min_ms": 391.8151550292969,
+        "max_ms": 522.3444213867188,
+        "std_ms": 42.85917662550714,
+        "steps_per_s": 2.2655487003665957,
+        "peak_mem_mb": 8337.1943359375
+      },
+      "infer": {
+        "mean_ms": 227.88957023620605,
+        "p50_ms": 225.18798065185547,
+        "min_ms": 215.09324645996094,
+        "max_ms": 254.02163696289062,
+        "std_ms": 11.674847211244394,
+        "steps_per_s": 4.388090244601833,
+        "peak_mem_mb": 2892.90576171875
+      },
+      "infer_compute_force": true,
+      "amp": "none",
+      "compile_bucket": null,
+      "note": ""
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 4,
+      "mode": "compile",
+      "num_atoms": 768,
+      "num_edges": 36352,
+      "train": {
+        "mean_ms": 374.3733266194661,
+        "p50_ms": 370.7262725830078,
+        "min_ms": 332.6781311035156,
+        "max_ms": 427.67462158203125,
+        "std_ms": 35.23942762566013,
+        "steps_per_s": 2.6711304702977827,
+        "peak_mem_mb": 7227.93359375
+      },
+      "infer": {
+        "mean_ms": 69.7219934463501,
+        "p50_ms": 68.58291244506836,
+        "min_ms": 65.2779541015625,
+        "max_ms": 74.42124938964844,
+        "std_ms": 3.9462895872440016,
+        "steps_per_s": 14.342676543944247,
+        "peak_mem_mb": 4136.642578125
+      },
+      "infer_compute_force": false,
+      "amp": "none",
+      "compile_bucket": {
+        "atoms": null,
+        "edges": null
+      },
+      "note": "compile+force failed, fallback to energy-only: BackendCompilerFailed"
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/AlN_mp-661_computed.cif",
+      "structure_name": "AlN_mp-661_computed.cif",
+      "size": 2,
+      "mode": "eager",
+      "num_atoms": 32,
+      "num_edges": 1504,
+      "train": {
+        "mean_ms": 42.42295519510905,
+        "p50_ms": 36.43494415283203,
+        "min_ms": 33.50630569458008,
+        "max_ms": 73.82323455810547,
+        "std_ms": 14.110379243881068,
+        "steps_per_s": 23.572143793398208,
+        "peak_mem_mb": 430.681640625
+      },
+      "infer": {
+        "mean_ms": 25.573904514312744,
+        "p50_ms": 19.3121280670166,
+        "min_ms": 19.139711380004883,
+        "max_ms": 68.38579559326172,
+        "std_ms": 16.188804476754495,
+        "steps_per_s": 39.10235918181121,
+        "peak_mem_mb": 170.5810546875
+      },
+      "infer_compute_force": true,
+      "amp": "none",
+      "compile_bucket": null,
+      "note": ""
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/AlN_mp-661_computed.cif",
+      "structure_name": "AlN_mp-661_computed.cif",
+      "size": 2,
+      "mode": "compile",
+      "num_atoms": 32,
+      "num_edges": 1504,
+      "train": {
+        "mean_ms": 29.683711687723797,
+        "p50_ms": 30.003711700439453,
+        "min_ms": 27.74835205078125,
+        "max_ms": 31.38150405883789,
+        "std_ms": 1.4518074762490232,
+        "steps_per_s": 33.68850939262986,
+        "peak_mem_mb": 364.44482421875
+      },
+      "infer": {
+        "mean_ms": 10.862975776195526,
+        "p50_ms": 5.089792013168335,
+        "min_ms": 4.85478401184082,
+        "max_ms": 51.1354866027832,
+        "std_ms": 15.222842931500484,
+        "steps_per_s": 92.05580686199633,
+        "peak_mem_mb": 231.9443359375
+      },
+      "infer_compute_force": false,
+      "amp": "none",
+      "compile_bucket": {
+        "atoms": null,
+        "edges": null
+      },
+      "note": "compile+force failed, fallback to energy-only: BackendCompilerFailed"
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/AlN_mp-661_computed.cif",
+      "structure_name": "AlN_mp-661_computed.cif",
+      "size": 3,
+      "mode": "eager",
+      "num_atoms": 108,
+      "num_edges": 5076,
+      "train": {
+        "mean_ms": 91.4696528116862,
+        "p50_ms": 84.43033599853516,
+        "min_ms": 82.70438385009766,
+        "max_ms": 122.3905258178711,
+        "std_ms": 14.086176888312387,
+        "steps_per_s": 10.932587686309,
+        "peak_mem_mb": 1248.55029296875
+      },
+      "infer": {
+        "mean_ms": 55.21894454956055,
+        "p50_ms": 51.12422561645508,
+        "min_ms": 47.845375061035156,
+        "max_ms": 84.85785675048828,
+        "std_ms": 11.531536171477821,
+        "steps_per_s": 18.109726800418507,
+        "peak_mem_mb": 453.01806640625
+      },
+      "infer_compute_force": true,
+      "amp": "none",
+      "compile_bucket": null,
+      "note": ""
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/AlN_mp-661_computed.cif",
+      "structure_name": "AlN_mp-661_computed.cif",
+      "size": 3,
+      "mode": "compile",
+      "num_atoms": 108,
+      "num_edges": 5076,
+      "train": {
+        "mean_ms": 73.01358795166016,
+        "p50_ms": 73.1304931640625,
+        "min_ms": 71.57759857177734,
+        "max_ms": 74.32498931884766,
+        "std_ms": 0.960734710102345,
+        "steps_per_s": 13.696080798851666,
+        "peak_mem_mb": 1078.5615234375
+      },
+      "infer": {
+        "mean_ms": 12.026495933532715,
+        "p50_ms": 11.98745584487915,
+        "min_ms": 11.810815811157227,
+        "max_ms": 12.395520210266113,
+        "std_ms": 0.15729739732051587,
+        "steps_per_s": 83.14973916980784,
+        "peak_mem_mb": 623.5126953125
+      },
+      "infer_compute_force": false,
+      "amp": "none",
+      "compile_bucket": {
+        "atoms": null,
+        "edges": null
+      },
+      "note": "compile+force failed, fallback to energy-only: BackendCompilerFailed"
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/AlN_mp-661_computed.cif",
+      "structure_name": "AlN_mp-661_computed.cif",
+      "size": 4,
+      "mode": "eager",
+      "num_atoms": 256,
+      "num_edges": 12032,
+      "train": {
+        "mean_ms": 177.42882283528647,
+        "p50_ms": 173.79379272460938,
+        "min_ms": 165.17837524414062,
+        "max_ms": 204.16102600097656,
+        "std_ms": 13.119554804822478,
+        "steps_per_s": 5.63606286746509,
+        "peak_mem_mb": 2826.6103515625
+      },
+      "infer": {
+        "mean_ms": 104.2095365524292,
+        "p50_ms": 100.06476974487305,
+        "min_ms": 97.97427368164062,
+        "max_ms": 137.1842498779297,
+        "std_ms": 12.496254462289375,
+        "steps_per_s": 9.596050736651025,
+        "peak_mem_mb": 994.8623046875
+      },
+      "infer_compute_force": true,
+      "amp": "none",
+      "compile_bucket": null,
+      "note": ""
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/AlN_mp-661_computed.cif",
+      "structure_name": "AlN_mp-661_computed.cif",
+      "size": 4,
+      "mode": "compile",
+      "num_atoms": 256,
+      "num_edges": 12032,
+      "train": {
+        "mean_ms": 151.98684438069662,
+        "p50_ms": 151.30316925048828,
+        "min_ms": 145.4325714111328,
+        "max_ms": 161.83091735839844,
+        "std_ms": 5.508260279597326,
+        "steps_per_s": 6.579516826437953,
+        "peak_mem_mb": 2440.91943359375
+      },
+      "infer": {
+        "mean_ms": 24.86579203605652,
+        "p50_ms": 25.415679931640625,
+        "min_ms": 23.334911346435547,
+        "max_ms": 25.90105628967285,
+        "std_ms": 0.9483258180376275,
+        "steps_per_s": 40.21589171782483,
+        "peak_mem_mb": 1369.234375
+      },
+      "infer_compute_force": false,
+      "amp": "none",
+      "compile_bucket": {
+        "atoms": null,
+        "edges": null
+      },
+      "note": "compile+force failed, fallback to energy-only: BackendCompilerFailed"
+    }
+  ]
+}

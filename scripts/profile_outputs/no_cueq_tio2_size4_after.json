@@ -1,0 +1,65 @@
+{
+  "device": "NVIDIA GeForce RTX 3060",
+  "torch": "2.8.0+cu128",
+  "cueq_enabled": false,
+  "compile_mode": "default",
+  "elapsed_s": 86.63697028160095,
+  "results": [
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 4,
+      "mode": "eager",
+      "num_atoms": 768,
+      "num_edges": 36352,
+      "train": {
+        "mean_ms": 397.2758392333984,
+        "p50_ms": 397.3264617919922,
+        "min_ms": 396.2839050292969,
+        "max_ms": 398.1080627441406,
+        "std_ms": 0.5151701764545478,
+        "steps_per_s": 2.5171427538348308,
+        "peak_mem_mb": 9284.92431640625
+      },
+      "infer": {
+        "mean_ms": 234.4316599527995,
+        "p50_ms": 234.43814086914062,
+        "min_ms": 233.40133666992188,
+        "max_ms": 235.4800567626953,
+        "std_ms": 0.5102234517661947,
+        "steps_per_s": 4.265635452998713,
+        "peak_mem_mb": 3172.82373046875
+      },
+      "infer_compute_force": true,
+      "note": ""
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 4,
+      "mode": "compile",
+      "num_atoms": 768,
+      "num_edges": 36352,
+      "train": {
+        "mean_ms": 382.1038360595703,
+        "p50_ms": 381.28025817871094,
+        "min_ms": 380.44775390625,
+        "max_ms": 396.0790710449219,
+        "std_ms": 3.281829964020148,
+        "steps_per_s": 2.617089664193005,
+        "peak_mem_mb": 7175.5947265625
+      },
+      "infer": {
+        "mean_ms": 62.52810541788737,
+        "p50_ms": 61.964799880981445,
+        "min_ms": 56.36198425292969,
+        "max_ms": 71.71993255615234,
+        "std_ms": 4.1913605452222775,
+        "steps_per_s": 15.992808247056383,
+        "peak_mem_mb": 4114.82275390625
+      },
+      "infer_compute_force": false,
+      "note": "compile+force failed, fallback to energy-only: BackendCompilerFailed"
+    }
+  ]
+}

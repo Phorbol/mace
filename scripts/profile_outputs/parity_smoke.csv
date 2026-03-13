@@ -1,0 +1,2 @@
+structure_name,size,num_atoms,num_edges,amp,tf32,energy_abs_max,energy_rel_max,force_abs_max,force_rel_max,pass
+TiO2.cif,2,96,4544,bf16,True,0.12787961959838867,0.017946843057870865,0.0028070099651813507,1.8101344108581543,False

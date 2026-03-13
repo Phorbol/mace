@@ -1,0 +1,77 @@
+{
+  "device": "NVIDIA GeForce RTX 3060",
+  "torch": "2.8.0+cu128",
+  "cueq_enabled": false,
+  "compile_mode": "default",
+  "tf32": true,
+  "amp": "bf16",
+  "compile_bucket_atoms": 256,
+  "compile_bucket_edges": 0,
+  "compile_cache_entries": 1,
+  "elapsed_s": 23.29157257080078,
+  "results": [
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "eager",
+      "num_atoms": 96,
+      "num_edges": 4544,
+      "train": {
+        "mean_ms": 1213.119384765625,
+        "p50_ms": 1213.119384765625,
+        "min_ms": 1213.119384765625,
+        "max_ms": 1213.119384765625,
+        "std_ms": 0.0,
+        "steps_per_s": 0.8243211777488827,
+        "peak_mem_mb": 623.98095703125
+      },
+      "infer": {
+        "mean_ms": 246.96730041503906,
+        "p50_ms": 246.96730041503906,
+        "min_ms": 246.96730041503906,
+        "max_ms": 246.96730041503906,
+        "std_ms": 0.0,
+        "steps_per_s": 4.0491190466084275,
+        "peak_mem_mb": 290.07958984375
+      },
+      "infer_compute_force": true,
+      "amp": "bfloat16",
+      "compile_bucket": null,
+      "note": ""
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "compile",
+      "num_atoms": 96,
+      "num_edges": 4544,
+      "train": {
+        "mean_ms": 154.4120330810547,
+        "p50_ms": 154.4120330810547,
+        "min_ms": 154.4120330810547,
+        "max_ms": 154.4120330810547,
+        "std_ms": 0.0,
+        "steps_per_s": 6.476179220275374,
+        "peak_mem_mb": 544.8203125
+      },
+      "infer": {
+        "mean_ms": 72.447998046875,
+        "p50_ms": 72.447998046875,
+        "min_ms": 72.447998046875,
+        "max_ms": 72.447998046875,
+        "std_ms": 0.0,
+        "steps_per_s": 13.803003905683967,
+        "peak_mem_mb": 333.46142578125
+      },
+      "infer_compute_force": false,
+      "amp": "bfloat16",
+      "compile_bucket": {
+        "atoms": 256,
+        "edges": null
+      },
+      "note": "compile+force failed, fallback to energy-only: BackendCompilerFailed"
+    }
+  ]
+}

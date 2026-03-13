@@ -1,0 +1,4 @@
+interface:
+  display_name: "MACE AI Infra Profiler"
+  short_description: "Profile and optimize MACE infra performance"
+  default_prompt: "Profile code, diagnose operators, and optimize train/infer infra with repo scripts."

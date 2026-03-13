@@ -1,0 +1,77 @@
+{
+  "device": "NVIDIA GeForce RTX 3060",
+  "torch": "2.8.0+cu128",
+  "cueq_enabled": false,
+  "compile_mode": "default",
+  "tf32": true,
+  "amp": "none",
+  "compile_bucket_atoms": 256,
+  "compile_bucket_edges": 0,
+  "compile_cache_entries": 1,
+  "elapsed_s": 58.41010618209839,
+  "results": [
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "eager",
+      "num_atoms": 96,
+      "num_edges": 4544,
+      "train": {
+        "mean_ms": 183.7638931274414,
+        "p50_ms": 49.78073501586914,
+        "min_ms": 48.661502838134766,
+        "max_ms": 491.9244689941406,
+        "std_ms": 178.08091101051622,
+        "steps_per_s": 5.441765425085404,
+        "peak_mem_mb": 1124.4794921875
+      },
+      "infer": {
+        "mean_ms": 34.35037612915039,
+        "p50_ms": 29.13425636291504,
+        "min_ms": 28.657663345336914,
+        "max_ms": 71.27552032470703,
+        "std_ms": 13.959626610406952,
+        "steps_per_s": 29.11176274286501,
+        "peak_mem_mb": 407.90771484375
+      },
+      "infer_compute_force": true,
+      "amp": "none",
+      "compile_bucket": null,
+      "note": ""
+    },
+    {
+      "structure": "/mnt/d/Download/Sidereus/mace-simulation-kit/demos/TiO2.cif",
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "compile",
+      "num_atoms": 96,
+      "num_edges": 4544,
+      "train": {
+        "mean_ms": 65.84524841308594,
+        "p50_ms": 65.59129333496094,
+        "min_ms": 65.512451171875,
+        "max_ms": 66.64704132080078,
+        "std_ms": 0.42152709364951463,
+        "steps_per_s": 15.187124721990754,
+        "peak_mem_mb": 984.89208984375
+      },
+      "infer": {
+        "mean_ms": 10.110719919204712,
+        "p50_ms": 9.874943733215332,
+        "min_ms": 9.751551628112793,
+        "max_ms": 10.942463874816895,
+        "std_ms": 0.4264416042407241,
+        "steps_per_s": 98.90492546436376,
+        "peak_mem_mb": 575.32373046875
+      },
+      "infer_compute_force": false,
+      "amp": "none",
+      "compile_bucket": {
+        "atoms": 256,
+        "edges": null
+      },
+      "note": "compile+force failed, fallback to energy-only: BackendCompilerFailed"
+    }
+  ]
+}

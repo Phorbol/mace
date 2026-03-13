@@ -1,0 +1,31 @@
+op,calls,self_device_ms,device_total_ms,self_cpu_ms,self_device_mem_mb,intensity_hint
+aten::bmm,12,30.124762000000025,30.21618900000002,0.14379200000000264,12.0,compute_bound_likely
+ampere_sgemm_128x128_tt,2,18.758564,18.758564,0.0,0.0,compute_bound_likely
+aten::mm,53,16.03266399999997,16.03266399999997,0.4471839999999979,0.0,compute_bound_likely
+triton_poi_fused_scatter_add_61,1,6.373029999999992,6.373029999999992,0.0038900000000003272,0.0,io_bound_likely
+triton_poi_fused_scatter_add_61,1,6.373029999999992,6.373029999999992,0.0,0.0,io_bound_likely
+triton_poi_fused_cat_scatter_add_19,1,5.452799999999999,5.452799999999999,0.007320999999999913,0.0,io_bound_likely
+triton_poi_fused_cat_scatter_add_19,1,5.452799999999999,5.452799999999999,0.0,0.0,io_bound_likely
+ampere_sgemm_32x128_nn,33,5.267292999999996,5.267292999999996,0.0,0.0,compute_bound_likely
+ampere_sgemm_32x128_tn,8,4.138249000000004,4.138249000000004,0.0,0.0,compute_bound_likely
+ampere_sgemm_128x128_nn,3,3.48158400000001,3.48158400000001,0.0,0.0,compute_bound_likely
+triton_poi_fused_clone_35,1,3.2835590000000012,3.2835590000000012,0.005979999999999564,0.0,mixed
+triton_poi_fused_clone_35,1,3.2835590000000012,3.2835590000000012,0.0,0.0,mixed
+ampere_sgemm_128x64_nn,5,2.900919999999996,2.900919999999996,0.0,0.0,compute_bound_likely
+ampere_sgemm_128x32_tt,3,2.85672700000001,2.85672700000001,0.0,0.0,compute_bound_likely
+"std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int, float, float, float, float, false, true, true, false, 5, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",6,2.454854000000012,2.454854000000012,0.0,0.0,mixed
+"void gemv2N_kernel<int, int, float, float, float, float, 128, 2, 4, 4, 1, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",4,2.4064680000000007,2.4064680000000007,0.0,0.0,mixed
+triton_poi_fused_clone_29,2,2.038515999999994,2.038515999999994,0.013422000000000026,0.0,mixed
+triton_poi_fused_clone_29,2,2.038515999999994,2.038515999999994,0.0,0.0,mixed
+"void gemv2N_kernel<int, int, float, float, float, float, 128, 1, 2, 4, 1, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",2,1.5679680000000007,1.5679680000000007,0.0,0.0,mixed
+"std::enable_if<true, void>::type internal::gemvx::kernel<int, int, float, float, float, float, true, true, true, false, 6, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",1,1.4553240000000005,1.4553240000000005,0.0,0.0,mixed
+triton_poi_fused_cat_57,2,1.2678600000000007,1.2678600000000007,0.0053800000000010185,0.0,mixed
+triton_poi_fused_cat_57,2,1.2678600000000007,1.2678600000000007,0.0,0.0,mixed
+triton_poi_fused_mul_46,1,1.1874729999999982,1.1874729999999982,0.004460000000000036,0.0,mixed
+triton_poi_fused_mul_46,1,1.1874729999999982,1.1874729999999982,0.0,0.0,mixed
+triton_poi_fused_bmm_44,1,1.0915010000000003,1.0915010000000003,0.005300000000000182,0.0,compute_bound_likely
+triton_poi_fused_bmm_44,1,1.0915010000000003,1.0915010000000003,0.0,0.0,compute_bound_likely
+triton_poi_fused_cat_59,1,0.9490630000000019,0.9490630000000019,0.0032799999999997454,0.0,mixed
+triton_poi_fused_cat_59,1,0.9490630000000019,0.9490630000000019,0.0,0.0,mixed
+triton_poi_fused_cat_58,1,0.6361550000000061,0.6361550000000061,0.004099999999999454,0.0,mixed
+triton_poi_fused_cat_58,1,0.6361550000000061,0.6361550000000061,0.0,0.0,mixed

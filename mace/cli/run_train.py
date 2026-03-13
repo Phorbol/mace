@@ -126,6 +126,12 @@ def run(args) -> None:
 
     tools.set_default_dtype(args.default_dtype)
     device = tools.init_device(args.device)
+    if device.type == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = args.tf32
+        torch.backends.cudnn.allow_tf32 = args.tf32
+        torch.set_float32_matmul_precision("high" if args.tf32 else "highest")
+    logging.info(f"TF32 enabled: {args.tf32}")
+    logging.info(f"AMP mode: {args.amp}")
     commit = print_git_commit()
     model_foundation: Optional[torch.nn.Module] = None
     foundation_model_avg_num_neighbors = 0
@@ -534,6 +540,20 @@ def run(args) -> None:
     # Load datasets for each head, supporting multiple files per head
     valid_sets = {head: [] for head in heads}
     train_sets = {head: [] for head in heads}
+    loader_kwargs_base = {
+        "pin_memory": args.pin_memory,
+        "num_workers": args.num_workers,
+    }
+    if args.num_workers > 0:
+        loader_kwargs_base["persistent_workers"] = args.persistent_workers
+        if args.prefetch_factor > 0:
+            loader_kwargs_base["prefetch_factor"] = args.prefetch_factor
+
+    def loader_kwargs():
+        return {
+            **loader_kwargs_base,
+            "generator": torch.Generator().manual_seed(args.seed),
+        }
 
     for head_config in head_configs:
         train_datasets = []
@@ -641,9 +661,7 @@ def run(args) -> None:
             batch_size=args.batch_size,
             shuffle=True,
             drop_last=(not args.lbfgs),
-            pin_memory=args.pin_memory,
-            num_workers=args.num_workers,
-            generator=torch.Generator().manual_seed(args.seed),
+            **loader_kwargs(),
         )
         head_config.train_loader = train_loader_head
 
@@ -677,9 +695,7 @@ def run(args) -> None:
         sampler=train_sampler,
         shuffle=(train_sampler is None),
         drop_last=(train_sampler is None and not args.lbfgs),
-        pin_memory=args.pin_memory,
-        num_workers=args.num_workers,
-        generator=torch.Generator().manual_seed(args.seed),
+        **loader_kwargs(),
     )
 
     valid_loaders = {heads[i]: None for i in range(len(heads))}
@@ -692,9 +708,7 @@ def run(args) -> None:
             sampler=valid_samplers[head] if args.distributed else None,
             shuffle=False,
             drop_last=False,
-            pin_memory=args.pin_memory,
-            num_workers=args.num_workers,
-            generator=torch.Generator().manual_seed(args.seed),
+            **loader_kwargs(),
         )
 
     loss_fn = get_loss_fn(args, dipole_only, args.compute_dipole)
@@ -733,6 +747,16 @@ def run(args) -> None:
         logging.info("Converting model to OEQ for accelerated training")
         assert model.__class__.__name__ in ["MACE", "ScaleShiftMACE", "MACELES"]
         model = run_e3nn_to_oeq(deepcopy(model), device=device)
+    if args.enable_compile_train:
+        logging.info(
+            "Compiling training model with torch.compile "
+            f"(mode={args.compile_mode_train}, fullgraph={args.compile_fullgraph_train})"
+        )
+        model = torch.compile(
+            model,
+            mode=args.compile_mode_train,
+            fullgraph=args.compile_fullgraph_train,
+        )
 
     # Optimizer
     param_options = get_params_options(args, model)
@@ -878,6 +902,7 @@ def run(args) -> None:
         plotter=plotter,
         train_sampler=train_sampler,
         rank=rank,
+        amp=args.amp,
     )
 
     logging.info("")
@@ -947,8 +972,7 @@ def run(args) -> None:
                 batch_size=args.valid_batch_size,
                 shuffle=(test_sampler is None),
                 drop_last=drop_last,
-                num_workers=args.num_workers,
-                pin_memory=args.pin_memory,
+                **loader_kwargs(),
             )
             test_data_loader[test_name] = test_loader
         if stop_first_test:

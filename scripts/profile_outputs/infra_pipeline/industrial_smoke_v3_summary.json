@@ -1,0 +1,310 @@
+{
+  "run_id": "industrial_smoke_v3",
+  "baseline_csv": "scripts/profile_outputs/infra_pipeline/industrial_smoke_v3_baseline.csv",
+  "optimized_csv": "scripts/profile_outputs/infra_pipeline/industrial_smoke_v3_optimized.csv",
+  "gate_pass": true,
+  "threshold_pct": 1000.0,
+  "optimized_amp": "bf16",
+  "optimized_tf32": true,
+  "compile_bucket_atoms": 256,
+  "compile_bucket_edges": 0,
+  "median_train_speedup_x": 0.42278890995871743,
+  "median_infer_speedup_x": 0.21474763353667195,
+  "parity_result": {
+    "amp": "bf16",
+    "tf32": true,
+    "energy_abs_tol": 0.2,
+    "energy_rel_tol": 0.03,
+    "force_abs_tol": 0.005,
+    "force_rel_tol": 0.05,
+    "rows": [
+      {
+        "structure_name": "TiO2.cif",
+        "size": 2,
+        "num_atoms": 96,
+        "num_edges": 4544,
+        "amp": "bf16",
+        "tf32": true,
+        "energy_abs_max": 0.12601137161254883,
+        "energy_rel_max": 0.017689291387796402,
+        "energy_rel_rms": 0.0180078364565562,
+        "force_abs_max": 0.0026865974068641663,
+        "force_rel_max": 1.9351568222045898,
+        "force_rel_rms": 0.033546632767225894,
+        "pass": true
+      }
+    ],
+    "all_pass": true,
+    "cmd_ok": true
+  },
+  "diagnostics": [
+    {
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "eager",
+      "task": "train",
+      "cmd_ok": true,
+      "json": "scripts/profile_outputs/infra_pipeline/industrial_smoke_v3_diag_TiO2_s2_eager_train.json",
+      "csv": "scripts/profile_outputs/infra_pipeline/industrial_smoke_v3_diag_TiO2_s2_eager_train.csv",
+      "top_ops": [
+        {
+          "op": "aten::copy_",
+          "calls": 639,
+          "self_device_ms": 10.405709999998715,
+          "device_total_ms": 10.405709999998715,
+          "self_cpu_ms": 2.3314420000029163,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "io_bound_likely"
+        },
+        {
+          "op": "aten::bmm",
+          "calls": 57,
+          "self_device_ms": 5.554590999999782,
+          "device_total_ms": 5.554590999999782,
+          "self_cpu_ms": 0.9766579999993265,
+          "self_device_mem_mb": 151.86328125,
+          "intensity_hint": "compute_bound_likely"
+        },
+        {
+          "op": "aten::mul",
+          "calls": 409,
+          "self_device_ms": 4.170987999999954,
+          "device_total_ms": 4.170987999999954,
+          "self_cpu_ms": 3.1864300000000805,
+          "self_device_mem_mb": 477.0078125,
+          "intensity_hint": "mixed"
+        },
+        {
+          "op": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#12}::operator()() const::{lambda(c10::BFloat16)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#12}::operator()() const::{lambda(c10::BFloat16)#1} const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#12}::operator()() const::{lambda(c10::BFloat16)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#12}::operator()() const::{lambda(c10::BFloat16)#1} const&)::{lambda(int)#1})",
+          "calls": 107,
+          "self_device_ms": 4.044131999999663,
+          "device_total_ms": 4.044131999999663,
+          "self_cpu_ms": 0.0,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "io_bound_likely"
+        },
+        {
+          "op": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<c10::BFloat16, c10::BFloat16, c10::BFloat16, at::native::binary_internal::MulFunctor<float> > >(at::TensorIteratorBase&, at::native::BinaryFunctor<c10::BFloat16, c10::BFloat16, c10::BFloat16, at::native::binary_internal::MulFunctor<float> > const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<c10::BFloat16, c10::BFloat16, c10::BFloat16, at::native::binary_internal::MulFunctor<float> > >(at::TensorIteratorBase&, at::native::BinaryFunctor<c10::BFloat16, c10::BFloat16, c10::BFloat16, at::native::binary_internal::MulFunctor<float> > const&)::{lambda(int)#1})",
+          "calls": 114,
+          "self_device_ms": 3.532027000000875,
+          "device_total_ms": 3.532027000000875,
+          "self_cpu_ms": 0.0,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "mixed"
+        }
+      ],
+      "total_top_ops_self_device_ms": 27.707447999998987,
+      "io_share": 0.5215147205184291,
+      "compute_share": 0.20047284758957176,
+      "mixed_share": 0.27801243189199926
+    },
+    {
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "eager",
+      "task": "infer",
+      "cmd_ok": true,
+      "json": "scripts/profile_outputs/infra_pipeline/industrial_smoke_v3_diag_TiO2_s2_eager_infer.json",
+      "csv": "scripts/profile_outputs/infra_pipeline/industrial_smoke_v3_diag_TiO2_s2_eager_infer.csv",
+      "top_ops": [
+        {
+          "op": "aten::copy_",
+          "calls": 404,
+          "self_device_ms": 7.141377000000417,
+          "device_total_ms": 7.141377000000417,
+          "self_cpu_ms": 1.6551050000006422,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "io_bound_likely"
+        },
+        {
+          "op": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#12}::operator()() const::{lambda(c10::BFloat16)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#12}::operator()() const::{lambda(c10::BFloat16)#1} const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#12}::operator()() const::{lambda(c10::BFloat16)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#12}::operator()() const::{lambda(c10::BFloat16)#1} const&)::{lambda(int)#1})",
+          "calls": 59,
+          "self_device_ms": 3.600111999999528,
+          "device_total_ms": 3.600111999999528,
+          "self_cpu_ms": 0.0,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "io_bound_likely"
+        },
+        {
+          "op": "aten::bmm",
+          "calls": 33,
+          "self_device_ms": 3.254022999999928,
+          "device_total_ms": 3.254022999999928,
+          "self_cpu_ms": 0.7112509999995528,
+          "self_device_mem_mb": 92.591796875,
+          "intensity_hint": "compute_bound_likely"
+        },
+        {
+          "op": "aten::mul",
+          "calls": 218,
+          "self_device_ms": 2.3842940000002564,
+          "device_total_ms": 2.3842940000002564,
+          "self_cpu_ms": 1.75933000000022,
+          "self_device_mem_mb": 281.57080078125,
+          "intensity_hint": "mixed"
+        },
+        {
+          "op": "void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<c10::BFloat16, c10::BFloat16, c10::BFloat16, at::native::binary_internal::MulFunctor<float> > >(at::TensorIteratorBase&, at::native::BinaryFunctor<c10::BFloat16, c10::BFloat16, c10::BFloat16, at::native::binary_internal::MulFunctor<float> > const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<c10::BFloat16, c10::BFloat16, c10::BFloat16, at::native::binary_internal::MulFunctor<float> > >(at::TensorIteratorBase&, at::native::BinaryFunctor<c10::BFloat16, c10::BFloat16, c10::BFloat16, at::native::binary_internal::MulFunctor<float> > const&)::{lambda(int)#1})",
+          "calls": 69,
+          "self_device_ms": 2.0833589999999096,
+          "device_total_ms": 2.0833589999999096,
+          "self_cpu_ms": 0.0,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "mixed"
+        }
+      ],
+      "total_top_ops_self_device_ms": 18.46316500000004,
+      "io_share": 0.5817793969777079,
+      "compute_share": 0.1762440513313899,
+      "mixed_share": 0.24197655169090218
+    },
+    {
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "compile",
+      "task": "train",
+      "cmd_ok": true,
+      "json": "scripts/profile_outputs/infra_pipeline/industrial_smoke_v3_diag_TiO2_s2_compile_train.json",
+      "csv": "scripts/profile_outputs/infra_pipeline/industrial_smoke_v3_diag_TiO2_s2_compile_train.csv",
+      "top_ops": [
+        {
+          "op": "aten::bmm",
+          "calls": 99,
+          "self_device_ms": 18.90441799999999,
+          "device_total_ms": 19.143414999999987,
+          "self_cpu_ms": 1.0011790000000147,
+          "self_device_mem_mb": 18.57421875,
+          "intensity_hint": "compute_bound_likely"
+        },
+        {
+          "op": "aten::mm",
+          "calls": 238,
+          "self_device_ms": 7.440114000000017,
+          "device_total_ms": 7.440114000000017,
+          "self_cpu_ms": 2.1276590000000053,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "compute_bound_likely"
+        },
+        {
+          "op": "aten::scatter_reduce_",
+          "calls": 5,
+          "self_device_ms": 5.4687819999999965,
+          "device_total_ms": 5.4687819999999965,
+          "self_cpu_ms": 0.07975199999999813,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "io_bound_likely"
+        },
+        {
+          "op": "void at::native::_scatter_gather_elementwise_kernel<128, 8, at::native::_cuda_scatter_gather_internal_kernel<true, c10::BFloat16, long>::operator()<at::native::ReduceAdd>(at::TensorIterator&, long, long, long, at::native::ReduceAdd const&)::{lambda(int)#1}>(int, at::native::_cuda_scatter_gather_internal_kernel<true, c10::BFloat16, long>::operator()<at::native::ReduceAdd>(at::TensorIterator&, long, long, long, at::native::ReduceAdd const&)::{lambda(int)#1})",
+          "calls": 5,
+          "self_device_ms": 5.4687819999999965,
+          "device_total_ms": 5.4687819999999965,
+          "self_cpu_ms": 0.0,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "io_bound_likely"
+        },
+        {
+          "op": "triton_poi_fused_add_slice_backward_69",
+          "calls": 1,
+          "self_device_ms": 5.418191999999996,
+          "device_total_ms": 5.418191999999996,
+          "self_cpu_ms": 0.013610000000000582,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "compute_bound_likely"
+        }
+      ],
+      "total_top_ops_self_device_ms": 42.700288,
+      "io_share": 0.25614731216801145,
+      "compute_share": 0.7438526878319885,
+      "mixed_share": 0.0
+    },
+    {
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "compile",
+      "task": "infer",
+      "cmd_ok": true,
+      "json": "scripts/profile_outputs/infra_pipeline/industrial_smoke_v3_diag_TiO2_s2_compile_infer.json",
+      "csv": "scripts/profile_outputs/infra_pipeline/industrial_smoke_v3_diag_TiO2_s2_compile_infer.csv",
+      "top_ops": [
+        {
+          "op": "aten::scatter_reduce_",
+          "calls": 3,
+          "self_device_ms": 2.952905999999999,
+          "device_total_ms": 2.952905999999999,
+          "self_cpu_ms": 0.0705029999999997,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "io_bound_likely"
+        },
+        {
+          "op": "void at::native::_scatter_gather_elementwise_kernel<128, 8, at::native::_cuda_scatter_gather_internal_kernel<true, c10::BFloat16, long>::operator()<at::native::ReduceAdd>(at::TensorIterator&, long, long, long, at::native::ReduceAdd const&)::{lambda(int)#1}>(int, at::native::_cuda_scatter_gather_internal_kernel<true, c10::BFloat16, long>::operator()<at::native::ReduceAdd>(at::TensorIterator&, long, long, long, at::native::ReduceAdd const&)::{lambda(int)#1})",
+          "calls": 3,
+          "self_device_ms": 2.952905999999999,
+          "device_total_ms": 2.952905999999999,
+          "self_cpu_ms": 0.0,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "io_bound_likely"
+        },
+        {
+          "op": "aten::mm",
+          "calls": 53,
+          "self_device_ms": 1.9941020000000016,
+          "device_total_ms": 1.9941020000000016,
+          "self_cpu_ms": 0.49121400000000265,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "compute_bound_likely"
+        },
+        {
+          "op": "aten::bmm",
+          "calls": 12,
+          "self_device_ms": 1.865900999999998,
+          "device_total_ms": 1.882605999999998,
+          "self_cpu_ms": 0.14317399999999908,
+          "self_device_mem_mb": 1.1513671875,
+          "intensity_hint": "compute_bound_likely"
+        },
+        {
+          "op": "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_32x1_nn_align8>(cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_32x1_nn_align8::Params)",
+          "calls": 10,
+          "self_device_ms": 0.819601999999998,
+          "device_total_ms": 0.819601999999998,
+          "self_cpu_ms": 0.0,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "compute_bound_likely"
+        }
+      ],
+      "total_top_ops_self_device_ms": 10.585416999999996,
+      "io_share": 0.5579196360426802,
+      "compute_share": 0.44208036395731976,
+      "mixed_share": 0.0
+    }
+  ],
+  "rows": [
+    {
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "compile",
+      "num_atoms": 96,
+      "num_edges": 4544,
+      "baseline_train_ms": 102.07129669189453,
+      "optimized_train_ms": 154.4120330810547,
+      "train_speedup_x": 0.6610320106226099,
+      "baseline_infer_ms": 14.79372787475586,
+      "optimized_infer_ms": 72.447998046875,
+      "infer_speedup_x": 0.2041978836348809
+    },
+    {
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "eager",
+      "num_atoms": 96,
+      "num_edges": 4544,
+      "baseline_train_ms": 223.8760986328125,
+      "optimized_train_ms": 1213.119384765625,
+      "train_speedup_x": 0.18454580929482503,
+      "baseline_infer_ms": 55.64108657836914,
+      "optimized_infer_ms": 246.96730041503906,
+      "infer_speedup_x": 0.225297383438463
+    }
+  ]
+}

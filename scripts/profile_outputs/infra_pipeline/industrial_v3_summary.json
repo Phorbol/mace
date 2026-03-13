@@ -1,0 +1,444 @@
+{
+  "run_id": "industrial_v3",
+  "baseline_csv": "scripts/profile_outputs/infra_pipeline/industrial_v3_baseline.csv",
+  "optimized_csv": "scripts/profile_outputs/infra_pipeline/industrial_v3_optimized.csv",
+  "gate_pass": true,
+  "threshold_pct": 12.0,
+  "gate_modes": [
+    "compile"
+  ],
+  "gate_min_atoms": 200,
+  "optimized_amp": "none",
+  "optimized_tf32": true,
+  "compile_bucket_atoms": 0,
+  "compile_bucket_edges": 0,
+  "median_train_speedup_x": 1.2354634206996278,
+  "median_infer_speedup_x": 1.1263320986430674,
+  "parity_result": {
+    "amp": "none",
+    "tf32": true,
+    "energy_abs_tol": 0.2,
+    "energy_rel_tol": 0.03,
+    "force_abs_tol": 0.005,
+    "force_rel_tol": 0.05,
+    "rows": [
+      {
+        "structure_name": "TiO2.cif",
+        "size": 4,
+        "num_atoms": 768,
+        "num_edges": 36352,
+        "amp": "none",
+        "tf32": true,
+        "energy_abs_max": 3.814697265625e-05,
+        "energy_rel_max": 6.815964184170298e-07,
+        "energy_rel_rms": 6.815964461015902e-07,
+        "force_abs_max": 8.584186434745789e-05,
+        "force_rel_max": 1.9802789688110352,
+        "force_rel_rms": 0.0005750390019243753,
+        "pass": true
+      }
+    ],
+    "all_pass": true,
+    "cmd_ok": true
+  },
+  "diagnostics": [
+    {
+      "structure_name": "TiO2.cif",
+      "size": 4,
+      "mode": "eager",
+      "task": "train",
+      "cmd_ok": true,
+      "json": "scripts/profile_outputs/infra_pipeline/industrial_v3_diag_TiO2_s4_eager_train.json",
+      "csv": "scripts/profile_outputs/infra_pipeline/industrial_v3_diag_TiO2_s4_eager_train.csv",
+      "top_ops": [
+        {
+          "op": "aten::bmm",
+          "calls": 57,
+          "self_device_ms": 71.54547800000041,
+          "device_total_ms": 71.54547800000041,
+          "self_cpu_ms": 0.9205269999995944,
+          "self_device_mem_mb": 2221.14453125,
+          "intensity_hint": "compute_bound_likely"
+        },
+        {
+          "op": "aten::copy_",
+          "calls": 309,
+          "self_device_ms": 70.6348320000004,
+          "device_total_ms": 70.6348320000004,
+          "self_cpu_ms": 1.0627889999990585,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "io_bound_likely"
+        },
+        {
+          "op": "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1})",
+          "calls": 255,
+          "self_device_ms": 65.83941400000057,
+          "device_total_ms": 65.83941400000057,
+          "self_cpu_ms": 0.0,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "io_bound_likely"
+        },
+        {
+          "op": "aten::mul",
+          "calls": 403,
+          "self_device_ms": 52.8483860000003,
+          "device_total_ms": 52.8483860000003,
+          "self_cpu_ms": 2.8311960000001184,
+          "self_device_mem_mb": 7403.16845703125,
+          "intensity_hint": "mixed"
+        },
+        {
+          "op": "void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunctor_add<float>, std::array<char*, 3ul> >(int, at::native::CUDAFunctor_add<float>, std::array<char*, 3ul>)",
+          "calls": 225,
+          "self_device_ms": 50.077203999999384,
+          "device_total_ms": 50.077203999999384,
+          "self_cpu_ms": 0.0,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "compute_bound_likely"
+        }
+      ],
+      "total_top_ops_self_device_ms": 586.3325100000001,
+      "io_share": 0.23275913184483144,
+      "compute_share": 0.568365327380532,
+      "mixed_share": 0.1988755407746366
+    },
+    {
+      "structure_name": "TiO2.cif",
+      "size": 4,
+      "mode": "eager",
+      "task": "infer",
+      "cmd_ok": true,
+      "json": "scripts/profile_outputs/infra_pipeline/industrial_v3_diag_TiO2_s4_eager_infer.json",
+      "csv": "scripts/profile_outputs/infra_pipeline/industrial_v3_diag_TiO2_s4_eager_infer.csv",
+      "top_ops": [
+        {
+          "op": "aten::copy_",
+          "calls": 158,
+          "self_device_ms": 49.57068999999994,
+          "device_total_ms": 49.57068999999994,
+          "self_cpu_ms": 0.5003500000000349,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "io_bound_likely"
+        },
+        {
+          "op": "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1})",
+          "calls": 141,
+          "self_device_ms": 47.1870309999999,
+          "device_total_ms": 47.1870309999999,
+          "self_cpu_ms": 0.0,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "io_bound_likely"
+        },
+        {
+          "op": "aten::bmm",
+          "calls": 33,
+          "self_device_ms": 42.59004799999995,
+          "device_total_ms": 42.59004799999995,
+          "self_cpu_ms": 0.4949339999995718,
+          "self_device_mem_mb": 1454.541015625,
+          "intensity_hint": "compute_bound_likely"
+        },
+        {
+          "op": "aten::mul",
+          "calls": 213,
+          "self_device_ms": 29.75897000000044,
+          "device_total_ms": 29.75897000000044,
+          "self_cpu_ms": 1.8197459999996053,
+          "self_device_mem_mb": 4348.98388671875,
+          "intensity_hint": "mixed"
+        },
+        {
+          "op": "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<float, float, float, at::native::binary_internal::MulFunctor<float> > >(at::TensorIteratorBase&, at::native::BinaryFunctor<float, float, float, at::native::binary_internal::MulFunctor<float> > const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<float, float, float, at::native::binary_internal::MulFunctor<float> > >(at::TensorIteratorBase&, at::native::BinaryFunctor<float, float, float, at::native::binary_internal::MulFunctor<float> > const&)::{lambda(int)#1})",
+          "calls": 94,
+          "self_device_ms": 27.255757000000187,
+          "device_total_ms": 27.255757000000187,
+          "self_cpu_ms": 0.0,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "compute_bound_likely"
+        }
+      ],
+      "total_top_ops_self_device_ms": 353.90323600000073,
+      "io_share": 0.3281164176752527,
+      "compute_share": 0.5145806154764861,
+      "mixed_share": 0.15730296684826117
+    },
+    {
+      "structure_name": "TiO2.cif",
+      "size": 4,
+      "mode": "compile",
+      "task": "train",
+      "cmd_ok": true,
+      "json": "scripts/profile_outputs/infra_pipeline/industrial_v3_diag_TiO2_s4_compile_train.json",
+      "csv": "scripts/profile_outputs/infra_pipeline/industrial_v3_diag_TiO2_s4_compile_train.csv",
+      "top_ops": [
+        {
+          "op": "aten::bmm",
+          "calls": 99,
+          "self_device_ms": 199.73615199999995,
+          "device_total_ms": 201.24854799999997,
+          "self_cpu_ms": 0.9349999999999927,
+          "self_device_mem_mb": 226.33203125,
+          "intensity_hint": "compute_bound_likely"
+        },
+        {
+          "op": "aten::mm",
+          "calls": 214,
+          "self_device_ms": 49.94501000000041,
+          "device_total_ms": 49.94501000000041,
+          "self_cpu_ms": 1.8604309999999769,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "compute_bound_likely"
+        },
+        {
+          "op": "void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_64x64_16x6_nt_align4>(cutlass_80_tensorop_s1688gemm_64x64_16x6_nt_align4::Params)",
+          "calls": 37,
+          "self_device_ms": 47.11820900000004,
+          "device_total_ms": 47.11820900000004,
+          "self_cpu_ms": 0.0,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "compute_bound_likely"
+        },
+        {
+          "op": "void gemmSN_TN_kernel<float, 128, 16, 2, 4, 4, 4, true, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float> >(cublasGemmSmallNParams<cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",
+          "calls": 4,
+          "self_device_ms": 36.79684499999998,
+          "device_total_ms": 36.79684499999998,
+          "self_cpu_ms": 0.0,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "compute_bound_likely"
+        },
+        {
+          "op": "triton_poi_fused_add_scatter_add_slice_backward_60",
+          "calls": 1,
+          "self_device_ms": 34.01995799999998,
+          "device_total_ms": 34.01995799999998,
+          "self_cpu_ms": 0.014171000000000277,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "io_bound_likely"
+        }
+      ],
+      "total_top_ops_self_device_ms": 571.5633080000005,
+      "io_share": 0.14248376139638397,
+      "compute_share": 0.8575162386036161,
+      "mixed_share": 0.0
+    },
+    {
+      "structure_name": "TiO2.cif",
+      "size": 4,
+      "mode": "compile",
+      "task": "infer",
+      "cmd_ok": true,
+      "json": "scripts/profile_outputs/infra_pipeline/industrial_v3_diag_TiO2_s4_compile_infer.json",
+      "csv": "scripts/profile_outputs/infra_pipeline/industrial_v3_diag_TiO2_s4_compile_infer.csv",
+      "top_ops": [
+        {
+          "op": "aten::bmm",
+          "calls": 12,
+          "self_device_ms": 24.002837,
+          "device_total_ms": 24.117399,
+          "self_cpu_ms": 0.21645499999999812,
+          "self_device_mem_mb": 12.0,
+          "intensity_hint": "compute_bound_likely"
+        },
+        {
+          "op": "aten::mm",
+          "calls": 53,
+          "self_device_ms": 15.134380999999998,
+          "device_total_ms": 15.134380999999998,
+          "self_cpu_ms": 0.7441409999999937,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "compute_bound_likely"
+        },
+        {
+          "op": "void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_64x64_16x6_tt_align4>(cutlass_80_tensorop_s1688gemm_64x64_16x6_tt_align4::Params)",
+          "calls": 2,
+          "self_device_ms": 12.161869,
+          "device_total_ms": 12.161869,
+          "self_cpu_ms": 0.0,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "compute_bound_likely"
+        },
+        {
+          "op": "triton_poi_fused_scatter_add_60",
+          "calls": 1,
+          "self_device_ms": 7.3965459999999945,
+          "device_total_ms": 7.3965459999999945,
+          "self_cpu_ms": 0.005889999999999418,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "io_bound_likely"
+        },
+        {
+          "op": "triton_poi_fused_scatter_add_60",
+          "calls": 1,
+          "self_device_ms": 7.3965459999999945,
+          "device_total_ms": 7.3965459999999945,
+          "self_cpu_ms": 0.0,
+          "self_device_mem_mb": 0.0,
+          "intensity_hint": "io_bound_likely"
+        }
+      ],
+      "total_top_ops_self_device_ms": 117.40066400000002,
+      "io_share": 0.21987667803991284,
+      "compute_share": 0.6215737246596833,
+      "mixed_share": 0.15854959730040394
+    }
+  ],
+  "rows": [
+    {
+      "structure_name": "AlN_mp-661_computed.cif",
+      "size": 2,
+      "mode": "compile",
+      "num_atoms": 32,
+      "num_edges": 1504,
+      "baseline_train_ms": 43.09896024068197,
+      "optimized_train_ms": 29.683711687723797,
+      "train_speedup_x": 1.4519397268807956,
+      "baseline_infer_ms": 17.199628174304962,
+      "optimized_infer_ms": 10.862975776195526,
+      "infer_speedup_x": 1.583325649311968
+    },
+    {
+      "structure_name": "AlN_mp-661_computed.cif",
+      "size": 2,
+      "mode": "eager",
+      "num_atoms": 32,
+      "num_edges": 1504,
+      "baseline_train_ms": 47.88445854187012,
+      "optimized_train_ms": 42.42295519510905,
+      "train_speedup_x": 1.1287393422179774,
+      "baseline_infer_ms": 28.23475217819214,
+      "optimized_infer_ms": 25.573904514312744,
+      "infer_speedup_x": 1.1040454210810953
+    },
+    {
+      "structure_name": "AlN_mp-661_computed.cif",
+      "size": 3,
+      "mode": "compile",
+      "num_atoms": 108,
+      "num_edges": 5076,
+      "baseline_train_ms": 103.16765848795573,
+      "optimized_train_ms": 73.01358795166016,
+      "train_speedup_x": 1.4129925864793766,
+      "baseline_infer_ms": 18.303744196891785,
+      "optimized_infer_ms": 12.026495933532715,
+      "infer_speedup_x": 1.521951555802436
+    },
+    {
+      "structure_name": "AlN_mp-661_computed.cif",
+      "size": 3,
+      "mode": "eager",
+      "num_atoms": 108,
+      "num_edges": 5076,
+      "baseline_train_ms": 106.89928690592448,
+      "optimized_train_ms": 91.4696528116862,
+      "train_speedup_x": 1.168685827702923,
+      "baseline_infer_ms": 63.69881582260132,
+      "optimized_infer_ms": 55.21894454956055,
+      "infer_speedup_x": 1.1535681520574854
+    },
+    {
+      "structure_name": "AlN_mp-661_computed.cif",
+      "size": 4,
+      "mode": "compile",
+      "num_atoms": 256,
+      "num_edges": 12032,
+      "baseline_train_ms": 217.8430633544922,
+      "optimized_train_ms": 151.98684438069662,
+      "train_speedup_x": 1.4333021008636702,
+      "baseline_infer_ms": 27.296512365341187,
+      "optimized_infer_ms": 24.86579203605652,
+      "infer_speedup_x": 1.0977535855588276
+    },
+    {
+      "structure_name": "AlN_mp-661_computed.cif",
+      "size": 4,
+      "mode": "eager",
+      "num_atoms": 256,
+      "num_edges": 12032,
+      "baseline_train_ms": 220.1002655029297,
+      "optimized_train_ms": 177.42882283528647,
+      "train_speedup_x": 1.2404989335202694,
+      "baseline_infer_ms": 117.18835163116455,
+      "optimized_infer_ms": 104.2095365524292,
+      "infer_speedup_x": 1.1245453679971558
+    },
+    {
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "compile",
+      "num_atoms": 96,
+      "num_edges": 4544,
+      "baseline_train_ms": 98.43490219116211,
+      "optimized_train_ms": 65.33495585123698,
+      "train_speedup_x": 1.5066192501192062,
+      "baseline_infer_ms": 16.347659945487976,
+      "optimized_infer_ms": 18.345983862876892,
+      "infer_speedup_x": 0.8910756745277354
+    },
+    {
+      "structure_name": "TiO2.cif",
+      "size": 2,
+      "mode": "eager",
+      "num_atoms": 96,
+      "num_edges": 4544,
+      "baseline_train_ms": 163.20959536234537,
+      "optimized_train_ms": 167.07830683390299,
+      "train_speedup_x": 0.9768449205353534,
+      "baseline_infer_ms": 37.6081919670105,
+      "optimized_infer_ms": 33.33708381652832,
+      "infer_speedup_x": 1.128118829288979
+    },
+    {
+      "structure_name": "TiO2.cif",
+      "size": 3,
+      "mode": "compile",
+      "num_atoms": 324,
+      "num_edges": 15336,
+      "baseline_train_ms": 257.11959584554035,
+      "optimized_train_ms": 183.766357421875,
+      "train_speedup_x": 1.3991657638142507,
+      "baseline_infer_ms": 34.27123212814331,
+      "optimized_infer_ms": 29.643263816833496,
+      "infer_speedup_x": 1.156122090330746
+    },
+    {
+      "structure_name": "TiO2.cif",
+      "size": 3,
+      "mode": "eager",
+      "num_atoms": 324,
+      "num_edges": 15336,
+      "baseline_train_ms": 276.13832600911456,
+      "optimized_train_ms": 226.62946573893228,
+      "train_speedup_x": 1.2184572959599809,
+      "baseline_infer_ms": 140.17216110229492,
+      "optimized_infer_ms": 120.22784042358398,
+      "infer_speedup_x": 1.1658877062787085
+    },
+    {
+      "structure_name": "TiO2.cif",
+      "size": 4,
+      "mode": "compile",
+      "num_atoms": 768,
+      "num_edges": 36352,
+      "baseline_train_ms": 460.63938903808594,
+      "optimized_train_ms": 374.3733266194661,
+      "train_speedup_x": 1.230427907878986,
+      "baseline_infer_ms": 73.90028762817383,
+      "optimized_infer_ms": 69.7219934463501,
+      "infer_speedup_x": 1.059927921955342
+    },
+    {
+      "structure_name": "TiO2.cif",
+      "size": 4,
+      "mode": "eager",
+      "num_atoms": 768,
+      "num_edges": 36352,
+      "baseline_train_ms": 538.9236094156901,
+      "optimized_train_ms": 441.39417521158856,
+      "train_speedup_x": 1.2209576829085915,
+      "baseline_infer_ms": 244.87833786010742,
+      "optimized_infer_ms": 227.88957023620605,
+      "infer_speedup_x": 1.0745482454782491
+    }
+  ]
+}

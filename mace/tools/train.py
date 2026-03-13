@@ -38,6 +38,20 @@ from .utils import (
 )
 
 
+def resolve_amp_dtype(amp: str):
+    if amp == "bf16":
+        return torch.bfloat16
+    if amp == "fp16":
+        return torch.float16
+    return None
+
+
+def autocast_context(device: torch.device, amp_dtype):
+    if device.type == "cuda" and amp_dtype is not None:
+        return torch.autocast(device_type="cuda", dtype=amp_dtype)
+    return nullcontext()
+
+
 @dataclasses.dataclass
 class SWAContainer:
     model: AveragedModel
@@ -172,6 +186,7 @@ def train(
     distributed_model: Optional[DistributedDataParallel] = None,
     train_sampler: Optional[DistributedSampler] = None,
     rank: Optional[int] = 0,
+    amp: str = "none",
 ):
     lowest_loss = np.inf
     valid_loss = np.inf
@@ -183,6 +198,15 @@ def train(
 
     if max_grad_norm is not None:
         logging.info(f"Using gradient clipping with tolerance={max_grad_norm:.3f}")
+    amp_dtype = resolve_amp_dtype(amp)
+    if amp_dtype is not None and device.type != "cuda":
+        logging.warning("AMP is enabled but device is not CUDA; disabling AMP.")
+        amp_dtype = None
+    grad_scaler = torch.amp.GradScaler(
+        "cuda",
+        enabled=(device.type == "cuda" and amp_dtype == torch.float16),
+    )
+    logging.info(f"Mixed precision mode: {amp}")
 
     logging.info("")
     logging.info("===========TRAINING===========")
@@ -198,6 +222,7 @@ def train(
             data_loader=valid_loader,
             output_args=output_args,
             device=device,
+            amp_dtype=amp_dtype,
         )
         valid_err_log(
             valid_loss_head, eval_metrics, logger, log_errors, None, valid_loader_name
@@ -243,6 +268,8 @@ def train(
             distributed=distributed,
             distributed_model=distributed_model,
             rank=rank,
+            amp_dtype=amp_dtype,
+            grad_scaler=grad_scaler,
         )
         if distributed:
             torch.distributed.barrier()
@@ -266,6 +293,7 @@ def train(
                         data_loader=valid_loader,
                         output_args=output_args,
                         device=device,
+                        amp_dtype=amp_dtype,
                     )
                     if rank == 0:
                         valid_err_log(
@@ -361,6 +389,8 @@ def train_one_epoch(
     distributed: bool,
     distributed_model: Optional[DistributedDataParallel] = None,
     rank: Optional[int] = 0,
+    amp_dtype=None,
+    grad_scaler=None,
 ) -> None:
     model_to_train = model if distributed_model is None else distributed_model
 
@@ -376,6 +406,7 @@ def train_one_epoch(
             device=device,
             distributed=distributed,
             rank=rank,
+            amp_dtype=amp_dtype,
         )
         opt_metrics["mode"] = "opt"
         opt_metrics["epoch"] = epoch
@@ -392,6 +423,8 @@ def train_one_epoch(
                 output_args=output_args,
                 max_grad_norm=max_grad_norm,
                 device=device,
+                amp_dtype=amp_dtype,
+                grad_scaler=grad_scaler,
             )
             opt_metrics["mode"] = "opt"
             opt_metrics["epoch"] = epoch
@@ -408,13 +441,14 @@ def take_step(
     output_args: Dict[str, bool],
     max_grad_norm: Optional[float],
     device: torch.device,
+    amp_dtype=None,
+    grad_scaler=None,
 ) -> Tuple[float, Dict[str, Any]]:
     start_time = time.time()
     batch = batch.to(device)
     batch_dict = batch.to_dict()
-
-    def closure():
-        optimizer.zero_grad(set_to_none=True)
+    optimizer.zero_grad(set_to_none=True)
+    with autocast_context(device, amp_dtype):
         output = model(
             batch_dict,
             training=True,
@@ -423,14 +457,18 @@ def take_step(
             compute_stress=output_args["stress"],
         )
         loss = loss_fn(pred=output, ref=batch)
+    if grad_scaler is not None and grad_scaler.is_enabled():
+        grad_scaler.scale(loss).backward()
+        if max_grad_norm is not None:
+            grad_scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+        grad_scaler.step(optimizer)
+        grad_scaler.update()
+    else:
         loss.backward()
         if max_grad_norm is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
-
-        return loss
-
-    loss = closure()
-    optimizer.step()
+        optimizer.step()
 
     if ema is not None:
         ema.update()
@@ -454,6 +492,7 @@ def take_step_lbfgs(
     device: torch.device,
     distributed: bool,
     rank: int,
+    amp_dtype=None,
 ) -> Tuple[float, Dict[str, Any]]:
     start_time = time.time()
     logging.debug(
@@ -489,14 +528,15 @@ def take_step_lbfgs(
         for batch in data_loader:
             batch = batch.to(device)
             batch_dict = batch.to_dict()
-            output = model(
-                batch_dict,
-                training=True,
-                compute_force=output_args["forces"],
-                compute_virials=output_args["virials"],
-                compute_stress=output_args["stress"],
-            )
-            batch_loss = loss_fn(pred=output, ref=batch)
+            with autocast_context(device, amp_dtype):
+                output = model(
+                    batch_dict,
+                    training=True,
+                    compute_force=output_args["forces"],
+                    compute_virials=output_args["virials"],
+                    compute_stress=output_args["stress"],
+                )
+                batch_loss = loss_fn(pred=output, ref=batch)
             batch_loss = batch_loss * (batch.num_graphs / total_sample_count)
 
             batch_loss.backward()
@@ -545,6 +585,7 @@ def evaluate(
     data_loader: DataLoader,
     output_args: Dict[str, bool],
     device: torch.device,
+    amp_dtype=None,
 ) -> Tuple[float, Dict[str, Any]]:
     for param in model.parameters():
         param.requires_grad = False
@@ -555,13 +596,14 @@ def evaluate(
     for batch in data_loader:
         batch = batch.to(device)
         batch_dict = batch.to_dict()
-        output = model(
-            batch_dict,
-            training=False,
-            compute_force=output_args["forces"],
-            compute_virials=output_args["virials"],
-            compute_stress=output_args["stress"],
-        )
+        with autocast_context(device, amp_dtype):
+            output = model(
+                batch_dict,
+                training=False,
+                compute_force=output_args["forces"],
+                compute_virials=output_args["virials"],
+                compute_stress=output_args["stress"],
+            )
         avg_loss, aux = metrics(batch, output)
 
     avg_loss, aux = metrics.compute()

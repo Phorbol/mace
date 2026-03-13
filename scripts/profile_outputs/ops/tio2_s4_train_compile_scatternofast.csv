@@ -1,0 +1,41 @@
+op,calls,self_device_ms,device_total_ms,self_cpu_ms,self_device_mem_mb,intensity_hint
+aten::bmm,99,379.1430519999997,380.6577249999997,0.8122200000000075,225.08203125,compute_bound_likely
+ampere_sgemm_128x128_nt,12,214.47053900000006,214.47053900000006,0.0,0.0,compute_bound_likely
+aten::mm,214,46.75540400000034,46.75540400000034,1.4458450000000076,0.0,compute_bound_likely
+ampere_sgemm_128x128_tt,6,43.50985900000003,43.50985900000003,0.0,0.0,compute_bound_likely
+"void gemmSN_TN_kernel<float, 128, 16, 2, 4, 4, 4, true, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float> >(cublasGemmSmallNParams<cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",4,32.15180499999996,32.15180499999996,0.0,0.0,compute_bound_likely
+triton_poi_fused_add_scatter_add_slice_backward_58,1,29.86275299999997,29.86275299999997,0.013409999999999854,0.0,io_bound_likely
+triton_poi_fused_add_scatter_add_slice_backward_58,1,29.86275299999997,29.86275299999997,0.0,0.0,io_bound_likely
+ampere_sgemm_128x128_tn,8,28.71009999999999,28.71009999999999,0.0,0.0,compute_bound_likely
+ampere_sgemm_32x128_tn,63,13.498495999999937,13.498495999999937,0.0,0.0,compute_bound_likely
+"std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int, float, float, float, float, false, true, true, false, 5, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",36,12.993883000000043,12.993883000000043,0.0,0.0,compute_bound_likely
+ampere_sgemm_32x128_nn,70,12.97167699999976,12.97167699999976,0.0,0.0,compute_bound_likely
+"void gemmk1_kernel<int, float, 256, 5, false, false, true, false, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float, 0>(cublasGemmk1Params<float, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float, biasType<cublasGemvTensorStridedBatched<float>::value_type, float>::type>)",21,12.153839999999814,12.153839999999814,0.0,0.0,compute_bound_likely
+"void gemmk1_kernel<int, float, 256, 5, false, false, false, false, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float, 0>(cublasGemmk1Params<float, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float, biasType<cublasGemvTensorStridedBatched<float>::value_type, float>::type>)",26,9.95762299999997,9.95762299999997,0.0,0.0,compute_bound_likely
+"void gemv2N_kernel<int, int, float, float, float, float, 128, 2, 4, 4, 1, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",18,8.409603999999891,8.409603999999891,0.0,0.0,compute_bound_likely
+triton_poi_fused_add_107,2,7.3328229999999746,7.3328229999999746,0.022850999999999656,0.0,compute_bound_likely
+triton_poi_fused_add_107,2,7.3328229999999746,7.3328229999999746,0.0,0.0,compute_bound_likely
+triton_poi_fused_add_gather_89,1,6.7120470000000205,6.7120470000000205,0.005230000000001383,0.0,compute_bound_likely
+triton_poi_fused_add_gather_89,1,6.7120470000000205,6.7120470000000205,0.0,0.0,compute_bound_likely
+triton_poi_fused_add_scatter_add_slice_backward_25,1,5.911717999999993,5.911717999999993,0.006570000000001528,0.0,io_bound_likely
+triton_poi_fused_add_scatter_add_slice_backward_25,1,5.911717999999993,5.911717999999993,0.0,0.0,io_bound_likely
+ampere_sgemm_128x128_nn,6,5.583489999999947,5.583489999999947,0.0,0.0,compute_bound_likely
+triton_poi_fused_scatter_add_62,1,5.459936000000002,5.459936000000002,0.0036799999999984723,0.0,io_bound_likely
+triton_poi_fused_scatter_add_62,1,5.459936000000002,5.459936000000002,0.0,0.0,io_bound_likely
+triton_poi_fused_add_mul_sum_104,1,5.201118000000017,5.201118000000017,0.0070300000000024735,0.0,compute_bound_likely
+triton_poi_fused_add_mul_sum_104,1,5.201118000000017,5.201118000000017,0.0,0.0,compute_bound_likely
+triton_poi_fused_add_mul_sum_90,1,4.600918000000005,4.600918000000005,0.010351000000000568,0.0,mixed
+triton_poi_fused_add_mul_sum_90,1,4.600918000000005,4.600918000000005,0.0,0.0,mixed
+ampere_sgemm_128x64_nn,10,4.450772999999977,4.450772999999977,0.0,0.0,compute_bound_likely
+triton_poi_fused_add_gather_92,1,4.372595000000001,4.372595000000001,0.006329999999999927,0.0,mixed
+triton_poi_fused_add_gather_92,1,4.372595000000001,4.372595000000001,0.0,0.0,mixed
+ampere_sgemm_64x64_tn,4,4.3114740000001035,4.3114740000001035,0.0,0.0,compute_bound_likely
+void cutlass::Kernel2<cutlass_80_simt_sgemm_128x64_8x5_nt_align1>(cutlass_80_simt_sgemm_128x64_8x5_nt_align1::Params),21,4.21931500000006,4.21931500000006,0.0,0.0,compute_bound_likely
+triton_poi_fused_cat_scatter_add_20,1,4.094447999999999,4.094447999999999,0.0055499999999992725,0.0,io_bound_likely
+triton_poi_fused_cat_scatter_add_20,1,4.094447999999999,4.094447999999999,0.0,0.0,io_bound_likely
+"void gemv2N_kernel<int, int, float, float, float, float, 128, 1, 2, 4, 1, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",6,3.9404299999999965,3.9404299999999965,0.0,0.0,mixed
+"std::enable_if<true, void>::type internal::gemvx::kernel<int, int, float, float, float, float, true, true, true, false, 6, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",5,3.408552999999938,3.408552999999938,0.0,0.0,mixed
+triton_poi_fused_add_123,1,2.9042269999999553,2.9042269999999553,0.004900000000001455,0.0,mixed
+triton_poi_fused_add_123,1,2.9042269999999553,2.9042269999999553,0.0,0.0,mixed
+triton_poi_fused_clone_36,1,2.8847060000000018,2.8847060000000018,0.005699999999999818,0.0,mixed
+triton_poi_fused_clone_36,1,2.8847060000000018,2.8847060000000018,0.0,0.0,mixed
