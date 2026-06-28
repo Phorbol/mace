@@ -72,11 +72,11 @@ These references suggest a two-track roadmap: keep small acceleration knobs comp
 
 ## Full RECIO/8k Validation Runs
 
-Full 800 epoch single-GPU validation jobs were submitted on SAI `4V100` with the same random seed and split:
+Full 800 epoch single-GPU validation jobs were submitted on SAI `4V100` with the same random seed and split. The later `576509` run is a shorter 200 epoch stability gate for the corrected HybridMuon routing, not an equal-budget accuracy comparison against the 800 epoch baseline:
 
 | Case | Slurm job | Status at submit check | Early validation |
 | --- | ---: | --- | --- |
-| `baseline_fp32_adam_cueq` | `576362` | running on `4v100n35` | epoch 570: `33.57 meV/atom`, `266.46 meV/A`, no NaN |
+| `baseline_fp32_adam_cueq` | `576362` | completed, 800 epoch full run | no NaN through epoch 795; stage-two valid `21.2 meV/atom`, `267.5 meV/A`; mean `16.77 s/epoch`, max FB `4582 MB` |
 | `fp32_hybrid_muon_cueq` | `576363` | cancelled after NaN | first NaN at epoch 125 with original Muon lr equal to base lr `0.04` |
 | `fp32_hybrid_muon_cueq`, `hybrid_muon_lr_factor=0.1` | `576454` | cancelled after NaN | first NaN at epoch 80; lr reduction alone was not the root fix |
 | `fp32_hybrid_muon_cueq`, effective-rank routing before Adam parity fix | `576498` | cancelled | superseded after fixing the Adam-routed branch to match `torch.optim.Adam(amsgrad=True)` |
