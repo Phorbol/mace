@@ -368,3 +368,58 @@ def test_energy_only_compile_wrapper_preserves_force_outputs_cpu():
 
     assert_close(wrapped_output["energy"], eager_output["energy"])
     assert_close(wrapped_output["forces"], eager_output["forces"])
+
+
+class _BackwardFails(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, value):
+        return value
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        raise RuntimeError("compiled backward failed")
+
+
+class _BackwardFallbackModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.ones(()))
+        self.disabled = False
+        self.disable_calls = 0
+        self.forward_calls = 0
+
+    def forward(self, batch, **kwargs):
+        self.forward_calls += 1
+        value = batch["x"].sum() * self.weight
+        if not self.disabled:
+            value = _BackwardFails.apply(value)
+        return {"value": value}
+
+    def disable_compile_fallback(self, exc):
+        self.disable_calls += 1
+        self.disabled = True
+        return True
+
+
+def test_take_step_retries_eager_after_compile_backward_failure():
+    from mace.tools.train import take_step
+
+    model = _BackwardFallbackModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+
+    loss, metrics = take_step(
+        model=model,
+        loss_fn=_MiniLoss(),
+        batch=_MiniBatch(),
+        optimizer=optimizer,
+        ema=None,
+        output_args={"forces": False, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+
+    assert model.disabled is True
+    assert model.disable_calls == 1
+    assert model.forward_calls == 2
+    assert metrics["loss"] == 1.0
+    assert loss.requires_grad is True

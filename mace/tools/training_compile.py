@@ -22,20 +22,25 @@ class RuntimeFallbackCompiledModule(torch.nn.Module):
         self.allow_fallback = allow_fallback
         self.disabled = False
 
+    def disable_compile_fallback(self, exc: Exception) -> bool:
+        if not self.allow_fallback:
+            return False
+        logging.warning(
+            "training torch.compile failed during backward; disabling compiled "
+            "training model and retrying eager: %s",
+            exc,
+        )
+        self.disabled = True
+        return True
+
     def forward(self, *args, **kwargs):
         if self.disabled:
             return self.eager_model(*args, **kwargs)
         try:
             return self.compiled_model(*args, **kwargs)
         except Exception as exc:
-            if not self.allow_fallback:
+            if not self.disable_compile_fallback(exc):
                 raise
-            logging.warning(
-                "training torch.compile failed at runtime; disabling compiled "
-                "training model and retrying eager: %s",
-                exc,
-            )
-            self.disabled = True
             return self.eager_model(*args, **kwargs)
 
 
@@ -97,14 +102,8 @@ class EnergyOnlyForceCompiledModule(RuntimeFallbackCompiledModule):
             )
             return output
         except Exception as exc:
-            if not self.allow_fallback:
+            if not self.disable_compile_fallback(exc):
                 raise
-            logging.warning(
-                "energy-only training torch.compile failed at runtime; disabling "
-                "compiled training model and retrying eager: %s",
-                exc,
-            )
-            self.disabled = True
             return self.eager_model(data, *args, **kwargs)
 
 

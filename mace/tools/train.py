@@ -444,7 +444,13 @@ def take_step(
 
         return loss
 
-    loss = closure()
+    try:
+        loss = closure()
+    except RuntimeError as exc:
+        disable_compile_fallback = getattr(model, "disable_compile_fallback", None)
+        if disable_compile_fallback is None or not disable_compile_fallback(exc):
+            raise
+        loss = closure()
     optimizer.step()
 
     if ema is not None:
