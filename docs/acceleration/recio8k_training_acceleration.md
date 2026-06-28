@@ -15,12 +15,14 @@ cd /home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/accel-smoke/fp32_hybrid
 sbatch mace-recio8k.sbatch
 ```
 
-Parse completed logs:
+Parse completed or running logs:
 
 ```bash
 python scripts/benchmarks/recio8k_accel/parse_metrics.py \
   /home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/accel-smoke
 ```
+
+The parser reports validation MAE, timestamp-derived seconds per epoch, and `nvidia-smi dmon` summaries when a case-local `nvdmon_job-*.log` file is present.
 
 The default template uses the existing RECIO `4V100` partition and exports this repository on `PYTHONPATH` before calling `python -m mace.cli.run_train`, so the Slurm job uses the checked-out develop code while preserving case-local relative paths. Generated cases set `distributed: false` because the template is a single-rank, single-GPU smoke run. V100 does not provide native bf16 tensor cores, so `bf16_*` cases should be submitted only on a bf16-capable GPU partition. On `4V100`, use `baseline_fp32_adam_cueq`, `fp32_hybrid_muon_cueq`, and `compile_fp32_adam_cueq` as the first smoke comparison.
 
