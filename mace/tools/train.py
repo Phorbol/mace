@@ -174,6 +174,7 @@ def train(
     train_sampler: Optional[DistributedSampler] = None,
     rank: Optional[int] = 0,
     precision_config: Optional[TrainingPrecisionConfig] = None,
+    training_model: Optional[torch.nn.Module] = None,
 ):
     lowest_loss = np.inf
     valid_loss = np.inf
@@ -246,6 +247,7 @@ def train(
             distributed_model=distributed_model,
             rank=rank,
             precision_config=precision_config,
+            training_model=training_model,
         )
         if distributed:
             torch.distributed.barrier()
@@ -365,8 +367,12 @@ def train_one_epoch(
     distributed_model: Optional[DistributedDataParallel] = None,
     rank: Optional[int] = 0,
     precision_config: Optional[TrainingPrecisionConfig] = None,
+    training_model: Optional[torch.nn.Module] = None,
 ) -> None:
-    model_to_train = model if distributed_model is None else distributed_model
+    if distributed_model is not None:
+        model_to_train = distributed_model
+    else:
+        model_to_train = training_model if training_model is not None else model
 
     if isinstance(optimizer, LBFGS):
         _, opt_metrics = take_step_lbfgs(

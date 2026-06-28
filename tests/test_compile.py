@@ -249,3 +249,71 @@ def test_training_compile_allow_fallback_suppresses_dynamo_errors():
         assert dynamo_config.suppress_errors is True
     finally:
         dynamo_config.suppress_errors = previous
+
+
+class _MiniBatch:
+    def __init__(self):
+        self.x = torch.ones(1)
+
+    def to(self, device):
+        self.x = self.x.to(device)
+        return self
+
+    def to_dict(self):
+        return {"x": self.x}
+
+
+class _NoCallModel(torch.nn.Module):
+    def forward(self, *args, **kwargs):
+        raise AssertionError("base model should not be used for compiled training step")
+
+
+class _TrainingOnlyModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.ones(()))
+        self.calls = 0
+
+    def forward(self, batch, **kwargs):
+        self.calls += 1
+        return {"value": batch["x"].sum() * self.weight}
+
+
+class _MiniLoss(torch.nn.Module):
+    def forward(self, pred, ref):
+        return pred["value"]
+
+
+class _MiniLogger:
+    def __init__(self):
+        self.records = []
+
+    def log(self, metrics):
+        self.records.append(metrics)
+
+
+def test_train_one_epoch_uses_optional_training_model():
+    from mace.tools.train import train_one_epoch
+
+    base_model = _NoCallModel()
+    training_model = _TrainingOnlyModel()
+    optimizer = torch.optim.SGD(training_model.parameters(), lr=0.1)
+    logger = _MiniLogger()
+
+    train_one_epoch(
+        model=base_model,
+        training_model=training_model,
+        loss_fn=_MiniLoss(),
+        data_loader=[_MiniBatch()],
+        optimizer=optimizer,
+        epoch=0,
+        output_args={"forces": False, "virials": False, "stress": False},
+        max_grad_norm=None,
+        ema=None,
+        logger=logger,
+        device=torch.device("cpu"),
+        distributed=False,
+    )
+
+    assert training_model.calls == 1
+    assert logger.records[0]["mode"] == "opt"

@@ -815,10 +815,11 @@ def run(args) -> None:
         ]
         model = run_e3nn_to_oeq(deepcopy(model), device=device)
 
+    training_model = None
     if args.train_compile:
         from mace.tools.training_compile import prepare_model_for_training_compile
 
-        model = prepare_model_for_training_compile(
+        training_model = prepare_model_for_training_compile(
             model,
             enabled=args.train_compile,
             mode=args.train_compile_mode,
@@ -984,6 +985,7 @@ def run(args) -> None:
         train_sampler=train_sampler,
         rank=rank,
         precision_config=precision_config,
+        training_model=training_model,
     )
 
     logging.info("")
