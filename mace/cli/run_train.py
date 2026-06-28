@@ -40,6 +40,7 @@ from mace.modules.lora import inject_LoRAs, merge_lora_weights
 from mace.tools import torch_geometric
 from mace.tools.distributed_tools import init_distributed
 from mace.tools.model_script_utils import configure_model
+from mace.tools.precision import TrainingPrecisionConfig
 from mace.tools.multihead_tools import (
     HeadConfig,
     apply_pseudolabels_to_pt_head_configs,
@@ -941,6 +942,10 @@ def run(args) -> None:
                 "Please install it to use XPU device."
             )
 
+    precision_config = TrainingPrecisionConfig.from_name(args.train_amp_dtype, device)
+    if precision_config.enabled:
+        logging.info("Using training AMP dtype: %s", precision_config.dtype)
+
     tools.train(
         model=model,
         loss_fn=loss_fn,
@@ -967,6 +972,7 @@ def run(args) -> None:
         plotter=plotter,
         train_sampler=train_sampler,
         rank=rank,
+        precision_config=precision_config,
     )
 
     logging.info("")

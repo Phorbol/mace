@@ -76,6 +76,13 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default="float64",
     )
     parser.add_argument(
+        "--train_amp_dtype",
+        help="Autocast dtype for training forward pass: none, bf16, or fp16",
+        type=str,
+        choices=["none", "bf16", "fp16"],
+        default="none",
+    )
+    parser.add_argument(
         "--distributed",
         help="train in multi-GPU data parallel mode",
         action="store_true",

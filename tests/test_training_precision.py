@@ -24,3 +24,9 @@ def test_autocast_context_none_is_noop():
         y = x + 1
 
     assert y.dtype == torch.float32
+
+
+def test_precision_config_constructs_for_default_training_path():
+    config = TrainingPrecisionConfig.from_name("none", torch.device("cpu"))
+
+    assert config.enabled is False

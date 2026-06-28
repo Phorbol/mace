@@ -26,6 +26,7 @@ from mace.cli.visualise_train import TrainingPlotter
 
 from . import torch_geometric
 from .checkpoint import CheckpointHandler, CheckpointState
+from .precision import TrainingPrecisionConfig, get_autocast_context
 from .torch_tools import to_numpy
 from .utils import (
     MetricsLogger,
@@ -172,6 +173,7 @@ def train(
     distributed_model: Optional[DistributedDataParallel] = None,
     train_sampler: Optional[DistributedSampler] = None,
     rank: Optional[int] = 0,
+    precision_config: Optional[TrainingPrecisionConfig] = None,
 ):
     lowest_loss = np.inf
     valid_loss = np.inf
@@ -243,6 +245,7 @@ def train(
             distributed=distributed,
             distributed_model=distributed_model,
             rank=rank,
+            precision_config=precision_config,
         )
         if distributed:
             torch.distributed.barrier()
@@ -361,6 +364,7 @@ def train_one_epoch(
     distributed: bool,
     distributed_model: Optional[DistributedDataParallel] = None,
     rank: Optional[int] = 0,
+    precision_config: Optional[TrainingPrecisionConfig] = None,
 ) -> None:
     model_to_train = model if distributed_model is None else distributed_model
 
@@ -392,6 +396,7 @@ def train_one_epoch(
                 output_args=output_args,
                 max_grad_norm=max_grad_norm,
                 device=device,
+                precision_config=precision_config,
             )
             opt_metrics["mode"] = "opt"
             opt_metrics["epoch"] = epoch
@@ -408,20 +413,24 @@ def take_step(
     output_args: Dict[str, bool],
     max_grad_norm: Optional[float],
     device: torch.device,
+    precision_config: Optional[TrainingPrecisionConfig] = None,
 ) -> Tuple[float, Dict[str, Any]]:
     start_time = time.time()
     batch = batch.to(device)
     batch_dict = batch.to_dict()
+    if precision_config is None:
+        precision_config = TrainingPrecisionConfig(enabled=False, dtype=None)
 
     def closure():
         optimizer.zero_grad(set_to_none=True)
-        output = model(
-            batch_dict,
-            training=True,
-            compute_force=output_args["forces"],
-            compute_virials=output_args["virials"],
-            compute_stress=output_args["stress"],
-        )
+        with get_autocast_context(precision_config):
+            output = model(
+                batch_dict,
+                training=True,
+                compute_force=output_args["forces"],
+                compute_virials=output_args["virials"],
+                compute_stress=output_args["stress"],
+            )
         loss = loss_fn(pred=output, ref=batch)
         loss.backward()
         if max_grad_norm is not None:
