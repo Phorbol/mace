@@ -47,7 +47,7 @@ def test_hybrid_muon_routes_only_safe_dense_mace_weights():
 
     assert "radial_embedding.0.weight" in muon_names
     assert "radial_embedding.2.weight" in muon_names
-    assert "readouts.0.weight" in muon_names
+    assert "readouts.0.weight" in adam_names
     assert "radial_embedding.0.bias" in adam_names
     assert "readouts.0.bias" in adam_names
     assert "scale_shift" in adam_names
@@ -56,6 +56,71 @@ def test_hybrid_muon_routes_only_safe_dense_mace_weights():
     assert sum(len(group["params"]) for group in groups) == len(list(model.parameters()))
     assert next(group for group in groups if group["route"] == "muon")["lr"] == 1.0e-4
     assert next(group for group in groups if group["route"] == "adam")["lr"] == 1.0e-3
+
+
+def test_hybrid_muon_routes_singleton_matrix_views_to_adam():
+    param = torch.nn.Parameter(torch.ones(1, 128))
+
+    groups, summary = build_hybrid_muon_param_groups(
+        [("readouts.0.linear.weight", param)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+    )
+
+    assert summary == [
+        {
+            "name": "readouts.0.linear.weight",
+            "shape": (1, 128),
+            "numel": 128,
+            "route": "adam",
+            "reason": "effective-rank<2",
+        }
+    ]
+    assert len(groups) == 1
+    assert groups[0]["route"] == "adam"
+
+
+def test_hybrid_muon_adam_route_matches_torch_adam_with_amsgrad():
+    torch.manual_seed(12)
+    initial = torch.randn(1, 8)
+    hybrid_param = torch.nn.Parameter(initial.clone())
+    torch_param = torch.nn.Parameter(initial.clone())
+    lr = 3.0e-3
+    weight_decay = 2.0e-2
+    betas = (0.8, 0.97)
+    eps = 1.0e-7
+
+    groups, summary = build_hybrid_muon_param_groups(
+        [("readouts.0.linear.weight", hybrid_param)],
+        lr=lr,
+        weight_decay=weight_decay,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        adam_betas=betas,
+        eps=eps,
+        amsgrad=True,
+    )
+    hybrid_optimizer = HybridMuon(groups, lr=lr)
+    torch_optimizer = torch.optim.Adam(
+        [torch_param],
+        lr=lr,
+        betas=betas,
+        eps=eps,
+        weight_decay=weight_decay,
+        amsgrad=True,
+    )
+
+    assert summary[0]["route"] == "adam"
+    for _ in range(5):
+        grad = torch.randn_like(initial)
+        hybrid_param.grad = grad.clone()
+        torch_param.grad = grad.clone()
+        hybrid_optimizer.step()
+        torch_optimizer.step()
+
+    assert torch.allclose(hybrid_param, torch_param, atol=1.0e-7, rtol=1.0e-6)
 
 
 def test_hybrid_muon_route_summary_is_loggable():

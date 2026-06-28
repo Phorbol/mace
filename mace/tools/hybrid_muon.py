@@ -51,6 +51,9 @@ def _route_parameter(name: str, param: torch.nn.Parameter) -> tuple[str, str]:
         return "frozen", "requires_grad=False"
     if param.ndim < 2:
         return "adam", "rank<2"
+    effective_shape = tuple(int(dim) for dim in param.shape if int(dim) != 1)
+    if len(effective_shape) < 2:
+        return "adam", "effective-rank<2"
     if any(token in lower for token in _ADAM_NAME_TOKENS):
         if not any(token in lower for token in _MUON_NAME_TOKENS):
             return "adam", "sensitive-name"
@@ -69,6 +72,7 @@ def build_hybrid_muon_param_groups(
     beta: float = 0.9,
     adam_betas: tuple[float, float] = (0.9, 0.999),
     eps: float = 1.0e-8,
+    amsgrad: bool = False,
 ) -> tuple[list[dict], list[dict]]:
     if muon_lr_factor <= 0.0:
         raise ValueError("muon_lr_factor must be positive")
@@ -112,6 +116,7 @@ def build_hybrid_muon_param_groups(
                 "weight_decay": weight_decay,
                 "betas": adam_betas,
                 "eps": eps,
+                "amsgrad": amsgrad,
             }
         )
     return groups, summary
@@ -214,25 +219,35 @@ class HybridMuon(Optimizer):
         beta1, beta2 = group.get("betas", (0.9, 0.999))
         eps = group.get("eps", 1.0e-8)
         weight_decay = group.get("weight_decay", 0.0)
+        amsgrad = group.get("amsgrad", False)
         for param in group["params"]:
             if param.grad is None:
                 continue
             grad = param.grad.float()
+            if weight_decay:
+                grad = grad.add(param.float(), alpha=weight_decay)
             state = self.state[param]
             if not state:
                 state["step"] = torch.tensor(0, device=param.device)
                 state["exp_avg"] = torch.zeros_like(param, dtype=torch.float32)
                 state["exp_avg_sq"] = torch.zeros_like(param, dtype=torch.float32)
+                if amsgrad:
+                    state["max_exp_avg_sq"] = torch.zeros_like(
+                        param, dtype=torch.float32
+                    )
             state["step"] += 1
             step = int(state["step"].item())
             exp_avg = state["exp_avg"]
             exp_avg_sq = state["exp_avg_sq"]
-            if weight_decay:
-                param.mul_(1.0 - lr * weight_decay)
             exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
             exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
             bias_correction1 = 1.0 - beta1**step
             bias_correction2 = 1.0 - beta2**step
-            denom = exp_avg_sq.sqrt().div_(math.sqrt(bias_correction2)).add_(eps)
+            denom_source = exp_avg_sq
+            if amsgrad:
+                max_exp_avg_sq = state["max_exp_avg_sq"]
+                torch.maximum(max_exp_avg_sq, exp_avg_sq, out=max_exp_avg_sq)
+                denom_source = max_exp_avg_sq
+            denom = denom_source.sqrt().div_(math.sqrt(bias_correction2)).add_(eps)
             update = exp_avg.div(bias_correction1).div_(denom)
             param.add_(update.to(dtype=param.dtype), alpha=-lr)

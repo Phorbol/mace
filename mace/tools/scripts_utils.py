@@ -935,6 +935,7 @@ def get_optimizer(
             muon_lr_factor=args.hybrid_muon_lr_factor,
             beta=args.beta,
             adam_betas=(args.beta, 0.999),
+            amsgrad=args.amsgrad,
         )
         logging.info(summarize_hybrid_muon_routes(route_summary))
         optimizer = HybridMuon(groups, lr=args.lr, weight_decay=args.weight_decay)
