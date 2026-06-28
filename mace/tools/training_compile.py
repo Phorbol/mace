@@ -29,6 +29,8 @@ def prepare_model_for_training_compile(
         import torch._dynamo.config as dynamo_config
 
         dynamo_config.optimize_ddp = False
+        if allow_fallback:
+            dynamo_config.suppress_errors = True
         compiled = torch.compile(model, mode=mode, fullgraph=fullgraph)
         logging.info(
             "Enabled training torch.compile: mode=%s fullgraph=%s",

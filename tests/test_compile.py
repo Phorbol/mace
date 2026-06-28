@@ -226,3 +226,26 @@ def test_training_compile_helper_noop_cpu():
     )
 
     assert compiled is model
+
+
+def test_training_compile_allow_fallback_suppresses_dynamo_errors():
+    import torch._dynamo.config as dynamo_config
+
+    from mace.tools.training_compile import prepare_model_for_training_compile
+
+    previous = dynamo_config.suppress_errors
+    dynamo_config.suppress_errors = False
+    try:
+        model = torch.nn.Linear(1, 1)
+        compiled = prepare_model_for_training_compile(
+            model,
+            enabled=True,
+            mode="default",
+            fullgraph=False,
+            allow_fallback=True,
+        )
+
+        assert compiled is not model
+        assert dynamo_config.suppress_errors is True
+    finally:
+        dynamo_config.suppress_errors = previous
