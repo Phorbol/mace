@@ -815,6 +815,17 @@ def run(args) -> None:
         ]
         model = run_e3nn_to_oeq(deepcopy(model), device=device)
 
+    if args.train_compile:
+        from mace.tools.training_compile import prepare_model_for_training_compile
+
+        model = prepare_model_for_training_compile(
+            model,
+            enabled=args.train_compile,
+            mode=args.train_compile_mode,
+            fullgraph=args.train_compile_fullgraph,
+            allow_fallback=args.train_compile_allow_fallback,
+        )
+
     # Optimizer
     param_options = get_params_options(args, model)
 

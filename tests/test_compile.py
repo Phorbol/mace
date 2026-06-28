@@ -211,3 +211,18 @@ def test_graph_breaks(device):
     explanation.out_guards = None
     print(explanation)
     assert explanation.graph_break_count == 0
+
+
+def test_training_compile_helper_noop_cpu():
+    from mace.tools.training_compile import prepare_model_for_training_compile
+
+    model = create_mace("cpu")
+    compiled = prepare_model_for_training_compile(
+        model,
+        enabled=False,
+        mode="default",
+        fullgraph=False,
+        allow_fallback=True,
+    )
+
+    assert compiled is model

@@ -83,6 +83,31 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default="none",
     )
     parser.add_argument(
+        "--train_compile",
+        help="Enable torch.compile for the training model after cueq/OEQ conversion",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--train_compile_mode",
+        help="torch.compile mode for training",
+        type=str,
+        choices=["default", "reduce-overhead", "max-autotune"],
+        default="default",
+    )
+    parser.add_argument(
+        "--train_compile_fullgraph",
+        help="Request fullgraph=True for training torch.compile",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--train_compile_allow_fallback",
+        help="Continue eager training when training torch.compile setup fails",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
         "--distributed",
         help="train in multi-GPU data parallel mode",
         action="store_true",
