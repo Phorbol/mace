@@ -46,3 +46,20 @@ training torch.compile failed during backward; disabling compiled training model
 
 This fallback is intentional: it preserves MACE's conservative-force training instead of hiding a broken compiled gradient path. Future compile acceleration should target lower-level force-safe kernels or submodules with proven higher-order-gradient support, not the whole MACE force-training graph.
 
+## Full RECIO/8k Validation Runs
+
+Full 800 epoch single-GPU validation jobs were submitted on SAI `4V100` with the same random seed and split:
+
+| Case | Slurm job | Status at submit check | Early validation |
+| --- | ---: | --- | --- |
+| `baseline_fp32_adam_cueq` | `576362` | running on `4v100n35` | epoch 0: `302.25 meV/atom`, `600.83 meV/A` |
+| `fp32_hybrid_muon_cueq` | `576363` | running on `4v100n33` | epoch 0: `261.64 meV/atom`, `567.72 meV/A` |
+
+The generated case root is:
+
+```text
+/home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/accel-full-20260629-040425
+```
+
+The visible SAI GPU partitions at submission time were V100-only (`4V100`, `4V100PX`, `8V100V0`), so no bf16 validation job was submitted. The bf16 path should be validated on A100/H100 or another native bf16 GPU; running it on V100 would not test the DPA4-style bf16 acceleration path.
+
