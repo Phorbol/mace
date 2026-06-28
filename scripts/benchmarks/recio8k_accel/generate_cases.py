@@ -62,6 +62,7 @@ def main() -> None:
         config["max_num_epochs"] = args.epochs
         config["start_swa"] = max(1, int(args.epochs * 0.75))
         config["restart_latest"] = False
+        config["distributed"] = False
         config["name"] = f"RECIO-8k-{name}"
         (case_dir / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
 
