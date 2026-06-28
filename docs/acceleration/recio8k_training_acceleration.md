@@ -65,3 +65,11 @@ The generated case root is:
 
 The visible SAI GPU partitions at submission time were V100-only (`4V100`, `4V100PX`, `8V100V0`), so no bf16 validation job was submitted. The bf16 path should be validated on A100/H100 or another native bf16 GPU; running it on V100 would not test the DPA4-style bf16 acceleration path.
 
+## GPU D3 Backend Status
+
+`mace_mp(..., dispersion=True, dispersion_backend="nvalchemi")` now routes D3 dispersion through an optional `NvalchemiDFTD3Calculator` ASE adapter. The adapter keeps the dispersion correction outside the MACE neural model and sums it at the calculator level, matching the existing `torch_dftd` architecture and preserving MACE model semantics.
+
+The first mapped backend is deliberately narrow: PBE-D3(BJ), using the explicit Grimme parameters `a1=0.4289`, `a2=4.4407` Bohr, and `s8=0.7875`, because nvalchemi's `DFTD3ModelWrapper` takes explicit BJ damping parameters rather than an XC string. Other XC/damping combinations still require `dispersion_backend="torch_dftd"` until their parameters are mapped and verified against a reference.
+
+Current `mace_env` does not provide `nvalchemi`, `nvalchemiops`, or `warp`, so the GPU D3 path has unit-tested adapter behavior but not a live SAI GPU smoke run yet. Once those optional dependencies are installed, the next verification gate is an ASE single-structure comparison against `torch_dftd` for PBE-D3(BJ), followed by a timing check on a periodic RECIO-like structure.
+

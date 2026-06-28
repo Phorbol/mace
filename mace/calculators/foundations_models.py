@@ -239,6 +239,7 @@ def mace_mp(
     dispersion: bool = False,
     damping: str = "bj",  # choices: ["zero", "bj", "zerom", "bjm"]
     dispersion_xc: str = "pbe",
+    dispersion_backend: str = "torch_dftd",
     dispersion_cutoff: float = 40.0 * units.Bohr,
     return_raw_model: bool = False,
     **kwargs,
@@ -265,6 +266,7 @@ def mace_mp(
         dispersion (bool, optional): Whether to use D3 dispersion corrections. Defaults to False.
         damping (str): The damping function associated with the D3 correction. Defaults to "bj" for D3(BJ).
         dispersion_xc (str, optional): Exchange-correlation functional for D3 dispersion corrections.
+        dispersion_backend (str, optional): D3 backend, either "torch_dftd" or "nvalchemi".
         dispersion_cutoff (float, optional): Cutoff radius in Bohr for D3 dispersion corrections.
         return_raw_model (bool, optional): Whether to return the raw model or an ASE calculator. Defaults to False.
         **kwargs: Passed to MACECalculator and TorchDFTD3Calculator.
@@ -303,23 +305,41 @@ def mace_mp(
     if not dispersion:
         return mace_calc
 
-    try:
-        from torch_dftd.torch_dftd3_calculator import TorchDFTD3Calculator
-    except ImportError as exc:
-        raise RuntimeError(
-            "Please install torch-dftd to use dispersion corrections (see https://github.com/pfnet-research/torch-dftd)"
-        ) from exc
-
-    print("Using TorchDFTD3Calculator for D3 dispersion corrections")
+    backend = dispersion_backend.lower().replace("-", "_")
     dtype = torch.float32 if default_dtype == "float32" else torch.float64
-    d3_calc = TorchDFTD3Calculator(
-        device=device,
-        damping=damping,
-        dtype=dtype,
-        xc=dispersion_xc,
-        cutoff=dispersion_cutoff,
-        **kwargs,
-    )
+    if backend == "torch_dftd":
+        try:
+            from torch_dftd.torch_dftd3_calculator import TorchDFTD3Calculator
+        except ImportError as exc:
+            raise RuntimeError(
+                "Please install torch-dftd to use dispersion corrections (see https://github.com/pfnet-research/torch-dftd)"
+            ) from exc
+
+        print("Using TorchDFTD3Calculator for D3 dispersion corrections")
+        d3_calc = TorchDFTD3Calculator(
+            device=device,
+            damping=damping,
+            dtype=dtype,
+            xc=dispersion_xc,
+            cutoff=dispersion_cutoff,
+            **kwargs,
+        )
+    elif backend == "nvalchemi":
+        from .nvalchemi_d3 import NvalchemiDFTD3Calculator
+
+        print("Using NvalchemiDFTD3Calculator for GPU D3 dispersion corrections")
+        d3_calc = NvalchemiDFTD3Calculator(
+            device=device,
+            dtype=dtype,
+            damping=damping,
+            xc=dispersion_xc,
+            cutoff=dispersion_cutoff,
+        )
+    else:
+        raise ValueError(
+            "dispersion_backend must be either 'torch_dftd' or 'nvalchemi', "
+            f"got {dispersion_backend!r}"
+        )
 
     return SumCalculator([mace_calc, d3_calc])
 
