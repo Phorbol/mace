@@ -1,6 +1,7 @@
 import torch
 
 from mace.tools.hybrid_muon import (
+    HybridMuon,
     build_hybrid_muon_param_groups,
     summarize_hybrid_muon_routes,
 )
@@ -65,3 +66,32 @@ def test_hybrid_muon_route_summary_is_loggable():
     assert "Muon tensors:" in text
     assert "Adam tensors:" in text
     assert "radial_embedding.0.weight" in text
+
+
+def test_hybrid_muon_step_updates_params_and_state_dict_reloads():
+    torch.manual_seed(5)
+    model = TinyMaceLike()
+    groups, _ = build_hybrid_muon_param_groups(
+        model.named_parameters(),
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+    )
+    optimizer = HybridMuon(groups, lr=1.0e-3)
+
+    before = {
+        name: param.detach().clone() for name, param in model.named_parameters()
+    }
+    loss = model(torch.randn(3, 4))
+    loss.backward()
+    optimizer.step()
+
+    assert any(
+        not torch.allclose(before[name], param)
+        for name, param in model.named_parameters()
+        if param.requires_grad
+    )
+
+    reloaded = HybridMuon(groups, lr=1.0e-3)
+    reloaded.load_state_dict(optimizer.state_dict())
+    assert reloaded.state_dict()["state"]
