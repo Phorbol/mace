@@ -5,23 +5,32 @@ from __future__ import annotations
 
 import argparse
 import math
+import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import torch
 from ase.build import molecule
+from ase.io import read
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from mace.calculators.nvalchemi_d3 import NvalchemiDFTD3Calculator
 
 
-def build_atoms():
+def build_atoms(xyz: str | None, index: int):
+    if xyz:
+        return read(xyz, index=index)
     atoms = molecule("H2O")
     atoms.center(vacuum=6.0)
     return atoms
 
 
-def evaluate(device: str, repeat: int):
-    atoms = build_atoms()
+def evaluate(device: str, repeat: int, xyz: str | None, index: int):
+    atoms = build_atoms(xyz=xyz, index=index)
     atoms.calc = NvalchemiDFTD3Calculator(device=device, auto_download=False)
 
     energy = float(atoms.get_potential_energy())
@@ -58,14 +67,23 @@ def main() -> None:
     parser.add_argument("--repeat", type=int, default=50)
     parser.add_argument("--rtol", type=float, default=1e-4)
     parser.add_argument("--atol", type=float, default=1e-5)
+    parser.add_argument("--xyz", default=None, help="Optional ASE-readable structure file")
+    parser.add_argument("--index", type=int, default=0, help="Structure index when --xyz is set")
     args = parser.parse_args()
 
     print(f"torch={torch.__version__} cuda={torch.version.cuda} cuda_available={torch.cuda.is_available()}")
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is not available; run this smoke test on a GPU node")
 
-    cpu = evaluate("cpu", args.repeat)
-    cuda = evaluate("cuda", args.repeat)
+    atoms = build_atoms(xyz=args.xyz, index=args.index)
+    print(
+        "structure="
+        f"natoms={len(atoms)} formula={atoms.get_chemical_formula()} "
+        f"pbc={atoms.pbc.tolist()} cell_lengths={atoms.cell.lengths().tolist()}"
+    )
+
+    cpu = evaluate("cpu", args.repeat, args.xyz, args.index)
+    cuda = evaluate("cuda", args.repeat, args.xyz, args.index)
     assert_finite("cpu", cpu)
     assert_finite("cuda", cuda)
 

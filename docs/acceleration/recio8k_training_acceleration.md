@@ -86,5 +86,21 @@ A SAI `4V100` CUDA smoke run completed successfully:
 | CPU/CUDA max force absolute difference | `4.001777e-11 eV/A` |
 | CUDA availability in job | `True` |
 
-The smoke script is `scripts/benchmarks/nvalchemi_d3_smoke/run_nvalchemi_d3_smoke.py`; submit it with `scripts/benchmarks/nvalchemi_d3_smoke/nvalchemi-d3-smoke.sbatch`. This validates the optional CUDA backend on a small ASE molecule. A larger periodic RECIO-like timing comparison against `torch_dftd` is still the next gate before claiming production speedup from GPU D3.
+The smoke script is `scripts/benchmarks/nvalchemi_d3_smoke/run_nvalchemi_d3_smoke.py`; submit it with `scripts/benchmarks/nvalchemi_d3_smoke/nvalchemi-d3-smoke.sbatch`. It defaults to a small ASE molecule and also accepts `--xyz`/`--index` for dataset structures. On SAI, a case-local sbatch with explicit script arguments was more reliable than passing long paths through `sbatch --export`.
+
+A RECIO/8k periodic structure smoke also completed successfully on `4V100`:
+
+| Check | Value |
+| --- | ---: |
+| Slurm job | `576442` |
+| Structure | `train.xyz` index `0`, `Ag4Pd5`, 9 atoms, PBC |
+| Exit state | `COMPLETED`, `0:0` |
+| CPU D3 energy | `-5.519044399261 eV` |
+| CUDA D3 energy | `-5.519046306610 eV` |
+| CPU/CUDA energy absolute difference | `1.907349e-06 eV` |
+| CPU/CUDA max force absolute difference | `5.081296e-06 eV/A` |
+| CPU seconds per eval | `5.594959e-05` |
+| CUDA seconds per eval | `5.523749e-05` |
+
+This validates the optional CUDA backend on both a small molecule and a RECIO periodic cell. A larger periodic timing comparison against `torch_dftd` remains the next gate before claiming production speedup from GPU D3; current `mace_env` does not include `torch_dftd`.
 

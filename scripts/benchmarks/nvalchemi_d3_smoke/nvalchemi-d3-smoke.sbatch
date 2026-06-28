@@ -15,4 +15,9 @@ source /opt/envs/anaconda3.env
 conda activate mace_env
 export PYTHONPATH=/home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace:${PYTHONPATH:-}
 
-python /home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace/scripts/benchmarks/nvalchemi_d3_smoke/run_nvalchemi_d3_smoke.py --repeat 50
+EXTRA_ARGS=()
+if [[ -n "${D3_XYZ:-}" ]]; then
+    EXTRA_ARGS+=(--xyz "${D3_XYZ}" --index "${D3_INDEX:-0}")
+fi
+
+python /home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace/scripts/benchmarks/nvalchemi_d3_smoke/run_nvalchemi_d3_smoke.py --repeat "${D3_REPEAT:-50}" "${EXTRA_ARGS[@]}"
