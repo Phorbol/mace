@@ -71,5 +71,20 @@ The visible SAI GPU partitions at submission time were V100-only (`4V100`, `4V10
 
 The first mapped backend is deliberately narrow: PBE-D3(BJ), using the explicit Grimme parameters `a1=0.4289`, `a2=4.4407` Bohr, and `s8=0.7875`, because nvalchemi's `DFTD3ModelWrapper` takes explicit BJ damping parameters rather than an XC string. Other XC/damping combinations still require `dispersion_backend="torch_dftd"` until their parameters are mapped and verified against a reference.
 
-Current `mace_env` does not provide `nvalchemi`, `nvalchemiops`, or `warp`, so the GPU D3 path has unit-tested adapter behavior but not a live SAI GPU smoke run yet. Once those optional dependencies are installed, the next verification gate is an ASE single-structure comparison against `torch_dftd` for PBE-D3(BJ), followed by a timing check on a periodic RECIO-like structure.
+`mace_env` has been live-tested with `nvalchemi-toolkit==0.1.0`, `nvalchemi-toolkit-ops==0.3.1`, `warp-lang==1.14.0`, and PyTorch `2.8.0+cu128`.
+
+A SAI `4V100` CUDA smoke run completed successfully:
+
+| Check | Value |
+| --- | ---: |
+| Slurm job | `576417` |
+| Node | `4v100n31` |
+| Exit state | `COMPLETED`, `0:0` |
+| CPU D3 energy | `-0.009781921282 eV` |
+| CUDA D3 energy | `-0.009781923145 eV` |
+| CPU/CUDA energy absolute difference | `1.862645e-09 eV` |
+| CPU/CUDA max force absolute difference | `4.001777e-11 eV/A` |
+| CUDA availability in job | `True` |
+
+The smoke script is `scripts/benchmarks/nvalchemi_d3_smoke/run_nvalchemi_d3_smoke.py`; submit it with `scripts/benchmarks/nvalchemi_d3_smoke/nvalchemi-d3-smoke.sbatch`. This validates the optional CUDA backend on a small ASE molecule. A larger periodic RECIO-like timing comparison against `torch_dftd` is still the next gate before claiming production speedup from GPU D3.
 
