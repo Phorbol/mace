@@ -858,7 +858,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         help="Optimizer for parameter optimization",
         type=str,
         default="adam",
-        choices=["adam", "adamw", "schedulefree"],
+        choices=["adam", "adamw", "schedulefree", "hybrid_muon"],
     )
     parser.add_argument(
         "--beta",
@@ -901,6 +901,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--weight_decay", help="weight decay (L2 penalty)", type=float, default=5e-7
+    )
+    parser.add_argument(
+        "--hybrid_muon_weight_decay",
+        help="Decoupled weight decay for HybridMuon-routed matrix parameters",
+        type=float,
+        default=0.0,
     )
     parser.add_argument(
         "--lr_params_factors",

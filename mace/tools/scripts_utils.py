@@ -912,10 +912,31 @@ def get_params_options(
 
 
 def get_optimizer(
-    args: argparse.Namespace, param_options: Dict[str, Any]
+    args: argparse.Namespace,
+    param_options: Dict[str, Any],
+    named_parameters=None,
 ) -> torch.optim.Optimizer:
     if args.optimizer == "adamw":
         optimizer = torch.optim.AdamW(**param_options)
+    elif args.optimizer == "hybrid_muon":
+        if named_parameters is None:
+            raise ValueError("HybridMuon requires named_parameters for safe MACE routing")
+        from mace.tools.hybrid_muon import (
+            HybridMuon,
+            build_hybrid_muon_param_groups,
+            summarize_hybrid_muon_routes,
+        )
+
+        groups, route_summary = build_hybrid_muon_param_groups(
+            named_parameters,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            muon_weight_decay=args.hybrid_muon_weight_decay,
+            beta=args.beta,
+            adam_betas=(args.beta, 0.999),
+        )
+        logging.info(summarize_hybrid_muon_routes(route_summary))
+        optimizer = HybridMuon(groups, lr=args.lr, weight_decay=args.weight_decay)
     elif args.optimizer == "schedulefree":
         try:
             from schedulefree import adamw_schedulefree

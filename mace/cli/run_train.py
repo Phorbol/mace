@@ -818,7 +818,9 @@ def run(args) -> None:
     param_options = get_params_options(args, model)
 
     optimizer: torch.optim.Optimizer
-    optimizer = get_optimizer(args, param_options)
+    optimizer = get_optimizer(
+        args, param_options, named_parameters=model.named_parameters()
+    )
     logging.info("=== Layer's learning rates ===")
     for name, p in model.named_parameters():
         st = optimizer.state.get(p, {})

@@ -1,4 +1,8 @@
+import argparse
+
 import torch
+
+from mace.tools.scripts_utils import get_optimizer
 
 from mace.tools.hybrid_muon import (
     HybridMuon,
@@ -95,3 +99,27 @@ def test_hybrid_muon_step_updates_params_and_state_dict_reloads():
     reloaded = HybridMuon(groups, lr=1.0e-3)
     reloaded.load_state_dict(optimizer.state_dict())
     assert reloaded.state_dict()["state"]
+
+def test_get_optimizer_builds_hybrid_muon():
+    model = TinyMaceLike()
+    args = argparse.Namespace(
+        optimizer="hybrid_muon",
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        hybrid_muon_weight_decay=0.0,
+        beta=0.9,
+        amsgrad=False,
+    )
+    param_options = {
+        "params": [{"name": "all", "params": list(model.parameters()), "lr": args.lr}],
+        "lr": args.lr,
+        "amsgrad": args.amsgrad,
+        "betas": (args.beta, 0.999),
+    }
+
+    optimizer = get_optimizer(
+        args, param_options, named_parameters=model.named_parameters()
+    )
+
+    assert optimizer.__class__.__name__ == "HybridMuon"
+    assert {group["route"] for group in optimizer.param_groups} == {"muon", "adam"}
