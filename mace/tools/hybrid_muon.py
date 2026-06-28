@@ -65,10 +65,14 @@ def build_hybrid_muon_param_groups(
     lr: float,
     weight_decay: float,
     muon_weight_decay: float,
+    muon_lr_factor: float = 0.1,
     beta: float = 0.9,
     adam_betas: tuple[float, float] = (0.9, 0.999),
     eps: float = 1.0e-8,
 ) -> tuple[list[dict], list[dict]]:
+    if muon_lr_factor <= 0.0:
+        raise ValueError("muon_lr_factor must be positive")
+
     muon_params: list[torch.nn.Parameter] = []
     adam_params: list[torch.nn.Parameter] = []
     summary: list[dict] = []
@@ -94,7 +98,7 @@ def build_hybrid_muon_param_groups(
             {
                 "params": muon_params,
                 "route": "muon",
-                "lr": lr,
+                "lr": lr * muon_lr_factor,
                 "weight_decay": muon_weight_decay,
                 "beta": beta,
             }

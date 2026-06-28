@@ -932,6 +932,7 @@ def get_optimizer(
             lr=args.lr,
             weight_decay=args.weight_decay,
             muon_weight_decay=args.hybrid_muon_weight_decay,
+            muon_lr_factor=args.hybrid_muon_lr_factor,
             beta=args.beta,
             adam_betas=(args.beta, 0.999),
         )

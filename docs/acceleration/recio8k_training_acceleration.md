@@ -54,8 +54,9 @@ Full 800 epoch single-GPU validation jobs were submitted on SAI `4V100` with the
 
 | Case | Slurm job | Status at submit check | Early validation |
 | --- | ---: | --- | --- |
-| `baseline_fp32_adam_cueq` | `576362` | running on `4v100n35` | epoch 0: `302.25 meV/atom`, `600.83 meV/A` |
-| `fp32_hybrid_muon_cueq` | `576363` | running on `4v100n33` | epoch 0: `261.64 meV/atom`, `567.72 meV/A` |
+| `baseline_fp32_adam_cueq` | `576362` | running on `4v100n35` | epoch 215: `39.77 meV/atom`, `228.83 meV/A`, no NaN |
+| `fp32_hybrid_muon_cueq` | `576363` | cancelled after NaN | first NaN at epoch 125 with original Muon lr equal to base lr `0.04` |
+| `fp32_hybrid_muon_cueq`, fixed `hybrid_muon_lr_factor=0.1` | `576454` | submitted, 200 epoch stability gate | pending/running after code fix |
 
 The generated case root is:
 
@@ -64,6 +65,8 @@ The generated case root is:
 ```
 
 The visible SAI GPU partitions at submission time were V100-only (`4V100`, `4V100PX`, `8V100V0`), so no bf16 validation job was submitted. The bf16 path should be validated on A100/H100 or another native bf16 GPU; running it on V100 would not test the DPA4-style bf16 acceleration path.
+
+The first full HybridMuon attempt exposed an important stability constraint: applying Muon's orthogonalized update at the same `lr=0.04` as Adam is too aggressive for this MACE/RECIO setup and produced NaNs from epoch 125. The implementation now has `--hybrid_muon_lr_factor` with default `0.1`, so Muon-routed dense matrices use `lr * hybrid_muon_lr_factor` while Adam-routed equivariant/sensitive tensors keep the original MACE learning rate. This preserves the conservative routing principle and treats Muon as a cautious acceleration experiment, not a replacement for Adam on the full equivariant model.
 
 ## GPU D3 Backend Status
 

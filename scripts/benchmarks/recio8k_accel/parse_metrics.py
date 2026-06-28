@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from datetime import datetime
 from pathlib import Path
@@ -10,13 +11,17 @@ from statistics import mean
 
 EPOCH_RE = re.compile(
     r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*"
-    r"Epoch (?P<epoch>\d+):.*MAE_E_per_atom=\s*(?P<mae_e>[0-9.]+) meV, "
-    r"MAE_F=\s*(?P<mae_f>[0-9.]+)"
+    r"Epoch (?P<epoch>\d+):.*MAE_E_per_atom=\s*(?P<mae_e>nan|[0-9.]+) meV, "
+    r"MAE_F=\s*(?P<mae_f>nan|[0-9.]+)"
 )
 
 
 def _parse_timestamp(value: str) -> datetime:
     return datetime.strptime(value, "%Y-%m-%d %H:%M:%S.%f")
+
+
+def _parse_metric(value: str) -> float:
+    return float("nan") if value == "nan" else float(value)
 
 
 def _summarize_timing(epochs: list[dict]) -> dict | None:
@@ -60,17 +65,25 @@ def parse_log(path: Path) -> dict:
             epochs.append(
                 {
                     "epoch": int(match.group("epoch")),
-                    "mae_e_mev_atom": float(match.group("mae_e")),
-                    "mae_f_mev_a": float(match.group("mae_f")),
+                    "mae_e_mev_atom": _parse_metric(match.group("mae_e")),
+                    "mae_f_mev_a": _parse_metric(match.group("mae_f")),
                     "timestamp": timestamp.isoformat(),
                 }
             )
 
+    nan_epochs = [
+        epoch["epoch"]
+        for epoch in epochs
+        if math.isnan(epoch["mae_e_mev_atom"]) or math.isnan(epoch["mae_f_mev_a"])
+    ]
     summary = {
         "log": str(path),
         "epochs": epochs,
         "last": epochs[-1] if epochs else None,
+        "has_nan": bool(nan_epochs),
     }
+    if nan_epochs:
+        summary["first_nan_epoch"] = nan_epochs[0]
     timing = _summarize_timing(epochs)
     if timing is not None:
         summary["timing"] = timing

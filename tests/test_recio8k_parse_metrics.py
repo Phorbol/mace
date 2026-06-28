@@ -71,3 +71,24 @@ def test_parse_nvdmon_summarizes_gpu_memory_and_utilization(tmp_path):
         "mean_mem_util_percent": pytest.approx(17.5),
         "mean_power_w": pytest.approx(115.0),
     }
+
+
+def test_parse_log_reports_nan_epochs(tmp_path):
+    parse_metrics = load_parse_metrics()
+    log = tmp_path / "train.log"
+    log.write_text(
+        "2026-06-29 04:41:20.804 INFO: Epoch 120: head: Default, "
+        "loss=1.99807429, MAE_E_per_atom=   45.85 meV, "
+        "MAE_F=  221.24 meV / A\n"
+        "2026-06-29 04:42:55.755 INFO: Epoch 125: head: Default, "
+        "loss=     nan, MAE_E_per_atom=     nan meV, "
+        "MAE_F=     nan meV / A\n"
+    )
+
+    summary = parse_metrics.parse_log(log)
+
+    assert summary["has_nan"] is True
+    assert summary["first_nan_epoch"] == 125
+    assert summary["last"]["epoch"] == 125
+    assert summary["last"]["mae_e_mev_atom"] != summary["last"]["mae_e_mev_atom"]
+    assert summary["last"]["mae_f_mev_a"] != summary["last"]["mae_f_mev_a"]

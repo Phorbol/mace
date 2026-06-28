@@ -39,6 +39,7 @@ def test_hybrid_muon_routes_only_safe_dense_mace_weights():
         lr=1.0e-3,
         weight_decay=1.0e-4,
         muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
     )
 
     muon_names = _route_names(summary, "muon")
@@ -53,6 +54,8 @@ def test_hybrid_muon_routes_only_safe_dense_mace_weights():
     assert "atomic_energies_fn.weight" in adam_names
     assert "products" in adam_names
     assert sum(len(group["params"]) for group in groups) == len(list(model.parameters()))
+    assert next(group for group in groups if group["route"] == "muon")["lr"] == 1.0e-4
+    assert next(group for group in groups if group["route"] == "adam")["lr"] == 1.0e-3
 
 
 def test_hybrid_muon_route_summary_is_loggable():
@@ -62,6 +65,7 @@ def test_hybrid_muon_route_summary_is_loggable():
         lr=1.0e-3,
         weight_decay=1.0e-4,
         muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
     )
 
     text = summarize_hybrid_muon_routes(summary)
@@ -80,6 +84,7 @@ def test_hybrid_muon_step_updates_params_and_state_dict_reloads():
         lr=1.0e-3,
         weight_decay=1.0e-4,
         muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
     )
     optimizer = HybridMuon(groups, lr=1.0e-3)
 
@@ -100,6 +105,23 @@ def test_hybrid_muon_step_updates_params_and_state_dict_reloads():
     reloaded.load_state_dict(optimizer.state_dict())
     assert reloaded.state_dict()["state"]
 
+
+def test_hybrid_muon_rejects_nonpositive_lr_factor():
+    model = TinyMaceLike()
+
+    try:
+        build_hybrid_muon_param_groups(
+            model.named_parameters(),
+            lr=1.0e-3,
+            weight_decay=1.0e-4,
+            muon_weight_decay=0.0,
+            muon_lr_factor=0.0,
+        )
+    except ValueError as exc:
+        assert "muon_lr_factor must be positive" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
 def test_get_optimizer_builds_hybrid_muon():
     model = TinyMaceLike()
     args = argparse.Namespace(
@@ -107,6 +129,7 @@ def test_get_optimizer_builds_hybrid_muon():
         lr=1.0e-3,
         weight_decay=1.0e-4,
         hybrid_muon_weight_decay=0.0,
+        hybrid_muon_lr_factor=0.1,
         beta=0.9,
         amsgrad=False,
     )
@@ -123,3 +146,5 @@ def test_get_optimizer_builds_hybrid_muon():
 
     assert optimizer.__class__.__name__ == "HybridMuon"
     assert {group["route"] for group in optimizer.param_groups} == {"muon", "adam"}
+    assert next(group for group in optimizer.param_groups if group["route"] == "muon")["lr"] == 1.0e-4
+    assert next(group for group in optimizer.param_groups if group["route"] == "adam")["lr"] == 1.0e-3

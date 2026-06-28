@@ -9,7 +9,10 @@ import yaml
 
 CASES = {
     "baseline_fp32_adam_cueq": {},
-    "fp32_hybrid_muon_cueq": {"optimizer": "hybrid_muon"},
+    "fp32_hybrid_muon_cueq": {
+        "optimizer": "hybrid_muon",
+        "hybrid_muon_lr_factor": 0.1,
+    },
     "compile_fp32_adam_cueq": {
         "train_compile": True,
         "train_compile_allow_fallback": True,
@@ -17,6 +20,7 @@ CASES = {
     "bf16_adam_cueq": {"train_amp_dtype": "bf16"},
     "bf16_hybrid_muon_cueq": {
         "optimizer": "hybrid_muon",
+        "hybrid_muon_lr_factor": 0.1,
         "train_amp_dtype": "bf16",
     },
 }

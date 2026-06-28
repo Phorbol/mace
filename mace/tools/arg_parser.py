@@ -941,6 +941,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=0.0,
     )
     parser.add_argument(
+        "--hybrid_muon_lr_factor",
+        help="Learning-rate factor applied only to HybridMuon-routed matrix parameters",
+        type=float,
+        default=0.1,
+    )
+    parser.add_argument(
         "--lr_params_factors",
         help="Learning rate factors to multiply on the original lr",
         type=str,
