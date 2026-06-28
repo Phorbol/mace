@@ -317,3 +317,25 @@ def test_train_one_epoch_uses_optional_training_model():
 
     assert training_model.calls == 1
     assert logger.records[0]["mode"] == "opt"
+
+
+class _RaisesOnForward(torch.nn.Module):
+    def forward(self, x):
+        raise RuntimeError("compiled path failed")
+
+
+def test_runtime_compile_fallback_retries_eager_model():
+    from mace.tools.training_compile import RuntimeFallbackCompiledModule
+
+    eager = torch.nn.Linear(1, 1)
+    wrapper = RuntimeFallbackCompiledModule(
+        eager_model=eager,
+        compiled_model=_RaisesOnForward(),
+        allow_fallback=True,
+    )
+    x = torch.ones(1, 1)
+
+    output = wrapper(x)
+
+    assert torch.allclose(output, eager(x))
+    assert wrapper.disabled is True

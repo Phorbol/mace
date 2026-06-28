@@ -7,6 +7,37 @@ import torch
 from mace.tools import compile as mace_compile
 
 
+class RuntimeFallbackCompiledModule(torch.nn.Module):
+    def __init__(
+        self,
+        *,
+        eager_model: torch.nn.Module,
+        compiled_model: torch.nn.Module,
+        allow_fallback: bool,
+    ) -> None:
+        super().__init__()
+        self.eager_model = eager_model
+        self.__dict__["compiled_model"] = compiled_model
+        self.allow_fallback = allow_fallback
+        self.disabled = False
+
+    def forward(self, *args, **kwargs):
+        if self.disabled:
+            return self.eager_model(*args, **kwargs)
+        try:
+            return self.compiled_model(*args, **kwargs)
+        except Exception as exc:
+            if not self.allow_fallback:
+                raise
+            logging.warning(
+                "training torch.compile failed at runtime; disabling compiled "
+                "training model and retrying eager: %s",
+                exc,
+            )
+            self.disabled = True
+            return self.eager_model(*args, **kwargs)
+
+
 def prepare_model_for_training_compile(
     model: torch.nn.Module,
     *,
@@ -37,7 +68,11 @@ def prepare_model_for_training_compile(
             mode,
             fullgraph,
         )
-        return compiled
+        return RuntimeFallbackCompiledModule(
+            eager_model=model,
+            compiled_model=compiled,
+            allow_fallback=allow_fallback,
+        )
     except Exception as exc:
         message = f"training torch.compile setup failed: {exc}"
         if allow_fallback:
