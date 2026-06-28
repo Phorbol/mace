@@ -339,3 +339,32 @@ def test_runtime_compile_fallback_retries_eager_model():
 
     assert torch.allclose(output, eager(x))
     assert wrapper.disabled is True
+
+
+def test_energy_only_compile_wrapper_preserves_force_outputs_cpu():
+    from mace.tools.training_compile import EnergyOnlyForceCompiledModule
+
+    model = create_mace("cpu")
+    wrapper = EnergyOnlyForceCompiledModule(
+        eager_model=model,
+        compiled_model=model,
+        allow_fallback=False,
+    )
+
+    eager_output = model(
+        create_batch("cpu"),
+        training=True,
+        compute_force=True,
+        compute_virials=False,
+        compute_stress=False,
+    )
+    wrapped_output = wrapper(
+        create_batch("cpu"),
+        training=True,
+        compute_force=True,
+        compute_virials=False,
+        compute_stress=False,
+    )
+
+    assert_close(wrapped_output["energy"], eager_output["energy"])
+    assert_close(wrapped_output["forces"], eager_output["forces"])
