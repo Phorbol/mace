@@ -69,3 +69,37 @@ def test_parse_indices_accepts_lists_and_ranges():
 
     assert probe.parse_indices("0,4,8") == [0, 4, 8]
     assert probe.parse_indices("0:5:2,9") == [0, 2, 4, 9]
+
+
+def test_strip_fx_saved_tensor_detach_removes_chain_without_changing_output():
+    probe = load_probe()
+    from torch.fx.experimental.proxy_tensor import make_fx
+
+    def fn(x):
+        return x + x.detach().detach() * 2.0
+
+    x = torch.tensor([1.0, -2.0, 3.0], requires_grad=True)
+    traced = make_fx(fn, tracing_mode="real")(x)
+
+    assert probe.count_fx_detach_nodes(traced) >= 2
+    expected = traced(x)
+
+    probe.strip_fx_saved_tensor_detach(traced)
+
+    assert probe.count_fx_detach_nodes(traced) == 0
+    assert torch.allclose(traced(x), expected)
+
+
+def test_build_parser_accepts_make_fx_flags():
+    probe = load_probe()
+
+    args = probe.build_parser().parse_args([
+        "--make-fx",
+        "--make-fx-tracing-mode",
+        "real",
+        "--strip-make-fx-detach",
+    ])
+
+    assert args.make_fx is True
+    assert args.make_fx_tracing_mode == "real"
+    assert args.strip_make_fx_detach is True

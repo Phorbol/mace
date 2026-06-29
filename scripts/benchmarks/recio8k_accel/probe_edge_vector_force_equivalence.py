@@ -114,6 +114,43 @@ def edge_gradient_to_atomic_forces(
     return sender_force - receiver_force
 
 
+def _is_detach_node(node: torch.fx.Node) -> bool:
+    return node.op == "call_function" and node.target == torch.ops.aten.detach.default
+
+
+def count_fx_detach_nodes(gm: torch.fx.GraphModule) -> int:
+    return sum(1 for node in gm.graph.nodes if _is_detach_node(node))
+
+
+def strip_fx_saved_tensor_detach(gm: torch.fx.GraphModule) -> None:
+    """Remove make_fx saved-tensor detach chains while preserving other nodes."""
+    to_remove: list[torch.fx.Node] = []
+    for node in gm.graph.nodes:
+        if not _is_detach_node(node):
+            continue
+        input_node = node.args[0]
+        users = list(node.users.keys())
+        is_chain_inner = _is_detach_node(input_node)
+        is_dead = len(users) == 0
+        is_chain_head = len(users) > 0 and all(_is_detach_node(user) for user in users)
+        if is_chain_inner or is_dead or is_chain_head:
+            to_remove.append(node)
+    for node in to_remove:
+        node.replace_all_uses_with(node.args[0])
+        gm.graph.erase_node(node)
+    gm.graph.lint()
+    gm.recompile()
+
+
+def rebuild_fx_graph_module(gm: torch.fx.GraphModule) -> torch.fx.GraphModule:
+    new_graph = torch.fx.Graph()
+    value_map: dict[torch.fx.Node, torch.fx.Node] = {}
+    for node in gm.graph.nodes:
+        value_map[node] = new_graph.node_copy(node, lambda old: value_map[old])
+    new_graph.lint()
+    return torch.fx.GraphModule(gm, new_graph)
+
+
 def _canonical_parameter_name(name: str) -> str:
     return name.replace("._orig_mod", "").replace("_orig_mod.", "")
 
@@ -293,6 +330,87 @@ def _edge_vector_snapshot(model: torch.nn.Module, batch) -> dict:
     }
 
 
+def _edge_vector_inputs(batch) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor]:
+    data = _batch_dict(batch)
+    positions = data["positions"].detach()
+    edge_index = data["edge_index"]
+    vectors, _ = get_edge_vectors_and_lengths(
+        positions=positions,
+        edge_index=edge_index,
+        shifts=data["shifts"].detach(),
+    )
+    vectors = vectors.detach().clone().requires_grad_(True)
+    return data, positions, edge_index, vectors
+
+
+def _edge_force_loss_outputs(
+    model: torch.nn.Module,
+    batch,
+    data: dict[str, torch.Tensor],
+    positions: torch.Tensor,
+    edge_index: torch.Tensor,
+    vectors: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    lengths = torch.linalg.vector_norm(vectors, dim=1, keepdim=True)
+    output = _mace_energy_from_vectors(model, data, vectors=vectors, lengths=lengths)
+    edge_grad = torch.autograd.grad(
+        outputs=[output["energy"]],
+        inputs=[vectors],
+        grad_outputs=[torch.ones_like(output["energy"])],
+        retain_graph=True,
+        create_graph=True,
+        allow_unused=False,
+    )[0]
+    forces = edge_gradient_to_atomic_forces(
+        edge_grad, edge_index=edge_index, num_atoms=positions.shape[0]
+    )
+    output = dict(output)
+    output["forces"] = forces
+    loss = _force_loss(output, batch)
+    return output["energy"], forces, loss
+
+
+def _make_fx_edge_vector_snapshot(
+    model: torch.nn.Module,
+    batch,
+    *,
+    tracing_mode: str,
+    strip_detach: bool,
+) -> dict:
+    from torch.fx.experimental.proxy_tensor import make_fx
+
+    model.zero_grad(set_to_none=True)
+    data, positions, edge_index, vectors = _edge_vector_inputs(batch)
+
+    def fn(vectors_arg: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return _edge_force_loss_outputs(
+            model, batch, data, positions, edge_index, vectors_arg
+        )
+
+    traced = make_fx(fn, tracing_mode=tracing_mode)(vectors)
+    detach_nodes_before = count_fx_detach_nodes(traced)
+    if strip_detach:
+        strip_fx_saved_tensor_detach(traced)
+        traced = rebuild_fx_graph_module(traced)
+    detach_nodes_after = count_fx_detach_nodes(traced)
+    energy, forces, loss = traced(vectors)
+    loss.backward()
+    return {
+        "status": "ok",
+        "tracing_mode": tracing_mode,
+        "strip_detach": strip_detach,
+        "node_count": len(list(traced.graph.nodes)),
+        "detach_nodes_before": detach_nodes_before,
+        "detach_nodes_after": detach_nodes_after,
+        "snapshot": {
+            "energy": energy.detach().clone(),
+            "forces": forces.detach().clone(),
+            "loss": loss.detach().clone(),
+            "grads": _named_parameter_grads(model),
+        },
+    }
+
+
 def _max_abs_diff(left: torch.Tensor, right: torch.Tensor) -> float:
     if left.shape != right.shape:
         return float("inf")
@@ -386,6 +504,29 @@ def run_probe(args: argparse.Namespace) -> dict:
     position = _position_snapshot(model, batch)
     edge = _edge_vector_snapshot(model, batch)
     comparison = compare_snapshots(position, edge, atol=args.atol, rtol=args.rtol)
+    make_fx_result = None
+    if args.make_fx:
+        try:
+            make_fx_result = _make_fx_edge_vector_snapshot(
+                model,
+                batch,
+                tracing_mode=args.make_fx_tracing_mode,
+                strip_detach=args.strip_make_fx_detach,
+            )
+            make_fx_result["comparison"] = compare_snapshots(
+                position,
+                make_fx_result["snapshot"],
+                atol=args.atol,
+                rtol=args.rtol,
+            )
+            make_fx_result["snapshot"] = _summarize_snapshot(make_fx_result["snapshot"])
+        except Exception as exc:  # pylint: disable=broad-except
+            make_fx_result = {
+                "status": "error",
+                "tracing_mode": args.make_fx_tracing_mode,
+                "strip_detach": args.strip_make_fx_detach,
+                "error": repr(exc),
+            }
     payload = {
         "torch_version": torch.__version__,
         "device": str(device),
@@ -405,6 +546,8 @@ def run_probe(args: argparse.Namespace) -> dict:
         "edge_vector_snapshot": _summarize_snapshot(edge),
         "comparison": comparison,
     }
+    if make_fx_result is not None:
+        payload["make_fx_edge_vector"] = make_fx_result
     if device.type == "cuda":
         payload["max_cuda_memory_mb"] = torch.cuda.max_memory_allocated(device) / 1024**2
     return payload
@@ -427,6 +570,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--atol", type=float, default=1.0e-5)
     parser.add_argument("--rtol", type=float, default=1.0e-4)
+    parser.add_argument("--make-fx", action="store_true")
+    parser.add_argument(
+        "--make-fx-tracing-mode",
+        choices=["real", "fake", "symbolic"],
+        default="real",
+    )
+    parser.add_argument("--strip-make-fx-detach", action="store_true")
     parser.add_argument("--output", type=Path)
     return parser
 

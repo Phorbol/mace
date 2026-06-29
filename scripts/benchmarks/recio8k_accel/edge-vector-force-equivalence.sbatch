@@ -17,6 +17,15 @@ if [[ "${MACE_EDGE_FORCE_ENABLE_CUEQ:-1}" == "1" ]]; then
   CUEQ_ARGS+=(--enable-cueq)
 fi
 
+MAKE_FX_ARGS=()
+if [[ "${MACE_EDGE_FORCE_MAKE_FX:-0}" == "1" ]]; then
+  MAKE_FX_ARGS+=(--make-fx)
+  MAKE_FX_ARGS+=(--make-fx-tracing-mode "${MACE_EDGE_FORCE_MAKE_FX_TRACING_MODE:-real}")
+fi
+if [[ "${MACE_EDGE_FORCE_STRIP_MAKE_FX_DETACH:-0}" == "1" ]]; then
+  MAKE_FX_ARGS+=(--strip-make-fx-detach)
+fi
+
 python /home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace/scripts/benchmarks/recio8k_accel/probe_edge_vector_force_equivalence.py \
   --xyz "${RECIO_XYZ:-/home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/train.xyz}" \
   --indices "${RECIO_INDICES:-0}" \
@@ -28,4 +37,5 @@ python /home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace/scripts/benchm
   --atol "${MACE_EDGE_FORCE_ATOL:-1e-5}" \
   --rtol "${MACE_EDGE_FORCE_RTOL:-1e-4}" \
   --output "${MACE_EDGE_FORCE_OUTPUT:-edge_vector_force_equivalence_${SLURM_JOB_ID}.json}" \
-  "${CUEQ_ARGS[@]}"
+  "${CUEQ_ARGS[@]}" \
+  "${MAKE_FX_ARGS[@]}"
