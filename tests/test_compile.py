@@ -282,6 +282,39 @@ def test_edge_force_compile_gate_rejects_unsupported_outputs():
     assert result.fallback_reason == "unsupported_outputs"
 
 
+def test_edge_force_compile_result_from_trace_records_gate_metadata():
+    from mace.tools.force_compile import trace_force_closure
+    from mace.tools.training_compile import edge_force_compile_result_from_trace
+
+    def fn(x):
+        y = x + x.detach().detach()
+        return y
+
+    x = torch.tensor([1.0], requires_grad=True)
+    trace_result = trace_force_closure(
+        fn,
+        (x,),
+        tracing_mode="real",
+        strip_detach=True,
+    )
+    comparison = {"ok": True, "failed_checks": []}
+
+    result = edge_force_compile_result_from_trace(
+        trace_result=trace_result,
+        comparison=comparison,
+        compile_kwargs={"backend": "inductor", "dynamic": True},
+    )
+
+    assert result.enabled is True
+    assert result.accepted is True
+    assert result.fallback_reason is None
+    assert result.detach_nodes_before >= 2
+    assert result.detach_nodes_after == 0
+    assert result.node_count == len(list(trace_result.graph_module.graph.nodes))
+    assert result.comparison == comparison
+    assert result.compile_kwargs == {"backend": "inductor", "dynamic": True}
+
+
 def test_training_compile_allow_fallback_suppresses_dynamo_errors():
     import torch._dynamo.config as dynamo_config
 

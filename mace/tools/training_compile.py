@@ -75,6 +75,25 @@ def edge_force_compile_gate(
     )
 
 
+def edge_force_compile_result_from_trace(
+    *,
+    trace_result,
+    comparison: dict[str, Any],
+    compile_kwargs: dict[str, Any] | None,
+) -> EdgeForceCompileGateResult:
+    accepted = bool(comparison.get("ok", False))
+    return EdgeForceCompileGateResult(
+        enabled=True,
+        accepted=accepted,
+        fallback_reason=None if accepted else "equivalence_failed",
+        detach_nodes_before=trace_result.detach_nodes_before,
+        detach_nodes_after=trace_result.detach_nodes_after,
+        node_count=len(list(trace_result.graph_module.graph.nodes)),
+        comparison=comparison,
+        compile_kwargs=compile_kwargs,
+    )
+
+
 class RuntimeFallbackCompiledModule(torch.nn.Module):
     def __init__(
         self,
