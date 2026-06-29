@@ -15,6 +15,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import torch
 
 from mace import modules, tools
+from mace.tools.training_compile import prepare_model_for_training_compile
 from scripts.benchmarks.recio8k_accel.profile_training_step_phases import (
     _batch_dict,
     _create_model,
@@ -45,6 +46,73 @@ def _summarize(values: list[float]) -> dict:
     }
 
 
+def _run_mode_once(model, batch, mode: str, args: argparse.Namespace):
+    if mode == "energy_forward":
+        output = model(
+            _batch_dict(batch),
+            training=True,
+            compute_force=False,
+            compute_virials=False,
+            compute_stress=False,
+        )
+        loss = _energy_loss(output, batch, args.energy_weight)
+    elif mode == "energy_loss_backward":
+        output = model(
+            _batch_dict(batch),
+            training=True,
+            compute_force=False,
+            compute_virials=False,
+            compute_stress=False,
+        )
+        loss = _energy_loss(output, batch, args.energy_weight)
+        loss.backward()
+    elif mode == "force_forward":
+        output = model(
+            _batch_dict(batch),
+            training=True,
+            compute_force=True,
+            compute_virials=False,
+            compute_stress=False,
+        )
+        loss = _force_loss(output, batch, args.energy_weight, args.forces_weight)
+    elif mode == "force_loss_backward":
+        output = model(
+            _batch_dict(batch),
+            training=True,
+            compute_force=True,
+            compute_virials=False,
+            compute_stress=False,
+        )
+        loss = _force_loss(output, batch, args.energy_weight, args.forces_weight)
+        loss.backward()
+        if args.max_grad_norm > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+    else:
+        raise ValueError(f"unknown mode {mode!r}")
+    return output, loss
+
+
+def _run_mode_once_with_fallback(model, batch, mode: str, args: argparse.Namespace):
+    try:
+        return _run_mode_once(model, batch, mode, args)
+    except RuntimeError as exc:
+        disable_compile_fallback = getattr(model, "disable_compile_fallback", None)
+        if disable_compile_fallback is None or not disable_compile_fallback(exc):
+            raise
+        model.zero_grad(set_to_none=True)
+        return _run_mode_once(model, batch, mode, args)
+
+
+def _prepare_profile_model(model: torch.nn.Module, args: argparse.Namespace) -> torch.nn.Module:
+    return prepare_model_for_training_compile(
+        model,
+        enabled=args.train_compile,
+        mode=args.train_compile_mode,
+        fullgraph=args.train_compile_fullgraph,
+        allow_fallback=args.train_compile_allow_fallback,
+    )
+
+
 def _time_mode(model, batch, mode: str, args: argparse.Namespace, device: torch.device) -> dict:
     timings: list[float] = []
     losses: list[float] = []
@@ -54,48 +122,7 @@ def _time_mode(model, batch, mode: str, args: argparse.Namespace, device: torch.
         _sync(device)
         start = time.perf_counter()
 
-        if mode == "energy_forward":
-            output = model(
-                _batch_dict(batch),
-                training=True,
-                compute_force=False,
-                compute_virials=False,
-                compute_stress=False,
-            )
-            loss = _energy_loss(output, batch, args.energy_weight)
-        elif mode == "energy_loss_backward":
-            output = model(
-                _batch_dict(batch),
-                training=True,
-                compute_force=False,
-                compute_virials=False,
-                compute_stress=False,
-            )
-            loss = _energy_loss(output, batch, args.energy_weight)
-            loss.backward()
-        elif mode == "force_forward":
-            output = model(
-                _batch_dict(batch),
-                training=True,
-                compute_force=True,
-                compute_virials=False,
-                compute_stress=False,
-            )
-            loss = _force_loss(output, batch, args.energy_weight, args.forces_weight)
-        elif mode == "force_loss_backward":
-            output = model(
-                _batch_dict(batch),
-                training=True,
-                compute_force=True,
-                compute_virials=False,
-                compute_stress=False,
-            )
-            loss = _force_loss(output, batch, args.energy_weight, args.forces_weight)
-            loss.backward()
-            if args.max_grad_norm > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-        else:
-            raise ValueError(f"unknown mode {mode!r}")
+        output, loss = _run_mode_once_with_fallback(model, batch, mode, args)
 
         _sync(device)
         elapsed_ms = (time.perf_counter() - start) * 1.0e3
@@ -110,6 +137,7 @@ def _time_mode(model, batch, mode: str, args: argparse.Namespace, device: torch.
         "loss_first": losses[0],
         "loss_last": losses[-1],
         "loss_mean": mean(losses),
+        "compile_disabled": bool(getattr(model, "disabled", False)),
     }
 
 
@@ -132,6 +160,18 @@ def main() -> None:
     parser.add_argument("--energy-weight", type=float, default=40.0)
     parser.add_argument("--forces-weight", type=float, default=1000.0)
     parser.add_argument("--max-grad-norm", type=float, default=10.0)
+    parser.add_argument("--train-compile", action="store_true", default=False)
+    parser.add_argument(
+        "--train-compile-mode",
+        choices=["default", "reduce-overhead", "max-autotune"],
+        default="default",
+    )
+    parser.add_argument("--train-compile-fullgraph", action="store_true", default=False)
+    parser.add_argument(
+        "--train-compile-allow-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     parser.add_argument("--seed", type=int, default=123)
     args = parser.parse_args()
 
@@ -155,6 +195,7 @@ def main() -> None:
         avg_num_neighbors=args.avg_num_neighbors,
         enable_cueq=args.enable_cueq,
     )
+    model = _prepare_profile_model(model, args)
     modes = [mode.strip() for mode in args.modes.split(",") if mode.strip()]
     results = [_time_mode(model, batch, mode, args, device) for mode in modes]
 
@@ -180,6 +221,11 @@ def main() -> None:
         "warmup": args.warmup,
         "repeats": args.repeats,
         "enable_cueq": args.enable_cueq,
+        "train_compile": args.train_compile,
+        "train_compile_mode": args.train_compile_mode,
+        "train_compile_fullgraph": args.train_compile_fullgraph,
+        "train_compile_allow_fallback": args.train_compile_allow_fallback,
+        "compile_disabled": bool(getattr(model, "disabled", False)),
         "max_cuda_memory_mb": (
             torch.cuda.max_memory_allocated(device) / 1024**2 if device.type == "cuda" else None
         ),
