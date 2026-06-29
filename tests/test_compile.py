@@ -370,6 +370,41 @@ def test_energy_only_compile_wrapper_preserves_force_outputs_cpu():
     assert_close(wrapped_output["forces"], eager_output["forces"])
 
 
+class _EnergyOnlyCompiledModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.ones(()))
+        self.calls = 0
+
+    def forward(self, batch, **kwargs):
+        self.calls += 1
+        return {"energy": batch["x"].sum() * self.weight}
+
+
+def test_energy_only_compile_wrapper_uses_compiled_model_without_forces():
+    from mace.tools.training_compile import EnergyOnlyForceCompiledModule
+
+    eager = _NoCallModel()
+    compiled = _EnergyOnlyCompiledModel()
+    wrapper = EnergyOnlyForceCompiledModule(
+        eager_model=eager,
+        compiled_model=compiled,
+        allow_fallback=False,
+    )
+
+    output = wrapper(
+        {"x": torch.ones(2)},
+        training=True,
+        compute_force=False,
+        compute_virials=False,
+        compute_stress=False,
+    )
+    output["energy"].backward()
+
+    assert compiled.calls == 1
+    assert compiled.weight.grad is not None
+
+
 class _BackwardFails(torch.autograd.Function):
     @staticmethod
     def forward(ctx, value):

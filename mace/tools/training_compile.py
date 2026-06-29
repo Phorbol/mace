@@ -59,10 +59,12 @@ class EnergyOnlyForceCompiledModule(RuntimeFallbackCompiledModule):
                 "lammps_mliap",
             )
         )
-        if self.disabled or not compute_force or unsupported_force_outputs:
+        if self.disabled or unsupported_force_outputs:
             return self.eager_model(data, *args, **kwargs)
 
         try:
+            if not compute_force:
+                return self.compiled_model(data, *args, **kwargs)
             if "positions" in data:
                 data["positions"].requires_grad_(True)
             energy_kwargs = dict(kwargs)
