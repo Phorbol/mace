@@ -81,6 +81,21 @@ That larger gate now passes. SAI job `579742` used RECIO indices `0:32` (`286` a
 
 The training integration gate for the edge-vector force compile path is intentionally fail-closed. `EdgeForceCompileConfig` defaults to disabled, unsupported outputs such as virials and stress are rejected, and probe payloads now expose `gate_result` metadata alongside the existing force-loss equivalence comparison. This does not enable compiled force training by default and is not a RECIO training speed claim; it makes the next training-loop wrapper auditable before any real RECIO/8k Adam, HybridMuon, cueq, or cueq-minus-linear benchmark is accepted.
 
+The first real-batch training-step timing gate is now available through `profile_edge_force_training_steps.py` and `edge-force-training-step-profile.sbatch`. It uses the same DPA4-style edge-vector force endpoint, force-loss backward, optimizer step, and cueq-minus-linear profile that passed the equivalence gates above. The profiler now runs each optimizer/mode case in a fresh Python process when multiple cases are requested, because a same-process sweep repeatedly hit PyTorch's "backward through the graph a second time" failure after moving from eager cases into compiled cases. Process isolation is a harness fix, not a model change: it prevents compiler/autograd state from leaking across benchmark cases and lets the merged JSON preserve per-case outputs.
+
+SAI job `580285` is the current authoritative step-level timing result. It ran on `4V100PX` with one `Tesla V100-SXM2-16GB`, RECIO `train.xyz` indices `0:32` (`286` atoms), ordinary `ScaleShiftMACE` with `hidden_channels=64`, `max_ell=2`, `num_interactions=2`, `correlation=3`, cueq conv fusion/channelwise/FCTP/symmetric enabled, cueq linear disabled, warmup `5`, repeats `20`, and both Adam and HybridMuon. All required force-loss gates were accepted.
+
+| Optimizer | Mode | Mean step time | Median step time | Setup/compile time | Speedup vs position eager |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Adam | `position_eager` | `13.88 ms` | `13.88 ms` | n/a | `1.00x` |
+| Adam | `edge_eager` | `13.60 ms` | `13.60 ms` | `15.81 s` | `1.02x` |
+| Adam | `edge_compile` | `5.48 ms` | `5.45 ms` | `36.26 s` | `2.53x` |
+| HybridMuon | `position_eager` | `14.28 ms` | `14.24 ms` | n/a | `1.00x` |
+| HybridMuon | `edge_eager` | `14.10 ms` | `14.12 ms` | `15.81 s` | `1.01x` |
+| HybridMuon | `edge_compile` | `5.97 ms` | `5.99 ms` | `25.28 s` | `2.39x` |
+
+This is the first non-toy evidence that the force-backward compile route can accelerate a real RECIO training step while keeping HybridMuon, force-loss gradients, and most cueq acceleration active. It is still not an end-to-end training-speed or final-accuracy claim. The compile/setup cost is tens of seconds, the benchmark repeats one fixed batch, and real RECIO training sees changing graph sizes and dataloader behavior. The next acceptance gate must wire this path into the training loop with shape/cache policy, run real epochs with validation and guard logging, and show that setup cost is amortized without degrading the energy/force validation trend.
+
 ## Force-Loss Compile Design
 
 MACE force training must keep forces as `-dE/dR` and must let the force loss backpropagate through that gradient to model parameters. In code this is the `get_outputs(..., training=True)` path, where `torch.autograd.grad(..., create_graph=True)` is required. A compiled path that drops this second-order gradient would train a different objective, even if the forward forces look numerically close for one batch.
