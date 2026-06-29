@@ -314,7 +314,13 @@ def test_compile_fx_graph_module_disables_donated_buffer_during_compile(monkeypa
         functorch_config.donated_buffer = previous
 
     assert executable is graph_module
-    assert compile_kwargs == {"backend": "inductor", "dynamic": True}
+    assert compile_kwargs["backend"] == "inductor"
+    assert compile_kwargs["dynamic"] is True
+    assert isinstance(compile_kwargs["options"], dict)
+    if "triton.cudagraphs" in compile_kwargs["options"]:
+        assert compile_kwargs["options"]["triton.cudagraphs"] is False
+    if "triton.persistent_reductions" in compile_kwargs["options"]:
+        assert compile_kwargs["options"]["triton.persistent_reductions"] is False
     assert compile_seen_donated_buffer == [False]
     assert functorch_config.donated_buffer is True
 

@@ -1,12 +1,71 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 from collections.abc import Callable, Sequence
 from typing import Any
 
 import torch
 
 from mace.tools.scatter import scatter_sum
+
+
+
+def patch_inductor_force_int64_indexing() -> None:
+    try:
+        from torch._inductor.codegen.simd import SIMDScheduling
+    except Exception:
+        return
+
+    if getattr(SIMDScheduling, "_mace_force_int64_patched", False):
+        return
+    SIMDScheduling.can_use_32bit_indexing = staticmethod(lambda numel, buffers: False)
+    SIMDScheduling._mace_force_int64_patched = True
+
+
+def apply_force_compile_global_patches() -> None:
+    os.environ.setdefault("TORCHINDUCTOR_MAX_AUTOTUNE_REPORT_CHOICES_STATS", "0")
+    os.environ.setdefault("TRITON_PRINT_AUTOTUNING", "0")
+    try:
+        import torch._dynamo.config as dynamo_config
+
+        dynamo_config.optimize_ddp = False
+    except Exception:
+        pass
+    patch_inductor_force_int64_indexing()
+
+
+def build_force_compile_inductor_options() -> dict[str, Any]:
+    compile_options: dict[str, Any] = {
+        "max_autotune": False,
+        "shape_padding": True,
+        "epilogue_fusion": False,
+        "triton.cudagraphs": False,
+        "max_fusion_size": 8,
+        "triton.persistent_reductions": False,
+        "triton.mix_order_reduction": False,
+        "triton.max_tiles": 1,
+    }
+    try:
+        from torch._inductor import config as inductor_config
+
+        valid_options = inductor_config.get_config_copy()
+        return {
+            key: value
+            for key, value in compile_options.items()
+            if key.replace("-", "_") in valid_options
+        }
+    except Exception:
+        return compile_options
+
+
+def _force_compile_decomposition_table() -> dict[Any, Any] | None:
+    try:
+        from torch._decomp import get_decompositions
+
+        return get_decompositions([torch.ops.aten.silu_backward.default])
+    except Exception:
+        return None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -74,7 +133,11 @@ def trace_force_closure(
 ) -> ForceClosureTraceResult:
     from torch.fx.experimental.proxy_tensor import make_fx
 
-    traced = make_fx(fn, tracing_mode=tracing_mode)(*example_inputs)
+    decomp_table = _force_compile_decomposition_table()
+    make_fx_kwargs: dict[str, Any] = {"tracing_mode": tracing_mode}
+    if decomp_table is not None:
+        make_fx_kwargs["decomposition_table"] = decomp_table
+    traced = make_fx(fn, **make_fx_kwargs)(*example_inputs)
     detach_nodes_before = count_fx_detach_nodes(traced)
     if strip_detach:
         strip_fx_saved_tensor_detach(traced)
@@ -96,9 +159,11 @@ def compile_fx_graph_module(
 ) -> tuple[Callable[..., Any], dict[str, Any] | None]:
     if not compile_graph:
         return graph_module, None
+    apply_force_compile_global_patches()
     compile_kwargs: dict[str, Any] = {
         "backend": "inductor",
         "dynamic": compile_dynamic,
+        "options": build_force_compile_inductor_options(),
     }
     if compile_mode != "default":
         compile_kwargs["mode"] = compile_mode
