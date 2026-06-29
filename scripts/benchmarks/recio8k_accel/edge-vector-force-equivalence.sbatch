@@ -25,6 +25,13 @@ fi
 if [[ "${MACE_EDGE_FORCE_STRIP_MAKE_FX_DETACH:-0}" == "1" ]]; then
   MAKE_FX_ARGS+=(--strip-make-fx-detach)
 fi
+if [[ "${MACE_EDGE_FORCE_COMPILE_MAKE_FX:-0}" == "1" ]]; then
+  MAKE_FX_ARGS+=(--compile-make-fx)
+  MAKE_FX_ARGS+=(--make-fx-compile-mode "${MACE_EDGE_FORCE_MAKE_FX_COMPILE_MODE:-default}")
+fi
+if [[ "${MACE_EDGE_FORCE_MAKE_FX_COMPILE_DYNAMIC:-1}" == "0" ]]; then
+  MAKE_FX_ARGS+=(--no-make-fx-compile-dynamic)
+fi
 
 python /home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace/scripts/benchmarks/recio8k_accel/probe_edge_vector_force_equivalence.py \
   --xyz "${RECIO_XYZ:-/home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/train.xyz}" \

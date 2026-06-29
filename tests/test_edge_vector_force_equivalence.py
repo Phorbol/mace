@@ -103,3 +103,20 @@ def test_build_parser_accepts_make_fx_flags():
     assert args.make_fx is True
     assert args.make_fx_tracing_mode == "real"
     assert args.strip_make_fx_detach is True
+
+
+def test_build_parser_accepts_make_fx_compile_flags():
+    probe = load_probe()
+
+    args = probe.build_parser().parse_args([
+        "--make-fx",
+        "--compile-make-fx",
+        "--make-fx-compile-mode",
+        "reduce-overhead",
+        "--no-make-fx-compile-dynamic",
+    ])
+
+    assert args.make_fx is True
+    assert args.compile_make_fx is True
+    assert args.make_fx_compile_mode == "reduce-overhead"
+    assert args.make_fx_compile_dynamic is False

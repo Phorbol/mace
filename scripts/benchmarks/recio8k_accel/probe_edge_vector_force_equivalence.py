@@ -376,6 +376,9 @@ def _make_fx_edge_vector_snapshot(
     *,
     tracing_mode: str,
     strip_detach: bool,
+    compile_graph: bool,
+    compile_mode: str,
+    compile_dynamic: bool,
 ) -> dict:
     from torch.fx.experimental.proxy_tensor import make_fx
 
@@ -393,12 +396,28 @@ def _make_fx_edge_vector_snapshot(
         strip_fx_saved_tensor_detach(traced)
         traced = rebuild_fx_graph_module(traced)
     detach_nodes_after = count_fx_detach_nodes(traced)
-    energy, forces, loss = traced(vectors)
+
+    executable = traced
+    compile_kwargs = None
+    if compile_graph:
+        compile_kwargs = {
+            "backend": "inductor",
+            "dynamic": compile_dynamic,
+        }
+        if compile_mode != "default":
+            compile_kwargs["mode"] = compile_mode
+        executable = torch.compile(traced, **compile_kwargs)
+
+    energy, forces, loss = executable(vectors)
     loss.backward()
     return {
         "status": "ok",
         "tracing_mode": tracing_mode,
         "strip_detach": strip_detach,
+        "compile_graph": compile_graph,
+        "compile_mode": compile_mode,
+        "compile_dynamic": compile_dynamic,
+        "compile_kwargs": compile_kwargs,
         "node_count": len(list(traced.graph.nodes)),
         "detach_nodes_before": detach_nodes_before,
         "detach_nodes_after": detach_nodes_after,
@@ -512,6 +531,9 @@ def run_probe(args: argparse.Namespace) -> dict:
                 batch,
                 tracing_mode=args.make_fx_tracing_mode,
                 strip_detach=args.strip_make_fx_detach,
+                compile_graph=args.compile_make_fx,
+                compile_mode=args.make_fx_compile_mode,
+                compile_dynamic=args.make_fx_compile_dynamic,
             )
             make_fx_result["comparison"] = compare_snapshots(
                 position,
@@ -525,6 +547,9 @@ def run_probe(args: argparse.Namespace) -> dict:
                 "status": "error",
                 "tracing_mode": args.make_fx_tracing_mode,
                 "strip_detach": args.strip_make_fx_detach,
+                "compile_graph": args.compile_make_fx,
+                "compile_mode": args.make_fx_compile_mode,
+                "compile_dynamic": args.make_fx_compile_dynamic,
                 "error": repr(exc),
             }
     payload = {
@@ -577,6 +602,23 @@ def build_parser() -> argparse.ArgumentParser:
         default="real",
     )
     parser.add_argument("--strip-make-fx-detach", action="store_true")
+    parser.add_argument("--compile-make-fx", action="store_true")
+    parser.add_argument(
+        "--make-fx-compile-mode",
+        choices=["default", "reduce-overhead", "max-autotune"],
+        default="default",
+    )
+    parser.add_argument(
+        "--make-fx-compile-dynamic",
+        dest="make_fx_compile_dynamic",
+        action="store_true",
+        default=True,
+    )
+    parser.add_argument(
+        "--no-make-fx-compile-dynamic",
+        dest="make_fx_compile_dynamic",
+        action="store_false",
+    )
     parser.add_argument("--output", type=Path)
     return parser
 
