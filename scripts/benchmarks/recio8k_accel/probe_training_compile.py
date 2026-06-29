@@ -39,6 +39,7 @@ EQUIVALENCE_CANDIDATES = (
     "eager_copy",
     "compile_readouts",
     "compile_radial_embedding",
+    "compile_symmetric_contractions",
 )
 
 
@@ -356,6 +357,26 @@ def build_equivalence_candidate_model(
             mode=compile_mode,
             fullgraph=compile_fullgraph,
         )
+        return candidate_model
+    if candidate == "compile_symmetric_contractions":
+        if not hasattr(candidate_model, "products"):
+            raise ValueError(
+                "compile_symmetric_contractions candidate requires model.products"
+            )
+        compiled_count = 0
+        for product in candidate_model.products:
+            if not hasattr(product, "symmetric_contractions"):
+                continue
+            product.symmetric_contractions = torch.compile(
+                product.symmetric_contractions,
+                mode=compile_mode,
+                fullgraph=compile_fullgraph,
+            )
+            compiled_count += 1
+        if compiled_count == 0:
+            raise ValueError(
+                "compile_symmetric_contractions candidate found no symmetric_contractions modules"
+            )
         return candidate_model
     raise ValueError(
         f"unknown equivalence candidate {candidate!r}; "

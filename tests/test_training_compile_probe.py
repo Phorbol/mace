@@ -267,3 +267,58 @@ def test_equivalence_candidate_choices_include_radial_embedding():
     probe = load_probe()
 
     assert "compile_radial_embedding" in probe.EQUIVALENCE_CANDIDATES
+
+
+def test_build_equivalence_candidate_compiles_symmetric_contractions(monkeypatch):
+    probe = load_probe()
+    compiled = []
+
+    class TinyProduct(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.symmetric_contractions = torch.nn.Linear(2, 2)
+
+    class Tiny(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.products = torch.nn.ModuleList([TinyProduct(), TinyProduct()])
+
+    class FakeCompiled(torch.nn.Module):
+        def __init__(self, wrapped):
+            super().__init__()
+            self.wrapped = wrapped
+
+        def forward(self, *args, **kwargs):
+            return self.wrapped(*args, **kwargs)
+
+    def fake_compile(module, *, mode, fullgraph):
+        compiled.append((module, mode, fullgraph))
+        return FakeCompiled(module)
+
+    monkeypatch.setattr(probe.torch, "compile", fake_compile)
+    model = Tiny()
+
+    candidate = probe.build_equivalence_candidate_model(
+        model,
+        candidate="compile_symmetric_contractions",
+        compile_mode="default",
+        compile_fullgraph=False,
+    )
+
+    assert candidate is not model
+    assert len(compiled) == 2
+    assert all(entry[1:] == ("default", False) for entry in compiled)
+    assert all(
+        isinstance(product.symmetric_contractions, FakeCompiled)
+        for product in candidate.products
+    )
+    assert all(
+        isinstance(product.symmetric_contractions, torch.nn.Linear)
+        for product in model.products
+    )
+
+
+def test_equivalence_candidate_choices_include_symmetric_contractions():
+    probe = load_probe()
+
+    assert "compile_symmetric_contractions" in probe.EQUIVALENCE_CANDIDATES
