@@ -82,6 +82,40 @@ def test_hybrid_muon_routes_singleton_matrix_views_to_adam():
     assert groups[0]["route"] == "adam"
 
 
+def test_hybrid_muon_routes_radial_tp_weight_mlps_to_muon():
+    radial_tp_weight = torch.nn.Parameter(torch.ones(64, 256))
+    contraction_weight = torch.nn.Parameter(torch.ones(2, 2, 128))
+
+    _, summary = build_hybrid_muon_param_groups(
+        [
+            ("interactions.0.conv_tp_weights.layer3.weight", radial_tp_weight),
+            (
+                "products.0.symmetric_contractions.contractions.0.weights.0",
+                contraction_weight,
+            ),
+        ],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+    )
+
+    by_name = {entry["name"]: entry for entry in summary}
+    assert (
+        by_name["interactions.0.conv_tp_weights.layer3.weight"]["route"] == "muon"
+    )
+    assert (
+        by_name["interactions.0.conv_tp_weights.layer3.weight"]["reason"]
+        == "radial-tp-weight-mlp"
+    )
+    assert (
+        by_name["products.0.symmetric_contractions.contractions.0.weights.0"][
+            "route"
+        ]
+        == "adam"
+    )
+
+
 def test_hybrid_muon_adam_route_matches_torch_adam_with_amsgrad():
     torch.manual_seed(12)
     initial = torch.randn(1, 8)

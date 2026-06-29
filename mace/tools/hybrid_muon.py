@@ -54,6 +54,12 @@ def _route_parameter(name: str, param: torch.nn.Parameter) -> tuple[str, str]:
     effective_shape = tuple(int(dim) for dim in param.shape if int(dim) != 1)
     if len(effective_shape) < 2:
         return "adam", "effective-rank<2"
+    if (
+        param.ndim == 2
+        and ".conv_tp_weights." in lower
+        and lower.endswith(".weight")
+    ):
+        return "muon", "radial-tp-weight-mlp"
     if any(token in lower for token in _ADAM_NAME_TOKENS):
         if not any(token in lower for token in _MUON_NAME_TOKENS):
             return "adam", "sensitive-name"
