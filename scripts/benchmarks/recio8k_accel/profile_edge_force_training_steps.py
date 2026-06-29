@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -96,6 +98,19 @@ def parse_csv_choices(value: str, choices: set[str]) -> list[str]:
 def _sync(device: torch.device) -> None:
     if device.type == "cuda":
         torch.cuda.synchronize(device)
+
+
+def _cleanup_case(device: torch.device) -> None:
+    gc.collect()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+
+def _reset_compile_state() -> None:
+    compiler = getattr(torch, "compiler", None)
+    reset = getattr(compiler, "reset", None) if compiler is not None else None
+    if reset is not None:
+        reset()
 
 
 def _force_loss_fn(args: argparse.Namespace) -> torch.nn.Module:
@@ -478,6 +493,134 @@ def profile_case(
     return payload
 
 
+
+def _append_bool_flag(command: list[str], name: str, value: bool) -> None:
+    command.append(f"--{name}" if value else f"--no-{name}")
+
+
+def _append_optional_bool_flag(
+    command: list[str], name: str, value: bool | None
+) -> None:
+    if value is not None:
+        _append_bool_flag(command, name, value)
+
+
+def _case_worker_command(
+    args: argparse.Namespace,
+    *,
+    optimizer_name: str,
+    mode_name: str,
+    output: Path,
+) -> list[str]:
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--case-worker",
+        "--xyz",
+        str(args.xyz),
+        "--indices",
+        args.indices,
+        "--output",
+        str(output),
+        "--device",
+        args.device,
+        "--optimizers",
+        optimizer_name,
+        "--modes",
+        mode_name,
+        "--warmup",
+        str(args.warmup),
+        "--repeats",
+        str(args.repeats),
+        "--cutoff",
+        str(args.cutoff),
+        "--hidden-channels",
+        str(args.hidden_channels),
+        "--max-ell",
+        str(args.max_ell),
+        "--num-interactions",
+        str(args.num_interactions),
+        "--correlation",
+        str(args.correlation),
+        "--edge-tracing-mode",
+        args.edge_tracing_mode,
+        "--edge-compile-mode",
+        args.edge_compile_mode,
+        "--atol",
+        str(args.atol),
+        "--rtol",
+        str(args.rtol),
+        "--lr",
+        str(args.lr),
+        "--weight-decay",
+        str(args.weight_decay),
+        "--hybrid-muon-lr-factor",
+        str(args.hybrid_muon_lr_factor),
+        "--energy-weight",
+        str(args.energy_weight),
+        "--forces-weight",
+        str(args.forces_weight),
+        "--max-grad-norm",
+        str(args.max_grad_norm),
+        "--seed",
+        str(args.seed),
+    ]
+    _append_bool_flag(command, "enable-cueq", args.enable_cueq)
+    _append_optional_bool_flag(command, "cueq-conv-fusion", args.cueq_conv_fusion)
+    _append_bool_flag(command, "cueq-optimize-all", args.cueq_optimize_all)
+    _append_bool_flag(command, "cueq-optimize-linear", args.cueq_optimize_linear)
+    _append_bool_flag(
+        command, "cueq-optimize-channelwise", args.cueq_optimize_channelwise
+    )
+    _append_bool_flag(command, "cueq-optimize-symmetric", args.cueq_optimize_symmetric)
+    _append_bool_flag(command, "cueq-optimize-fctp", args.cueq_optimize_fctp)
+    _append_bool_flag(command, "edge-strip-detach", args.edge_strip_detach)
+    _append_bool_flag(command, "edge-compile-graph", args.edge_compile_graph)
+    _append_bool_flag(command, "edge-compile-dynamic", args.edge_compile_dynamic)
+    return command
+
+
+def _run_isolated_cases(
+    args: argparse.Namespace,
+    *,
+    optimizers: list[str],
+    modes: list[str],
+) -> None:
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    case_outputs: list[str] = []
+    results: list[dict] = []
+    merged_payload: dict | None = None
+    for optimizer_name in optimizers:
+        for mode_name in modes:
+            case_output = args.output.with_name(
+                f"{args.output.stem}_{optimizer_name}_{mode_name}{args.output.suffix}"
+            )
+            command = _case_worker_command(
+                args,
+                optimizer_name=optimizer_name,
+                mode_name=mode_name,
+                output=case_output,
+            )
+            print(
+                f"[edge-force-step] launching isolated optimizer={optimizer_name} "
+                f"mode={mode_name}",
+                file=sys.stderr,
+                flush=True,
+            )
+            subprocess.run(command, check=True)
+            case_payload = json.loads(case_output.read_text())
+            case_outputs.append(str(case_output))
+            results.extend(case_payload["results"])
+            if merged_payload is None:
+                merged_payload = dict(case_payload)
+
+    if merged_payload is None:
+        raise RuntimeError("no isolated cases were executed")
+    merged_payload["results"] = results
+    merged_payload["case_outputs"] = case_outputs
+    args.output.write_text(json.dumps(merged_payload, indent=2, sort_keys=True) + "\n")
+    print(json.dumps(merged_payload, indent=2, sort_keys=True))
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -524,6 +667,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--forces-weight", type=float, default=1000.0)
     parser.add_argument("--max-grad-norm", type=float, default=10.0)
     parser.add_argument("--seed", type=int, default=123)
+    parser.add_argument("--case-worker", action="store_true", help=argparse.SUPPRESS)
     return parser
 
 
@@ -531,6 +675,10 @@ def main() -> None:
     args = build_parser().parse_args()
     optimizers = parse_csv_choices(args.optimizers, OPTIMIZER_CHOICES)
     modes = parse_csv_choices(args.modes, MODE_CHOICES)
+    if not args.case_worker and len(optimizers) * len(modes) > 1:
+        _run_isolated_cases(args, optimizers=optimizers, modes=modes)
+        return
+
     device = torch.device("cuda:0" if args.device == "cuda" else args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA device requested but torch.cuda.is_available() is false")
@@ -540,18 +688,26 @@ def main() -> None:
     indices = parse_indices(args.indices)
     batch, z_table = _load_batch(args.xyz, indices, cutoff=args.cutoff, device=device)
 
-    results = [
-        profile_case(
-            optimizer_name=optimizer_name,
-            mode_name=mode_name,
-            batch=batch,
-            z_table=z_table,
-            args=args,
-            device=device,
-        )
-        for optimizer_name in optimizers
-        for mode_name in modes
-    ]
+    results = []
+    for optimizer_name in optimizers:
+        for mode_name in modes:
+            print(
+                f"[edge-force-step] starting optimizer={optimizer_name} mode={mode_name}",
+                file=sys.stderr,
+                flush=True,
+            )
+            _reset_compile_state()
+            results.append(
+                profile_case(
+                    optimizer_name=optimizer_name,
+                    mode_name=mode_name,
+                    batch=batch,
+                    z_table=z_table,
+                    args=args,
+                    device=device,
+                )
+            )
+            _cleanup_case(device)
     payload = {
         "torch_version": torch.__version__,
         "device": str(device),
