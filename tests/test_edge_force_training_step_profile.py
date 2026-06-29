@@ -64,3 +64,61 @@ def test_build_parser_accepts_edge_compile_and_cueq_minus_linear_flags():
     assert args.cueq_optimize_symmetric is True
     assert args.edge_compile_mode == "reduce-overhead"
     assert args.edge_compile_dynamic is False
+
+
+def load_parse_edge_profile():
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "benchmarks"
+        / "recio8k_accel"
+        / "parse_edge_force_step_profile.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "parse_edge_force_step_profile", module_path
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_parse_edge_force_step_profile_summarizes_gates_and_speedups(tmp_path):
+    parser = load_parse_edge_profile()
+    payload = {
+        "results": [
+            {
+                "optimizer": "adam",
+                "mode": "position_eager",
+                "setup_ms": 0.0,
+                "gate_result": None,
+                "timings": {"total_ms": {"mean_ms": 20.0, "median_ms": 19.0}},
+            },
+            {
+                "optimizer": "adam",
+                "mode": "edge_compile",
+                "setup_ms": 1000.0,
+                "gate_result": {"accepted": True, "fallback_reason": None},
+                "timings": {"total_ms": {"mean_ms": 10.0, "median_ms": 9.5}},
+            },
+            {
+                "optimizer": "hybrid_muon",
+                "mode": "position_eager",
+                "setup_ms": 0.0,
+                "gate_result": None,
+                "timings": {"total_ms": {"mean_ms": 25.0, "median_ms": 24.0}},
+            },
+        ]
+    }
+    path = tmp_path / "profile.json"
+    path.write_text(__import__("json").dumps(payload))
+
+    summary = parser.summarize_file(path)
+
+    adam_compile = summary["rows"]["adam/edge_compile"]
+    assert adam_compile["gate_accepted"] is True
+    assert adam_compile["setup_ms"] == 1000.0
+    assert adam_compile["mean_total_ms"] == 10.0
+    assert adam_compile["speedup_vs_position_eager"] == 2.0
+    assert summary["all_required_gates_accepted"] is True
