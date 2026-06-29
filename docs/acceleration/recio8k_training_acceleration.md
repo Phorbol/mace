@@ -145,6 +145,25 @@ A 1 epoch RECIO/8k CUDA/cueq entry smoke with `--non_blocking_transfer True` com
 
 A paired ordinary `ScaleShiftMACE` 20 epoch serial timing gate then ran on the same SAI `4V100` node (`4v100n26`) with cueq, Adam, batch size `32`, seed `123`, and only `non_blocking_transfer` changed. Baseline job `578667` and nonblocking job `578669` both completed with Slurm `COMPLETED` / `ExitCode 0:0` and elapsed `00:03:59`. Parsed mean logged epoch time was `6.4777 s/epoch` for baseline and `6.4661 s/epoch` for nonblocking, a negligible `0.18%` difference; max FB memory was unchanged at `4160 MB`. Last logged validation was also comparable (`49.71 meV/atom`, `309.99 meV/A` baseline; `48.08 meV/atom`, `308.29 meV/A` nonblocking). This validates the wiring and confirms no obvious accuracy or memory regression in the short gate, but it is not a meaningful speed lever for ordinary MACE on this V100/cueq case. Future training-infra work should prioritize data caching/lazy loading for larger datasets or return to the force/backward kernel/AOT hot path.
 
+## Training Stability Guards
+
+DPA4 and modern trainer stacks also treat unstable force-loss steps as an infrastructure problem rather than a model-architecture change. MACE now has opt-in guard flags for this layer:
+
+```bash
+--loss_skip True \
+--loss_skip_nan True \
+--loss_skip_large True \
+--loss_skip_ema_window 100 \
+--loss_skip_multiplier 3.0 \
+--loss_skip_start_step 1000 \
+--stable_grad_clip True \
+--nonfinite_grad_guard True
+```
+
+`loss_skip` checks the scalar loss before `loss.backward()`, so skipped NaN or unusually large losses do not write gradients, do not call `optimizer.step()`, and do not update EMA. `stable_grad_clip` uses an overflow-resistant norm computation for very large gradients while matching PyTorch clipping on ordinary gradients. `nonfinite_grad_guard` records non-finite gradient norms and raises before checkpoint writes, preventing corrupted checkpoints from being accepted as a valid training state. All flags default to disabled, so existing MACE training behavior is unchanged unless a smoke or benchmark case explicitly enables them.
+
+These guards are not a speedup by themselves. They are intended to make force-backward compile, AMP, and HybridMuon experiments fail closed during RECIO/8k sbatch runs, especially when testing DPA4-style compiled force-backward paths or bf16-capable GPU partitions. The local focused regression for the guard integration passed with `71 passed, 21 skipped` across training guards, `take_step`, training precision, HybridMuon, edge-vector force equivalence, force-backward compile ops, and training compile probes. A RECIO smoke case should enable the guards first with ordinary eager/cueq training, then repeat with any new compile path so skip counts, fallback status, validation trend, and checkpoint behavior can be compared.
+
 ## Full RECIO/8k Validation Runs
 
 Full 800 epoch single-GPU validation jobs were submitted on SAI `4V100` with the same random seed and split. The later `576509` run is a shorter 200 epoch stability gate for the corrected HybridMuon routing, not an equal-budget accuracy comparison against the 800 epoch baseline:
