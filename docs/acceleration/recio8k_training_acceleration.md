@@ -172,6 +172,18 @@ The next Muon-side optimization batches same-shape Newton-Schulz updates inside 
 
 A matched 60 epoch ordinary-MACE training gate, job `577710`, completed on SAI `4V100` with `rush-1o2gpu`, Slurm `COMPLETED` / `ExitCode 0:0`, the same RECIO/8k config, seed, cueq setting, and radial-TP-MLP Muon route. It reported no NaNs, final logged validation `24.72 meV/atom` energy and `229.49 meV/A` force, final table `24.7 meV/atom` and `229.5 meV/A`, mean logged epoch time `6.536 s/epoch`, and max FB memory `4160 MB`. This preserves the validation trend and memory profile, but it does not prove an end-to-end training speedup: the epoch timing is effectively the same as the pre-functional-Adam HybridMuon serial gate (`6.535 s/epoch`) and slower than the functional-Adam-only rerun (`6.361 s/epoch`). The conservative interpretation is that shape batching is a real optimizer-substep win, but ordinary-MACE RECIO training remains dominated by model/force work and run-to-run/node variation; acceptance as a training throughput optimization needs another paired serial gate or a lower-overhead Muon implementation.
 
+To quantify that bottleneck directly, `scripts/benchmarks/recio8k_accel/profile_training_step_phases.py` profiles one realistic force-loss training step by phase: `zero_grad`, `forward_force_loss`, `backward_clip`, and `optimizer_step`. The companion SAI template is `scripts/benchmarks/recio8k_accel/training-step-phase-profile.sbatch`; it defaults to RECIO `train.xyz` indices `0:32`, `ScaleShiftMACE`, cueq enabled, `max_ell=3`, warmup/repeat controls, `mace_env`, `4V100`, and `rush-1o2gpu`. A CPU smoke is:
+
+```bash
+python scripts/benchmarks/recio8k_accel/profile_training_step_phases.py \
+  --device cpu --no-enable-cueq --indices 0 --hidden-channels 8 \
+  --max-ell 1 --num-interactions 1 --correlation 1 \
+  --warmup 0 --repeats 1 --optimizers adam \
+  --output /tmp/mace_step_phase_smoke.json
+```
+
+SAI job `577924` is the authoritative steady profile after fixing the harness to match the real training model (`max_ell=3`; route summary `Muon tensors: 8 (132096 parameters)`). It used warmup `10`, repeats `30`, batch `32`, `286` atoms, cueq, and completed with Slurm `COMPLETED` / `ExitCode 0:0`. Median phase times were: Adam total `20.34 ms`, forward-force-loss `10.17 ms` (`50.0%`), backward+clip `9.84 ms` (`48.4%`), optimizer step `0.28 ms` (`1.39%`); HybridMuon total `20.24 ms`, forward-force-loss `9.81 ms` (`48.4%`), backward+clip `9.54 ms` (`47.1%`), optimizer step `0.85 ms` (`4.20%`). This explains why optimizer micro-kernel improvements do not reliably move epoch time: even HybridMuon's larger optimizer step is a small single-digit percentage of the full force-loss step, while conservative force construction and second-order backprop dominate. The next high-leverage speed path for ordinary MACE should focus on the model/force/backward region, cueq/e3nn kernels, data batching, or force-safe compiled subgraphs, not more optimizer-only micro-optimizations.
+
 ## GPU D3 Backend Status
 
 `mace_mp(..., dispersion=True, dispersion_backend="nvalchemi")` now routes D3 dispersion through an optional `NvalchemiDFTD3Calculator` ASE adapter. The adapter keeps the dispersion correction outside the MACE neural model and sums it at the calculator level, matching the existing `torch_dftd` architecture and preserving MACE model semantics.
