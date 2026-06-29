@@ -72,6 +72,25 @@ The accepted compile roadmap is therefore staged:
 
 This differs from copying DeepMD DPA4 directly: DeepMD relies on model-specific make_fx/AOTInductor plumbing, shape control, detach repair, and Inductor patches for its second-order graph. MACE should borrow the principle, not the implementation, and should keep compatibility with cueq by placing compile/kernel boundaries around established equivariant operations rather than replacing MACE architecture.
 
+
+The current probe implementation is `scripts/benchmarks/recio8k_accel/probe_training_compile.py`. A minimal CPU smoke is:
+
+```bash
+python scripts/benchmarks/recio8k_accel/probe_training_compile.py \
+  --device cpu --indices 0 --modes eager_force_loss \
+  --hidden-channels 8 --max-ell 1 --num-interactions 1 --correlation 1 \
+  --warmup 0 --repeats 1
+```
+
+On SAI, submit the CUDA/cueq probe directly:
+
+```bash
+cd /home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/compile-probe
+sbatch /home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace/scripts/benchmarks/recio8k_accel/training-compile-probe.sbatch
+```
+
+The sbatch writes `training_compile_probe_${SLURM_JOB_ID}.json` and `nvdmon_job-${SLURM_JOB_ID}.log`. It defaults to RECIO `train.xyz` index `0`, `mace_env`, `4V100`, `improper-gpu`, and cueq enabled; override with environment variables such as `RECIO_INDICES=0,4,8`, `MACE_PROBE_REPEATS=10`, or `MACE_PROBE_ENABLE_CUEQ=0`.
+
 ## Training Infrastructure Reference
 
 The local TACE reference checkout is `/home/sjtu-caoxiaoming/gengjianrui/trae-research-code/reference_repos/tace` at commit `c669bee`. The useful lessons for a larger MACE training refactor are infrastructure-level rather than model-copying:
