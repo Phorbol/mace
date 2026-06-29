@@ -841,6 +841,23 @@ def run(args) -> None:
             fullgraph=args.train_compile_fullgraph,
             allow_fallback=args.train_compile_allow_fallback,
         )
+    if args.edge_force_compile:
+        from mace.tools.training_compile import (
+            EdgeForceCompileConfig,
+            prepare_edge_force_compiled_loss,
+        )
+
+        training_model = prepare_edge_force_compiled_loss(
+            model,
+            config=EdgeForceCompileConfig(
+                enabled=args.edge_force_compile,
+                compile_graph=args.edge_force_compile_graph,
+                compile_mode=args.edge_force_compile_mode,
+                compile_dynamic=args.edge_force_compile_dynamic,
+                allow_fallback=args.edge_force_compile_allow_fallback,
+                cache_hit_gate=args.edge_force_compile_cache_hit_gate,
+            ),
+        )
 
     # Optimizer
     param_options = get_params_options(args, model)

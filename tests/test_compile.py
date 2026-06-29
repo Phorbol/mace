@@ -32,6 +32,39 @@ def setup_cueq(enable: bool, device: str):
     )
 
 
+def create_tiny_mace(
+    device: str, seed: int = 1702, scale: float = 1.0, shift: float = 0.0
+):
+    torch_geometric.seed_everything(seed)
+    model_config = {
+        "r_max": cutoff,
+        "num_bessel": 4,
+        "num_polynomial_cutoff": 4,
+        "max_ell": 1,
+        "interaction_cls": modules.interaction_classes[
+            "RealAgnosticResidualInteractionBlock"
+        ],
+        "interaction_cls_first": modules.interaction_classes[
+            "RealAgnosticResidualInteractionBlock"
+        ],
+        "num_interactions": 1,
+        "num_elements": 1,
+        "hidden_irreps": o3.Irreps("8x0e + 8x1o"),
+        "MLP_irreps": o3.Irreps("8x0e"),
+        "gate": F.silu,
+        "atomic_energies": atomic_energies,
+        "avg_num_neighbors": 8,
+        "atomic_numbers": table.zs,
+        "correlation": 1,
+        "radial_type": "bessel",
+        "atomic_inter_scale": scale,
+        "atomic_inter_shift": shift,
+        "cueq_config": None,
+    }
+    model = modules.ScaleShiftMACE(**model_config)
+    return model.to(device)
+
+
 def create_mace(device: str, seed: int = 1702, enable_cueq: bool = False):
     torch_geometric.seed_everything(seed)
 
@@ -62,6 +95,33 @@ def create_mace(device: str, seed: int = 1702, enable_cueq: bool = False):
     }
     model = modules.ScaleShiftMACE(**model_config)
     return model.to(device)
+
+
+class _BatchDictAdapter:
+    def __init__(self, data_dict):
+        self.data_dict = data_dict
+
+    def to(self, device, **kwargs):
+        self.data_dict = {
+            key: value.to(device, **kwargs) if hasattr(value, "to") else value
+            for key, value in self.data_dict.items()
+        }
+        return self
+
+    def to_dict(self):
+        return dict(self.data_dict)
+
+    def __getattr__(self, name):
+        try:
+            return self.data_dict[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
+class _EnergyForcesMiniLoss(torch.nn.Module):
+    def forward(self, pred, ref):
+        del ref
+        return pred["energy"].sum() + pred["forces"].square().mean()
 
 
 def create_batch(device: str):
@@ -313,6 +373,226 @@ def test_edge_force_compile_result_from_trace_records_gate_metadata():
     assert result.node_count == len(list(trace_result.graph_module.graph.nodes))
     assert result.comparison == comparison
     assert result.compile_kwargs == {"backend": "inductor", "dynamic": True}
+
+
+def test_edge_force_compile_input_names_exclude_labels_and_geometry():
+    from mace.tools.training_compile import edge_force_compile_input_names
+
+    names = edge_force_compile_input_names(
+        {
+            "positions",
+            "edge_index",
+            "node_attrs",
+            "batch",
+            "ptr",
+            "head",
+            "shifts",
+            "energy",
+            "forces",
+            "stress",
+            "virials",
+        }
+    )
+
+    assert names == ("positions", "edge_index", "node_attrs", "batch", "ptr", "head")
+
+
+def test_edge_force_compile_shape_cache_key_ignores_batch_identity():
+    from mace.tools.training_compile import edge_force_compile_shape_cache_key
+
+    left = edge_force_compile_shape_cache_key(
+        num_atoms=286,
+        num_edges=4632,
+        input_shapes={"positions": (286, 3), "node_attrs": (286, 4)},
+    )
+    right = edge_force_compile_shape_cache_key(
+        num_atoms=286,
+        num_edges=4632,
+        input_shapes={"positions": (286, 3), "node_attrs": (286, 4)},
+    )
+
+    assert left == right
+    assert left[0] == "shape"
+
+
+def test_edge_force_compile_cache_hit_gate_result_records_failure():
+    from mace.tools.training_compile import edge_force_cache_hit_gate_result
+
+    comparison = {"ok": False, "failed_checks": ["forces"]}
+    result = edge_force_cache_hit_gate_result(
+        comparison=comparison,
+        cache_key=("shape", 2, 4),
+    )
+
+    assert result.enabled is True
+    assert result.accepted is False
+    assert result.fallback_reason == "cache_hit_equivalence_failed"
+    assert result.comparison == comparison
+    assert result.cache_hit is True
+    assert result.cache_key == ["shape", 2, 4]
+
+
+def test_prepare_edge_force_compiled_loss_disabled_returns_model():
+    from mace.tools.training_compile import (
+        EdgeForceCompileConfig,
+        prepare_edge_force_compiled_loss,
+    )
+
+    model = _TrainingOnlyModel()
+
+    prepared = prepare_edge_force_compiled_loss(
+        model,
+        config=EdgeForceCompileConfig(enabled=False),
+    )
+
+    assert prepared is model
+
+
+def test_edge_force_compiled_loss_gates_shape_cache_hits():
+    from mace.tools.train import take_step
+    from mace.tools.training_compile import (
+        EdgeForceCompileConfig,
+        prepare_edge_force_compiled_loss,
+    )
+
+    model = create_tiny_mace("cpu")
+    prepared = prepare_edge_force_compiled_loss(
+        model,
+        config=EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_hit_gate=True,
+        ),
+    )
+    optimizer = torch.optim.SGD(model.parameters(), lr=1.0e-4)
+
+    take_step(
+        model=prepared,
+        loss_fn=_EnergyForcesMiniLoss(),
+        batch=_BatchDictAdapter(create_batch("cpu")),
+        optimizer=optimizer,
+        ema=None,
+        output_args={"forces": True, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+    _, metrics = take_step(
+        model=prepared,
+        loss_fn=_EnergyForcesMiniLoss(),
+        batch=_BatchDictAdapter(create_batch("cpu")),
+        optimizer=optimizer,
+        ema=None,
+        output_args={"forces": True, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+
+    assert metrics["edge_force_cache_hit"] is True
+    assert metrics["edge_force_cache_hit_gate_accepted"] is True
+
+
+def test_edge_force_compiled_loss_handles_nonidentity_scaleshift():
+    from mace.tools.train import take_step
+    from mace.tools.training_compile import (
+        EdgeForceCompileConfig,
+        prepare_edge_force_compiled_loss,
+    )
+
+    model = create_tiny_mace("cpu", scale=2.0, shift=0.25)
+    prepared = prepare_edge_force_compiled_loss(
+        model,
+        config=EdgeForceCompileConfig(enabled=True, compile_graph=False),
+    )
+    optimizer = torch.optim.SGD(model.parameters(), lr=1.0e-4)
+
+    _, metrics = take_step(
+        model=prepared,
+        loss_fn=_EnergyForcesMiniLoss(),
+        batch=_BatchDictAdapter(create_batch("cpu")),
+        optimizer=optimizer,
+        ema=None,
+        output_args={"forces": True, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+
+    assert metrics["edge_force_compile"] is True
+    assert metrics["edge_force_gate_accepted"] is True
+
+
+def test_prepare_edge_force_compiled_loss_wraps_scaleshiftmace_for_take_step():
+    from mace.tools.train import take_step
+    from mace.tools.training_compile import (
+        EdgeForceCompileConfig,
+        prepare_edge_force_compiled_loss,
+    )
+
+    model = create_tiny_mace("cpu")
+    prepared = prepare_edge_force_compiled_loss(
+        model,
+        config=EdgeForceCompileConfig(enabled=True, compile_graph=False),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    optimizer = torch.optim.SGD(model.parameters(), lr=1.0e-4)
+
+    loss, metrics = take_step(
+        model=prepared,
+        loss_fn=_EnergyForcesMiniLoss(),
+        batch=batch,
+        optimizer=optimizer,
+        ema=None,
+        output_args={"forces": True, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+
+    assert prepared is not model
+    assert hasattr(prepared, "compiled_force_training_loss")
+    assert loss.requires_grad is True
+    assert metrics["edge_force_compile"] is True
+    assert metrics["edge_force_cache_hit"] is False
+    assert metrics["edge_force_gate_accepted"] is True
+
+
+def test_prepare_edge_force_compiled_loss_falls_back_for_unsupported_model():
+    from mace.tools.training_compile import (
+        EdgeForceCompileConfig,
+        prepare_edge_force_compiled_loss,
+    )
+
+    model = _TrainingOnlyModel()
+
+    prepared = prepare_edge_force_compiled_loss(
+        model,
+        config=EdgeForceCompileConfig(enabled=True, allow_fallback=True),
+    )
+
+    assert prepared is model
+
+
+def test_arg_parser_accepts_edge_force_compile_flags():
+    from mace.tools import build_default_arg_parser
+
+    args = build_default_arg_parser().parse_args(
+        [
+            "--name",
+            "edge-force-test",
+            "--edge_force_compile",
+            "--edge_force_compile_mode",
+            "reduce-overhead",
+            "--no-edge_force_compile_graph",
+            "--no-edge_force_compile_dynamic",
+            "--no-edge_force_compile_cache_hit_gate",
+            "--no-edge_force_compile_allow_fallback",
+        ]
+    )
+
+    assert args.edge_force_compile is True
+    assert args.edge_force_compile_mode == "reduce-overhead"
+    assert args.edge_force_compile_graph is False
+    assert args.edge_force_compile_dynamic is False
+    assert args.edge_force_compile_cache_hit_gate is False
+    assert args.edge_force_compile_allow_fallback is False
 
 
 def test_training_compile_allow_fallback_suppresses_dynamo_errors():

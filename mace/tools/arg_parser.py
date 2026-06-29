@@ -108,6 +108,43 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=True,
     )
     parser.add_argument(
+        "--edge_force_compile",
+        help="Enable DPA4-style edge-vector force-loss compile for training",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--edge_force_compile_mode",
+        help="torch.compile mode for the edge-force FX graph",
+        type=str,
+        choices=["default", "reduce-overhead", "max-autotune"],
+        default="default",
+    )
+    parser.add_argument(
+        "--edge_force_compile_graph",
+        help="Run torch.compile on the repaired edge-force FX graph",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
+        "--edge_force_compile_dynamic",
+        help="Use dynamic=True for the edge-force FX graph compile",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
+        "--edge_force_compile_cache_hit_gate",
+        help="Gate shape-cache hits against the position-gradient baseline",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
+        "--edge_force_compile_allow_fallback",
+        help="Continue eager training if edge-force compile setup or runtime fails",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
         "--distributed",
         help="train in multi-GPU data parallel mode",
         action="store_true",
