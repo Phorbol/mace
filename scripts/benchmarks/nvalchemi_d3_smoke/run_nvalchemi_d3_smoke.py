@@ -40,6 +40,8 @@ def evaluate(device: str, repeat: int, xyz: str | None, index: int):
         torch.cuda.synchronize()
     start = time.perf_counter()
     for _ in range(repeat):
+        if atoms.calc is not None:
+            atoms.calc.results.clear()
         energy = float(atoms.get_potential_energy())
         forces = np.asarray(atoms.get_forces(), dtype=np.float64)
     if device == "cuda":

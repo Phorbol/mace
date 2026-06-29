@@ -99,7 +99,7 @@ The first full HybridMuon attempt exposed an important stability constraint: app
 
 The first mapped backend is deliberately narrow: PBE-D3(BJ), using the explicit Grimme parameters `a1=0.4289`, `a2=4.4407` Bohr, and `s8=0.7875`, because nvalchemi's `DFTD3ModelWrapper` takes explicit BJ damping parameters rather than an XC string. Other XC/damping combinations still require `dispersion_backend="torch_dftd"` until their parameters are mapped and verified against a reference.
 
-`mace_env` has been live-tested with `nvalchemi-toolkit==0.1.0`, `nvalchemi-toolkit-ops==0.3.1`, `warp-lang==1.14.0`, and PyTorch `2.8.0+cu128`.
+`mace_env` has been live-tested with `nvalchemi-toolkit==0.1.0`, `nvalchemi-toolkit-ops==0.3.1`, `warp-lang==1.14.0`, `torch-dftd==0.5.3`, and PyTorch `2.8.0+cu128`.
 
 A SAI `4V100` CUDA smoke run completed successfully:
 
@@ -130,5 +130,37 @@ A RECIO/8k periodic structure smoke also completed successfully on `4V100`:
 | CPU seconds per eval | `5.594959e-05` |
 | CUDA seconds per eval | `5.523749e-05` |
 
-This validates the optional CUDA backend on both a small molecule and a RECIO periodic cell. A larger periodic timing comparison against `torch_dftd` remains the next gate before claiming production speedup from GPU D3; current `mace_env` does not include `torch_dftd`.
+This validates the optional CUDA backend on both a small molecule and a RECIO periodic cell. The original smoke timing rows were generated before the benchmark scripts cleared ASE calculator caches inside repeat loops, so they are retained only as correctness smoke evidence; use the cache-fixed benchmark below for timing claims.
+
+A multi-structure benchmark harness is available at `scripts/benchmarks/nvalchemi_d3_smoke/run_nvalchemi_d3_benchmark.py`, with SAI submission template `scripts/benchmarks/nvalchemi_d3_smoke/nvalchemi-d3-benchmark.sbatch`. Example RECIO run:
+
+```bash
+cd /home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/d3-benchmark-nvalchemi
+D3_XYZ=/home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/train.xyz \
+D3_INDICES=0:32:4 D3_REPEAT=200 D3_MAX_STRUCTURES=8 D3_SUPERCELL=3,3,3 \
+sbatch /home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace/scripts/benchmarks/nvalchemi_d3_smoke/nvalchemi-d3-benchmark.sbatch
+```
+
+The benchmark writes a JSON payload containing per-structure CPU/CUDA energy and force agreement, seconds per evaluation, CUDA speedup versus nvalchemi CPU, optional supercell expansion, and an explicit `torch_dftd_comparison` status. If `D3_COMPARE_TORCH_DFTD=1` is set but `torch_dftd` is not installed, the run still reports `torch_dftd_comparison=unavailable` instead of pretending a reference comparison was performed.
+
+A cache-fixed RECIO supercell timing gate completed on SAI `4V100` after installing `torch-dftd==0.5.3` in `mace_env`:
+
+| Check | Value |
+| --- | ---: |
+| Slurm job | `576712` |
+| Exit state | `COMPLETED`, `0:0` |
+| Structures | `train.xyz` indices `0,4,8`, each repeated `3 x 3 x 3` |
+| Total atoms benchmarked | `594` |
+| Repeat count | `10` true evaluations per calculator after clearing ASE cache |
+| nvalchemi CPU mean seconds/eval | `4.294e-02` |
+| nvalchemi CUDA mean seconds/eval | `1.354e-02` |
+| torch_dftd CUDA mean seconds/eval | `3.265e-02` |
+| nvalchemi CUDA speedup vs nvalchemi CPU | `3.17x` |
+| nvalchemi CUDA speedup vs torch_dftd CUDA | `2.41x` |
+| nvalchemi CPU/CUDA max energy difference | `7.629e-05 eV` |
+| nvalchemi CPU/CUDA max force difference | `8.308e-06 eV/A` |
+| nvalchemi CUDA vs torch_dftd max energy difference | `9.515e-02 eV` total, about `0.39 meV/atom` on the largest tested cell |
+| nvalchemi CUDA vs torch_dftd max force difference | `9.085e-05 eV/A` |
+
+This is the first production-like GPU D3 speed evidence: the nvalchemi CUDA backend is faster than both nvalchemi CPU and `torch_dftd` CUDA on RECIO periodic supercells while staying close in forces. The nonzero total D3 energy offset versus `torch_dftd` is small per atom but should be tracked across more chemistries before changing any default backend.
 
