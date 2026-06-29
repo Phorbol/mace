@@ -608,6 +608,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         type=str2bool,
     )
     parser.add_argument(
+        "--shuffle",
+        help="Shuffle the training dataset",
+        type=str2bool,
+        default=True,
+    )
+    parser.add_argument(
         "--atomic_numbers",
         help="List of atomic numbers",
         type=str,

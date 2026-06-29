@@ -932,6 +932,21 @@ def test_arg_parser_accepts_edge_force_compile_flags():
     assert args.edge_force_compile_allow_fallback is False
 
 
+def test_arg_parser_accepts_training_shuffle_flag():
+    from mace.tools import build_default_arg_parser
+
+    args = build_default_arg_parser().parse_args(
+        [
+            "--name",
+            "shuffle-test",
+            "--shuffle",
+            "False",
+        ]
+    )
+
+    assert args.shuffle is False
+
+
 def test_arg_parser_accepts_compile_compatible_cueq_flags():
     from mace.tools import build_default_arg_parser
 
