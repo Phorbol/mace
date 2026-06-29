@@ -164,6 +164,8 @@ DPA4 and modern trainer stacks also treat unstable force-loss steps as an infras
 
 These guards are not a speedup by themselves. They are intended to make force-backward compile, AMP, and HybridMuon experiments fail closed during RECIO/8k sbatch runs, especially when testing DPA4-style compiled force-backward paths or bf16-capable GPU partitions. The local focused regression for the guard integration passed with `71 passed, 21 skipped` across training guards, `take_step`, training precision, HybridMuon, edge-vector force equivalence, force-backward compile ops, and training compile probes. A RECIO smoke case should enable the guards first with ordinary eager/cueq training, then repeat with any new compile path so skip counts, fallback status, validation trend, and checkpoint behavior can be compared.
 
+The first guard-enabled SAI smoke, job `580031`, used ordinary `ScaleShiftMACE` on RECIO/8k with `num_channels=64`, `max_L=1`, `correlation=3`, cueq enabled, `mace_env`, `4V100`, and `rush-1o2gpu`. It completed with Slurm `COMPLETED` / `ExitCode 0:0` in `00:02:02`. The run reached epoch `4`, saved both stage-one and stage-two checkpoints/models, and ended with final stage-two validation `71.7 meV/atom` energy MAE and `384.2 meV/A` force MAE. The run directory is `/home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/stability-guard-smoke-20260629/ordinary_mace_adam_cueq_guards`.
+
 ## Full RECIO/8k Validation Runs
 
 Full 800 epoch single-GPU validation jobs were submitted on SAI `4V100` with the same random seed and split. The later `576509` run is a shorter 200 epoch stability gate for the corrected HybridMuon routing, not an equal-budget accuracy comparison against the 800 epoch baseline:
