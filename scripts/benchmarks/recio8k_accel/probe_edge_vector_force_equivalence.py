@@ -19,6 +19,13 @@ from e3nn import o3
 from mace import modules
 from mace.modules.utils import get_edge_vectors_and_lengths
 from mace.modules.wrapper_ops import CuEquivarianceConfig
+from mace.tools.force_compile import (
+    compile_fx_graph_module,
+    count_fx_detach_nodes,
+    edge_gradient_to_atomic_forces,
+    strip_fx_saved_tensor_detach,
+    trace_force_closure,
+)
 from mace.tools.scatter import scatter_sum
 
 from scripts.benchmarks.recio8k_accel.probe_training_compile import (  # noqa: E402
@@ -128,54 +135,6 @@ def create_probe_model(
         ),
     }
     return modules.ScaleShiftMACE(**model_config).to(device)
-
-
-def edge_gradient_to_atomic_forces(
-    edge_grad: torch.Tensor, *, edge_index: torch.Tensor, num_atoms: int
-) -> torch.Tensor:
-    """Scatter dE/d(edge_vec) into atomic forces for v = r_receiver - r_sender."""
-    sender = edge_index[0]
-    receiver = edge_index[1]
-    sender_force = scatter_sum(edge_grad, sender, dim=0, dim_size=num_atoms)
-    receiver_force = scatter_sum(edge_grad, receiver, dim=0, dim_size=num_atoms)
-    return sender_force - receiver_force
-
-
-def _is_detach_node(node: torch.fx.Node) -> bool:
-    return node.op == "call_function" and node.target == torch.ops.aten.detach.default
-
-
-def count_fx_detach_nodes(gm: torch.fx.GraphModule) -> int:
-    return sum(1 for node in gm.graph.nodes if _is_detach_node(node))
-
-
-def strip_fx_saved_tensor_detach(gm: torch.fx.GraphModule) -> None:
-    """Remove make_fx saved-tensor detach chains while preserving other nodes."""
-    to_remove: list[torch.fx.Node] = []
-    for node in gm.graph.nodes:
-        if not _is_detach_node(node):
-            continue
-        input_node = node.args[0]
-        users = list(node.users.keys())
-        is_chain_inner = _is_detach_node(input_node)
-        is_dead = len(users) == 0
-        is_chain_head = len(users) > 0 and all(_is_detach_node(user) for user in users)
-        if is_chain_inner or is_dead or is_chain_head:
-            to_remove.append(node)
-    for node in to_remove:
-        node.replace_all_uses_with(node.args[0])
-        gm.graph.erase_node(node)
-    gm.graph.lint()
-    gm.recompile()
-
-
-def rebuild_fx_graph_module(gm: torch.fx.GraphModule) -> torch.fx.GraphModule:
-    new_graph = torch.fx.Graph()
-    value_map: dict[torch.fx.Node, torch.fx.Node] = {}
-    for node in gm.graph.nodes:
-        value_map[node] = new_graph.node_copy(node, lambda old: value_map[old])
-    new_graph.lint()
-    return torch.fx.GraphModule(gm, new_graph)
 
 
 def _canonical_parameter_name(name: str) -> str:
@@ -407,8 +366,6 @@ def _make_fx_edge_vector_snapshot(
     compile_mode: str,
     compile_dynamic: bool,
 ) -> dict:
-    from torch.fx.experimental.proxy_tensor import make_fx
-
     model.zero_grad(set_to_none=True)
     data, positions, edge_index, vectors = _edge_vector_inputs(batch)
 
@@ -417,23 +374,19 @@ def _make_fx_edge_vector_snapshot(
             model, batch, data, positions, edge_index, vectors_arg
         )
 
-    traced = make_fx(fn, tracing_mode=tracing_mode)(vectors)
-    detach_nodes_before = count_fx_detach_nodes(traced)
-    if strip_detach:
-        strip_fx_saved_tensor_detach(traced)
-        traced = rebuild_fx_graph_module(traced)
-    detach_nodes_after = count_fx_detach_nodes(traced)
-
-    executable = traced
-    compile_kwargs = None
-    if compile_graph:
-        compile_kwargs = {
-            "backend": "inductor",
-            "dynamic": compile_dynamic,
-        }
-        if compile_mode != "default":
-            compile_kwargs["mode"] = compile_mode
-        executable = torch.compile(traced, **compile_kwargs)
+    trace_result = trace_force_closure(
+        fn,
+        (vectors,),
+        tracing_mode=tracing_mode,
+        strip_detach=strip_detach,
+    )
+    traced = trace_result.graph_module
+    executable, compile_kwargs = compile_fx_graph_module(
+        traced,
+        compile_graph=compile_graph,
+        compile_mode=compile_mode,
+        compile_dynamic=compile_dynamic,
+    )
 
     energy, forces, loss = executable(vectors)
     loss.backward()
@@ -446,8 +399,8 @@ def _make_fx_edge_vector_snapshot(
         "compile_dynamic": compile_dynamic,
         "compile_kwargs": compile_kwargs,
         "node_count": len(list(traced.graph.nodes)),
-        "detach_nodes_before": detach_nodes_before,
-        "detach_nodes_after": detach_nodes_after,
+        "detach_nodes_before": trace_result.detach_nodes_before,
+        "detach_nodes_after": trace_result.detach_nodes_after,
         "snapshot": {
             "energy": energy.detach().clone(),
             "forces": forces.detach().clone(),
