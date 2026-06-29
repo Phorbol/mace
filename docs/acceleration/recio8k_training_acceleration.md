@@ -184,6 +184,17 @@ python scripts/benchmarks/recio8k_accel/profile_training_step_phases.py \
 
 SAI job `577924` is the authoritative steady profile after fixing the harness to match the real training model (`max_ell=3`; route summary `Muon tensors: 8 (132096 parameters)`). It used warmup `10`, repeats `30`, batch `32`, `286` atoms, cueq, and completed with Slurm `COMPLETED` / `ExitCode 0:0`. Median phase times were: Adam total `20.34 ms`, forward-force-loss `10.17 ms` (`50.0%`), backward+clip `9.84 ms` (`48.4%`), optimizer step `0.28 ms` (`1.39%`); HybridMuon total `20.24 ms`, forward-force-loss `9.81 ms` (`48.4%`), backward+clip `9.54 ms` (`47.1%`), optimizer step `0.85 ms` (`4.20%`). This explains why optimizer micro-kernel improvements do not reliably move epoch time: even HybridMuon's larger optimizer step is a small single-digit percentage of the full force-loss step, while conservative force construction and second-order backprop dominate. The next high-leverage speed path for ordinary MACE should focus on the model/force/backward region, cueq/e3nn kernels, data batching, or force-safe compiled subgraphs, not more optimizer-only micro-optimizations.
 
+`scripts/benchmarks/recio8k_accel/profile_force_energy_modes.py` then separates the same force-training bottleneck into energy-only and force-training modes. The SAI template is `scripts/benchmarks/recio8k_accel/force-energy-mode-profile.sbatch`. A CPU smoke is:
+
+```bash
+python scripts/benchmarks/recio8k_accel/profile_force_energy_modes.py \
+  --device cpu --no-enable-cueq --indices 0 --hidden-channels 8 \
+  --max-ell 1 --num-interactions 1 --correlation 1 \
+  --warmup 0 --repeats 1 --output /tmp/mace_force_energy_smoke.json
+```
+
+SAI job `577998` completed on `4V100` with cueq, RECIO indices `0:32`, warmup `10`, repeats `30`, and Slurm `COMPLETED` / `ExitCode 0:0`. Median timings were `energy_forward=4.59 ms`, `energy_loss_backward=9.18 ms`, `force_forward=9.55 ms`, and `force_loss_backward=19.25 ms`. The derived conservative-force increments are therefore about `+4.96 ms` for force construction (`force_forward - energy_forward`) and `+10.07 ms` for the force-loss second-order backward path (`force_loss_backward - energy_loss_backward`). This reinforces the compile roadmap: ordinary `torch.compile` wrappers around differentiable force-loss regions are currently blocked by AOTAutograd double-backward support, but the largest speed opportunity is precisely that force/backward region. Future work should prototype force-safe lower-level kernels, custom autograd boundaries, or DeepMD-style make_fx/AOT handling with explicit energy/force/parameter-gradient equivalence gates.
+
 ## GPU D3 Backend Status
 
 `mace_mp(..., dispersion=True, dispersion_backend="nvalchemi")` now routes D3 dispersion through an optional `NvalchemiDFTD3Calculator` ASE adapter. The adapter keeps the dispersion correction outside the MACE neural model and sums it at the calculator level, matching the existing `torch_dftd` architecture and preserving MACE model semantics.
