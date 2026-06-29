@@ -292,6 +292,14 @@ class _MiniLogger:
         self.records.append(metrics)
 
 
+class _MiniEma:
+    def __init__(self):
+        self.updates = 0
+
+    def update(self):
+        self.updates += 1
+
+
 def test_train_one_epoch_uses_optional_training_model():
     from mace.tools.train import train_one_epoch
 
@@ -501,6 +509,69 @@ def test_take_step_uses_non_blocking_batch_transfer_when_requested():
     )
 
     assert batch.to_calls == [(torch.device("cpu"), {"non_blocking": True})]
+
+
+def test_take_step_loss_skip_prevents_optimizer_and_ema_update():
+    from mace.tools.train import take_step
+    from mace.tools.training_guards import LossSkipController, TrainingGuardConfig
+
+    model = _TrainingOnlyModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    ema = _MiniEma()
+    controller = LossSkipController(
+        manual_threshold=0.5,
+        start_step=0,
+        ema_window=2,
+        multiplier=2.0,
+        skip_nan=True,
+        skip_large=True,
+    )
+
+    loss, metrics = take_step(
+        model=model,
+        loss_fn=_MiniLoss(),
+        batch=_MiniBatch(),
+        optimizer=optimizer,
+        ema=ema,
+        output_args={"forces": False, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+        guard_config=TrainingGuardConfig(loss_skip=True, loss_skip_threshold=0.5),
+        loss_skip_controller=controller,
+        global_step=0,
+    )
+
+    assert loss.item() == pytest.approx(1.0)
+    assert model.weight.item() == pytest.approx(1.0)
+    assert model.weight.grad is None
+    assert ema.updates == 0
+    assert metrics["loss_skipped"] is True
+    assert metrics["loss_skip_reason"] == "large"
+
+
+def test_take_step_default_guards_preserve_optimizer_and_ema_update():
+    from mace.tools.train import take_step
+
+    model = _TrainingOnlyModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    ema = _MiniEma()
+
+    loss, metrics = take_step(
+        model=model,
+        loss_fn=_MiniLoss(),
+        batch=_MiniBatch(),
+        optimizer=optimizer,
+        ema=ema,
+        output_args={"forces": False, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+
+    assert loss.item() == pytest.approx(1.0)
+    assert model.weight.item() == pytest.approx(0.9)
+    assert model.weight.grad is not None
+    assert ema.updates == 1
+    assert metrics["loss_skipped"] is False
 
 
 def test_train_one_epoch_passes_non_blocking_transfer_to_take_step(monkeypatch):

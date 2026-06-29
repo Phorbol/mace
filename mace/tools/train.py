@@ -28,6 +28,12 @@ from . import torch_geometric
 from .checkpoint import CheckpointHandler, CheckpointState
 from .precision import TrainingPrecisionConfig, get_autocast_context
 from .torch_tools import to_numpy
+from .training_guards import (
+    LossSkipController,
+    NonFiniteGradGuard,
+    TrainingGuardConfig,
+    stable_clip_grad_norm_,
+)
 from .utils import (
     MetricsLogger,
     compute_mae,
@@ -45,6 +51,21 @@ class SWAContainer:
     scheduler: SWALR
     start: int
     loss_fn: torch.nn.Module
+
+
+def _make_loss_skip_controller(
+    guard_config: TrainingGuardConfig,
+) -> LossSkipController | None:
+    if not guard_config.loss_skip:
+        return None
+    return LossSkipController(
+        manual_threshold=guard_config.loss_skip_threshold,
+        start_step=guard_config.loss_skip_start_step,
+        ema_window=guard_config.loss_skip_ema_window,
+        multiplier=guard_config.loss_skip_multiplier,
+        skip_nan=guard_config.loss_skip_nan,
+        skip_large=guard_config.loss_skip_large,
+    )
 
 
 def valid_err_log(
@@ -176,6 +197,7 @@ def train(
     precision_config: Optional[TrainingPrecisionConfig] = None,
     training_model: Optional[torch.nn.Module] = None,
     non_blocking_transfer: bool = False,
+    guard_config: Optional[TrainingGuardConfig] = None,
 ):
     lowest_loss = np.inf
     valid_loss = np.inf
@@ -184,6 +206,13 @@ def train(
     keep_last = False
     if log_wandb:
         import wandb
+
+    if guard_config is None:
+        guard_config = TrainingGuardConfig()
+    loss_skip_controller = _make_loss_skip_controller(guard_config)
+    nonfinite_grad_guard = (
+        NonFiniteGradGuard() if guard_config.nonfinite_grad_guard else None
+    )
 
     if max_grad_norm is not None:
         logging.info(f"Using gradient clipping with tolerance={max_grad_norm:.3f}")
@@ -234,6 +263,10 @@ def train(
             train_sampler.set_epoch(epoch)
         if "ScheduleFree" in type(optimizer).__name__:
             optimizer.train()
+        try:
+            global_step_start = epoch * len(train_loader)
+        except TypeError:
+            global_step_start = epoch
         train_one_epoch(
             model=model,
             loss_fn=loss_fn,
@@ -251,6 +284,10 @@ def train(
             precision_config=precision_config,
             training_model=training_model,
             non_blocking_transfer=non_blocking_transfer,
+            guard_config=guard_config,
+            loss_skip_controller=loss_skip_controller,
+            nonfinite_grad_guard=nonfinite_grad_guard,
+            global_step_start=global_step_start,
         )
         if distributed:
             torch.distributed.barrier()
@@ -373,11 +410,18 @@ def train_one_epoch(
     precision_config: Optional[TrainingPrecisionConfig] = None,
     training_model: Optional[torch.nn.Module] = None,
     non_blocking_transfer: bool = False,
+    guard_config: Optional[TrainingGuardConfig] = None,
+    loss_skip_controller: Optional[LossSkipController] = None,
+    nonfinite_grad_guard: Optional[NonFiniteGradGuard] = None,
+    global_step_start: int = 0,
 ) -> None:
     if distributed_model is not None:
         model_to_train = distributed_model
     else:
         model_to_train = training_model if training_model is not None else model
+
+    if guard_config is None:
+        guard_config = TrainingGuardConfig()
 
     if isinstance(optimizer, LBFGS):
         _, opt_metrics = take_step_lbfgs(
@@ -398,7 +442,7 @@ def train_one_epoch(
         if rank == 0:
             logger.log(opt_metrics)
     else:
-        for batch in data_loader:
+        for step_index, batch in enumerate(data_loader):
             _, opt_metrics = take_step(
                 model=model_to_train,
                 loss_fn=loss_fn,
@@ -410,6 +454,10 @@ def train_one_epoch(
                 device=device,
                 precision_config=precision_config,
                 non_blocking_transfer=non_blocking_transfer,
+                guard_config=guard_config,
+                loss_skip_controller=loss_skip_controller,
+                nonfinite_grad_guard=nonfinite_grad_guard,
+                global_step=global_step_start + step_index,
             )
             opt_metrics["mode"] = "opt"
             opt_metrics["epoch"] = epoch
@@ -428,12 +476,20 @@ def take_step(
     device: torch.device,
     precision_config: Optional[TrainingPrecisionConfig] = None,
     non_blocking_transfer: bool = False,
+    guard_config: Optional[TrainingGuardConfig] = None,
+    loss_skip_controller: Optional[LossSkipController] = None,
+    nonfinite_grad_guard: Optional[NonFiniteGradGuard] = None,
+    global_step: int = 0,
 ) -> Tuple[float, Dict[str, Any]]:
     start_time = time.time()
     batch = batch.to(device, non_blocking=non_blocking_transfer)
     batch_dict = batch.to_dict()
     if precision_config is None:
         precision_config = TrainingPrecisionConfig(enabled=False, dtype=None)
+    if guard_config is None:
+        guard_config = TrainingGuardConfig()
+    if guard_config.loss_skip and loss_skip_controller is None:
+        loss_skip_controller = _make_loss_skip_controller(guard_config)
 
     def closure():
         optimizer.zero_grad(set_to_none=True)
@@ -446,28 +502,59 @@ def take_step(
                 compute_stress=output_args["stress"],
             )
         loss = loss_fn(pred=output, ref=batch)
+        skip_result = None
+        grad_norm = None
+        if guard_config.loss_skip and loss_skip_controller is not None:
+            skip_result = loss_skip_controller.check(loss, global_step=global_step)
+            if skip_result.skip:
+                return loss, skip_result, grad_norm
+
         loss.backward()
         if max_grad_norm is not None:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+            grad_norm = stable_clip_grad_norm_(
+                model.parameters(),
+                max_norm=max_grad_norm,
+                stable=guard_config.stable_grad_clip,
+            )
+        elif nonfinite_grad_guard is not None:
+            grad_norm = stable_clip_grad_norm_(
+                model.parameters(),
+                max_norm=float("inf"),
+                stable=True,
+            )
+        if nonfinite_grad_guard is not None and grad_norm is not None:
+            nonfinite_grad_guard.update(grad_norm)
 
-        return loss
+        return loss, skip_result, grad_norm
 
     try:
-        loss = closure()
+        loss, skip_result, grad_norm = closure()
     except RuntimeError as exc:
         disable_compile_fallback = getattr(model, "disable_compile_fallback", None)
         if disable_compile_fallback is None or not disable_compile_fallback(exc):
             raise
-        loss = closure()
-    optimizer.step()
+        loss, skip_result, grad_norm = closure()
 
-    if ema is not None:
-        ema.update()
+    loss_skipped = skip_result.skip if skip_result is not None else False
+    if not loss_skipped:
+        optimizer.step()
+
+        if ema is not None:
+            ema.update()
 
     loss_dict = {
         "loss": to_numpy(loss),
         "time": time.time() - start_time,
+        "loss_skipped": loss_skipped,
+        "loss_skip_reason": (
+            skip_result.reason if skip_result is not None else "none"
+        ),
     }
+    if skip_result is not None:
+        loss_dict["loss_skip_threshold"] = skip_result.threshold
+        loss_dict["loss_ema"] = skip_result.loss_ema
+    if grad_norm is not None:
+        loss_dict["grad_norm"] = to_numpy(grad_norm)
 
     return loss, loss_dict
 
