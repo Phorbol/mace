@@ -173,3 +173,13 @@ def test_epoch_profile_summary_reports_setup_and_steady_step_times():
     assert summary["cache_hits"] == 1
     assert summary["mean_total_ms_excluding_setup"] == 15.0
     assert summary["mean_total_ms_including_setup"] == 65.0
+
+
+
+def test_epoch_profile_runs_multi_case_parent_in_isolated_workers():
+    profile = load_epoch_profile()
+
+    assert profile.should_run_isolated(["adam"], ["position_eager"], case_worker=False) is False
+    assert profile.should_run_isolated(["adam", "hybrid_muon"], ["edge_compile"], case_worker=False) is True
+    assert profile.should_run_isolated(["adam"], ["position_eager", "edge_compile"], case_worker=False) is True
+    assert profile.should_run_isolated(["adam", "hybrid_muon"], ["edge_compile"], case_worker=True) is False

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -100,6 +101,58 @@ def summarize_steps(steps: list[dict]) -> dict:
         "loss_first": steps[0].get("loss"),
         "loss_last": steps[-1].get("loss"),
     }
+
+
+def should_run_isolated(
+    optimizers: list[str], modes: list[str], *, case_worker: bool
+) -> bool:
+    return not case_worker and len(optimizers) * len(modes) > 1
+
+
+def _run_isolated_cases(
+    args: argparse.Namespace, *, optimizers: list[str], modes: list[str]
+) -> None:
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    case_outputs: list[str] = []
+    results: list[dict] = []
+    merged_payload: dict | None = None
+    parent_args = sys.argv[1:]
+    for optimizer_name in optimizers:
+        for mode_name in modes:
+            case_output = args.output.with_name(
+                f"{args.output.stem}_{optimizer_name}_{mode_name}{args.output.suffix}"
+            )
+            command = [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--case-worker",
+                *parent_args,
+                "--optimizers",
+                optimizer_name,
+                "--modes",
+                mode_name,
+                "--output",
+                str(case_output),
+            ]
+            print(
+                f"[edge-force-epoch] launching isolated "
+                f"optimizer={optimizer_name} mode={mode_name}",
+                file=sys.stderr,
+                flush=True,
+            )
+            subprocess.run(command, check=True)
+            case_payload = json.loads(case_output.read_text())
+            case_outputs.append(str(case_output))
+            results.extend(case_payload["results"])
+            if merged_payload is None:
+                merged_payload = dict(case_payload)
+
+    if merged_payload is None:
+        raise RuntimeError("no isolated cases were executed")
+    merged_payload["results"] = results
+    merged_payload["case_outputs"] = case_outputs
+    args.output.write_text(json.dumps(merged_payload, indent=2, sort_keys=True) + "\n")
+    print(json.dumps(merged_payload, indent=2, sort_keys=True))
 
 
 def _cueq_config(args: argparse.Namespace, device: torch.device):
@@ -416,6 +469,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--forces-weight", type=float, default=1000.0)
     parser.add_argument("--max-grad-norm", type=float, default=10.0)
     parser.add_argument("--seed", type=int, default=123)
+    parser.add_argument("--case-worker", action="store_true", help=argparse.SUPPRESS)
     _append_bool_flag(parser, "enable-cueq", True)
     parser.add_argument("--cueq-conv-fusion", action="store_true", default=None)
     _append_bool_flag(parser, "cueq-optimize-all", False)
@@ -434,6 +488,9 @@ def main() -> None:
     args = build_parser().parse_args()
     optimizers = parse_csv_choices(args.optimizers, OPTIMIZER_CHOICES)
     modes = parse_csv_choices(args.modes, MODE_CHOICES)
+    if should_run_isolated(optimizers, modes, case_worker=args.case_worker):
+        _run_isolated_cases(args, optimizers=optimizers, modes=modes)
+        return
     device = torch.device("cuda:0" if args.device == "cuda" else args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA device requested but torch.cuda.is_available() is false")
