@@ -661,10 +661,22 @@ def test_edge_force_compile_step_uses_fresh_executable_after_gate(monkeypatch):
         training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
     )
     monkeypatch.setattr(
-        training_compile, "_position_force_snapshot", lambda **kwargs: snapshot_payload()
+        training_compile,
+        "_position_force_value_snapshot",
+        lambda **kwargs: snapshot_payload(),
     )
     monkeypatch.setattr(
-        training_compile, "_edge_force_snapshot_from_executable", fake_snapshot
+        training_compile, "_edge_force_value_snapshot_from_executable", fake_snapshot
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_position_force_snapshot",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("unexpected grad gate")),
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_edge_force_snapshot_from_executable",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("unexpected grad gate")),
     )
 
     wrapper = training_compile.EdgeForceCompiledLossModule(

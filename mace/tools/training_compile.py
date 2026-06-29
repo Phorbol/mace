@@ -383,6 +383,33 @@ def _edge_force_snapshot_from_executable(
     }
 
 
+def _edge_force_value_snapshot_from_executable(
+    *,
+    model: torch.nn.Module,
+    batch,
+    loss_fn,
+    executable,
+    input_names: tuple[str, ...],
+) -> dict[str, Any]:
+    model.zero_grad(set_to_none=True)
+    data_dict, _, _, vectors = _edge_vector_inputs(batch)
+    vectors = vectors.detach().clone().requires_grad_(True)
+    inputs = [data_dict[name] for name in input_names]
+    energy, forces = executable(vectors, *inputs)
+    loss = _loss_from_energy_forces(
+        batch=batch,
+        loss_fn=loss_fn,
+        energy=energy,
+        forces=forces,
+    )
+    return {
+        "energy": energy.detach().clone(),
+        "forces": forces.detach().clone(),
+        "loss": loss.detach().clone(),
+        "grads": {},
+    }
+
+
 def _position_force_snapshot(
     *, model: torch.nn.Module, batch, loss_fn
 ) -> dict[str, Any]:
@@ -401,6 +428,26 @@ def _position_force_snapshot(
         "forces": output["forces"].detach().clone(),
         "loss": loss.detach().clone(),
         "grads": _named_parameter_grads(model),
+    }
+
+
+def _position_force_value_snapshot(
+    *, model: torch.nn.Module, batch, loss_fn
+) -> dict[str, Any]:
+    model.zero_grad(set_to_none=True)
+    output = model(
+        batch.to_dict(),
+        training=True,
+        compute_force=True,
+        compute_virials=False,
+        compute_stress=False,
+    )
+    loss = loss_fn(pred=output, ref=batch)
+    return {
+        "energy": output["energy"].detach().clone(),
+        "forces": output["forces"].detach().clone(),
+        "loss": loss.detach().clone(),
+        "grads": {},
     }
 
 
@@ -491,18 +538,32 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             compile_mode=self.config.compile_mode,
             compile_dynamic=self.config.compile_dynamic,
         )
-        reference = _position_force_snapshot(
-            model=self.model,
-            batch=batch,
-            loss_fn=loss_fn,
-        )
-        candidate = _edge_force_snapshot_from_executable(
-            model=self.model,
-            batch=batch,
-            loss_fn=loss_fn,
-            executable=executable,
-            input_names=input_names,
-        )
+        if self.config.compile_graph:
+            reference = _position_force_value_snapshot(
+                model=self.model,
+                batch=batch,
+                loss_fn=loss_fn,
+            )
+            candidate = _edge_force_value_snapshot_from_executable(
+                model=self.model,
+                batch=batch,
+                loss_fn=loss_fn,
+                executable=executable,
+                input_names=input_names,
+            )
+        else:
+            reference = _position_force_snapshot(
+                model=self.model,
+                batch=batch,
+                loss_fn=loss_fn,
+            )
+            candidate = _edge_force_snapshot_from_executable(
+                model=self.model,
+                batch=batch,
+                loss_fn=loss_fn,
+                executable=executable,
+                input_names=input_names,
+            )
         comparison = _compare_edge_force_snapshots(
             reference,
             candidate,
@@ -565,18 +626,32 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     f"{compiled.input_names} != {input_names}"
                 )
             elif self.config.cache_hit_gate:
-                reference = _position_force_snapshot(
-                    model=self.model,
-                    batch=batch,
-                    loss_fn=loss_fn,
-                )
-                candidate = _edge_force_snapshot_from_executable(
-                    model=self.model,
-                    batch=batch,
-                    loss_fn=loss_fn,
-                    executable=compiled.executable,
-                    input_names=compiled.input_names,
-                )
+                if self.config.compile_graph:
+                    reference = _position_force_value_snapshot(
+                        model=self.model,
+                        batch=batch,
+                        loss_fn=loss_fn,
+                    )
+                    candidate = _edge_force_value_snapshot_from_executable(
+                        model=self.model,
+                        batch=batch,
+                        loss_fn=loss_fn,
+                        executable=compiled.executable,
+                        input_names=compiled.input_names,
+                    )
+                else:
+                    reference = _position_force_snapshot(
+                        model=self.model,
+                        batch=batch,
+                        loss_fn=loss_fn,
+                    )
+                    candidate = _edge_force_snapshot_from_executable(
+                        model=self.model,
+                        batch=batch,
+                        loss_fn=loss_fn,
+                        executable=compiled.executable,
+                        input_names=compiled.input_names,
+                    )
                 comparison = _compare_edge_force_snapshots(
                     reference,
                     candidate,
