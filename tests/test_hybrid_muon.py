@@ -116,6 +116,78 @@ def test_hybrid_muon_routes_radial_tp_weight_mlps_to_muon():
     )
 
 
+def test_hybrid_muon_adam_route_uses_torch_functional_adam(monkeypatch):
+    param = torch.nn.Parameter(torch.ones(1, 8))
+    param.grad = torch.ones_like(param)
+    calls = []
+
+    def fake_adam(
+        params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps, **kwargs
+    ):
+        calls.append(
+            {
+                "params": params,
+                "grads": grads,
+                "exp_avgs": exp_avgs,
+                "exp_avg_sqs": exp_avg_sqs,
+                "max_exp_avg_sqs": max_exp_avg_sqs,
+                "state_steps": state_steps,
+                "kwargs": kwargs,
+            }
+        )
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon.optim_functional.adam",
+        fake_adam,
+    )
+    groups, _ = build_hybrid_muon_param_groups(
+        [("readouts.0.linear.weight", param)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        adam_betas=(0.8, 0.97),
+        eps=1.0e-7,
+        amsgrad=True,
+    )
+    optimizer = HybridMuon(groups, lr=1.0e-3)
+
+    optimizer.step()
+
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["params"] == [param]
+    assert call["kwargs"]["foreach"] is True
+    assert call["kwargs"]["amsgrad"] is True
+    assert call["kwargs"]["beta1"] == 0.8
+    assert call["kwargs"]["beta2"] == 0.97
+    assert call["kwargs"]["lr"] == 1.0e-3
+    assert call["kwargs"]["weight_decay"] == 1.0e-4
+    assert call["kwargs"]["eps"] == 1.0e-7
+
+
+def test_hybrid_muon_adam_route_converts_legacy_integer_step_for_foreach():
+    param = torch.nn.Parameter(torch.ones(1, 8))
+    param.grad = torch.ones_like(param)
+    groups, _ = build_hybrid_muon_param_groups(
+        [("readouts.0.linear.weight", param)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+    )
+    optimizer = HybridMuon(groups, lr=1.0e-3)
+    optimizer.state[param]["step"] = torch.tensor(3, device=param.device)
+    optimizer.state[param]["exp_avg"] = torch.zeros_like(param, dtype=torch.float32)
+    optimizer.state[param]["exp_avg_sq"] = torch.zeros_like(param, dtype=torch.float32)
+
+    optimizer.step()
+
+    assert optimizer.state[param]["step"].device.type == "cpu"
+    assert optimizer.state[param]["step"].dtype == torch.float32
+    assert optimizer.state[param]["step"].item() == 4.0
+
+
 def test_hybrid_muon_adam_route_matches_torch_adam_with_amsgrad():
     torch.manual_seed(12)
     initial = torch.randn(1, 8)

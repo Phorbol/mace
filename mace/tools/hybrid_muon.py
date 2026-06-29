@@ -6,6 +6,7 @@ from typing import Iterable
 
 import torch
 from torch.optim import Optimizer
+from torch.optim import _functional as optim_functional
 
 
 @dataclass(frozen=True)
@@ -221,39 +222,65 @@ class HybridMuon(Optimizer):
             param.add_(ortho, alpha=-lr * scale)
 
     def _step_adam_group(self, group: dict) -> None:
-        lr = group["lr"]
-        beta1, beta2 = group.get("betas", (0.9, 0.999))
-        eps = group.get("eps", 1.0e-8)
-        weight_decay = group.get("weight_decay", 0.0)
+        params = []
+        grads = []
+        exp_avgs = []
+        exp_avg_sqs = []
+        max_exp_avg_sqs = []
+        state_steps = []
         amsgrad = group.get("amsgrad", False)
         for param in group["params"]:
             if param.grad is None:
                 continue
-            grad = param.grad.float()
-            if weight_decay:
-                grad = grad.add(param.float(), alpha=weight_decay)
+            if param.grad.is_sparse:
+                raise RuntimeError(
+                    "HybridMuon Adam route does not support sparse gradients"
+                )
             state = self.state[param]
             if not state:
-                state["step"] = torch.tensor(0, device=param.device)
+                state["step"] = torch.tensor(0.0)
                 state["exp_avg"] = torch.zeros_like(param, dtype=torch.float32)
                 state["exp_avg_sq"] = torch.zeros_like(param, dtype=torch.float32)
                 if amsgrad:
                     state["max_exp_avg_sq"] = torch.zeros_like(
                         param, dtype=torch.float32
                     )
-            state["step"] += 1
-            step = int(state["step"].item())
-            exp_avg = state["exp_avg"]
-            exp_avg_sq = state["exp_avg_sq"]
-            exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
-            exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
-            bias_correction1 = 1.0 - beta1**step
-            bias_correction2 = 1.0 - beta2**step
-            denom_source = exp_avg_sq
+            elif not torch.is_tensor(state["step"]):
+                state["step"] = torch.tensor(float(state["step"]))
+            elif state["step"].dtype not in (torch.float32, torch.float64):
+                state["step"] = state["step"].detach().to(
+                    device="cpu", dtype=torch.float32
+                )
+            params.append(param)
+            grads.append(param.grad)
+            exp_avgs.append(state["exp_avg"])
+            exp_avg_sqs.append(state["exp_avg_sq"])
             if amsgrad:
-                max_exp_avg_sq = state["max_exp_avg_sq"]
-                torch.maximum(max_exp_avg_sq, exp_avg_sq, out=max_exp_avg_sq)
-                denom_source = max_exp_avg_sq
-            denom = denom_source.sqrt().div_(math.sqrt(bias_correction2)).add_(eps)
-            update = exp_avg.div(bias_correction1).div_(denom)
-            param.add_(update.to(dtype=param.dtype), alpha=-lr)
+                max_exp_avg_sqs.append(state["max_exp_avg_sq"])
+            state_steps.append(state["step"])
+        if not params:
+            return
+        beta1, beta2 = group.get("betas", (0.9, 0.999))
+        optim_functional.adam(
+            params,
+            grads,
+            exp_avgs,
+            exp_avg_sqs,
+            max_exp_avg_sqs,
+            state_steps,
+            foreach=True,
+            capturable=False,
+            differentiable=False,
+            fused=None,
+            grad_scale=None,
+            found_inf=None,
+            has_complex=False,
+            decoupled_weight_decay=False,
+            amsgrad=amsgrad,
+            beta1=beta1,
+            beta2=beta2,
+            lr=group["lr"],
+            weight_decay=group.get("weight_decay", 0.0),
+            eps=group.get("eps", 1.0e-8),
+            maximize=False,
+        )
