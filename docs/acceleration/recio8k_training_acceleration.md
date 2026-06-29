@@ -91,6 +91,19 @@ sbatch /home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace/scripts/benchm
 
 The sbatch writes `training_compile_probe_${SLURM_JOB_ID}.json` and `nvdmon_job-${SLURM_JOB_ID}.log`. It defaults to RECIO `train.xyz` index `0`, `mace_env`, `4V100`, `improper-gpu`, and cueq enabled; override with environment variables such as `RECIO_INDICES=0,4,8`, `MACE_PROBE_REPEATS=10`, or `MACE_PROBE_ENABLE_CUEQ=0`.
 
+Initial SAI probe results:
+
+| Job | RECIO indices | Atoms | Mode | Compile disabled | Mean seconds/step | Max CUDA memory |
+| ---: | --- | ---: | --- | --- | ---: | ---: |
+| `576776` | `0` | 9 | `eager_force_loss` | no | `2.750e-02` | `21.3 MB` |
+| `576776` | `0` | 9 | `compile_force_loss` | yes | `1.149e-02` | `24.3 MB` |
+| `576776` | `0` | 9 | `compile_energy_only` | no | `3.388e-03` | `22.7 MB` |
+| `576782` | `0,4,8` | 22 | `eager_force_loss` | no | `1.968e-02` | `24.2 MB` |
+| `576782` | `0,4,8` | 22 | `compile_force_loss` | yes | `1.169e-02` | `25.3 MB` |
+| `576782` | `0,4,8` | 22 | `compile_energy_only` | no | `3.215e-03` | `22.8 MB` |
+
+Both probe jobs completed with Slurm `COMPLETED` / `ExitCode 0:0` on `4V100` with cueq enabled. The force-loss compile mode logged the expected AOTAutograd double-backward fallback and then timed the eager fallback path; it must not be interpreted as compiled force-loss acceleration. The energy-only mode kept compile enabled, which confirms the current compile boundary works when training does not need conservative-force second derivatives.
+
 ## Training Infrastructure Reference
 
 The local TACE reference checkout is `/home/sjtu-caoxiaoming/gengjianrui/trae-research-code/reference_repos/tace` at commit `c669bee`. The useful lessons for a larger MACE training refactor are infrastructure-level rather than model-copying:
