@@ -210,6 +210,17 @@ The force/energy profiler now also accepts the same conservative training compil
 
 The remaining high-leverage region is therefore still conservative force/backward. Future work should prototype force-safe lower-level kernels, custom autograd boundaries, or DeepMD-style make_fx/AOT handling with explicit energy/force/parameter-gradient equivalence gates instead of replacing MACE architecture.
 
+`scripts/benchmarks/recio8k_accel/profile_force_ops.py` adds a torch-profiler view of the same RECIO batch and shares the force/energy mode runner, so it profiles the same conservative-force path. Its SAI template is `scripts/benchmarks/recio8k_accel/force-op-profile.sbatch`. Job `578243` completed on `4V100` with cueq, RECIO indices `0:32`, warmup `2`, modes `energy_forward,force_loss_backward`, and Slurm `COMPLETED` / `ExitCode 0:0`. The profiler uses PyTorch 2.8 `device_time_total` fields and filters out the outer `mace_*` record-function rows; the device-time values are profiler aggregation data, not a replacement for the wall-clock medians above.
+
+Top device-time operators from job `578243` point to the next kernel/AOT boundaries:
+
+| Mode | Top device-time operators | Interpretation |
+| --- | --- | --- |
+| `energy_forward` | `aten::einsum` (`0.329 ms`), `aten::bmm` (`0.237 ms`), `cuequivariance_ops::tensor_product_uniform_1d_jit` (`0.159 ms`), `aten::mm` (`0.154 ms`) | Forward cost is split between tensor contractions, cueq tensor products, and dense matrix multiplies; cueq compatibility must stay first-class. |
+| `force_loss_backward` | `aten::bmm` (`1.412 ms`), `SliceBackward0` (`1.322 ms`), `BmmBackward0` (`1.237 ms`), cueq tensor-product backward/evaluate (`~1.08 ms`), `aten::mm` (`1.059 ms`), `aten::mul` (`1.038 ms`) | The second-order force-loss path is dominated by many autograd contraction/backward nodes, not a single optimizer or readout MLP. Lower-level work should target bmm/einsum/cueq tensor-product backward and graph-level AOT treatment of these force-safe regions. |
+
+This narrows the DPA4-inspired compile lesson for MACE: a useful next prototype should not wrap more Python modules with ordinary `torch.compile`; it should either improve cueq-backed tensor-product backward, fuse repeated contraction/backward patterns, or trace an explicitly force-equivalent AOT subgraph whose parameter gradients pass the existing energy/force/loss/gradient equivalence gate.
+
 ## GPU D3 Backend Status
 
 `mace_mp(..., dispersion=True, dispersion_backend="nvalchemi")` now routes D3 dispersion through an optional `NvalchemiDFTD3Calculator` ASE adapter. The adapter keeps the dispersion correction outside the MACE neural model and sums it at the calculator level, matching the existing `torch_dftd` architecture and preserving MACE model semantics.
