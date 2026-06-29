@@ -706,7 +706,7 @@ def run(args) -> None:
         train_loader_head = torch_geometric.dataloader.DataLoader(
             dataset=train_sets[head_config.head_name],
             batch_size=args.batch_size,
-            shuffle=True,
+            shuffle=args.shuffle,
             drop_last=(not args.lbfgs),
             pin_memory=args.pin_memory,
             num_workers=args.num_workers,
@@ -722,7 +722,7 @@ def run(args) -> None:
             train_set,
             num_replicas=world_size,
             rank=rank,
-            shuffle=True,
+            shuffle=args.shuffle,
             drop_last=(not args.lbfgs),
             seed=args.seed,
         )
@@ -742,7 +742,7 @@ def run(args) -> None:
         dataset=train_set,
         batch_size=args.batch_size,
         sampler=train_sampler,
-        shuffle=(train_sampler is None),
+        shuffle=(args.shuffle and train_sampler is None),
         drop_last=(train_sampler is None and not args.lbfgs),
         pin_memory=args.pin_memory,
         num_workers=args.num_workers,
