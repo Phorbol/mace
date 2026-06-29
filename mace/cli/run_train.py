@@ -879,6 +879,9 @@ def run(args) -> None:
                 compile_dynamic=args.edge_force_compile_dynamic,
                 allow_fallback=args.edge_force_compile_allow_fallback,
                 cache_hit_gate=args.edge_force_compile_cache_hit_gate,
+                cache_policy=args.edge_force_compile_cache_policy,
+                min_repeats=args.edge_force_compile_min_repeats,
+                disable_negative_speedup=args.edge_force_compile_disable_negative_speedup,
             ),
         )
 

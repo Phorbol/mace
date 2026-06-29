@@ -146,6 +146,25 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=True,
     )
     parser.add_argument(
+        "--edge_force_compile_cache_policy",
+        help="Cache policy for edge-force compile",
+        type=str,
+        choices=["shape", "repeat_only", "bucket"],
+        default="repeat_only",
+    )
+    parser.add_argument(
+        "--edge_force_compile_min_repeats",
+        help="Minimum exact-shape repeats before repeat_only policy compiles",
+        type=int,
+        default=2,
+    )
+    parser.add_argument(
+        "--edge_force_compile_disable_negative_speedup",
+        help="Disable compile for shapes or buckets that show negative speedup",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
         "--edge_force_compile_allow_fallback",
         help="Continue eager training if edge-force compile setup or runtime fails",
         action=argparse.BooleanOptionalAction,
