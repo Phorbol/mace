@@ -135,6 +135,8 @@ def trace_force_closure(
 
     decomp_table = _force_compile_decomposition_table()
     make_fx_kwargs: dict[str, Any] = {"tracing_mode": tracing_mode}
+    if tracing_mode == "symbolic":
+        make_fx_kwargs["_allow_non_fake_inputs"] = True
     if decomp_table is not None:
         make_fx_kwargs["decomposition_table"] = decomp_table
     traced = make_fx(fn, **make_fx_kwargs)(*example_inputs)

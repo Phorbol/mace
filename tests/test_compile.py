@@ -721,6 +721,8 @@ def test_arg_parser_accepts_edge_force_compile_flags():
             "--edge_force_compile",
             "--edge_force_compile_mode",
             "reduce-overhead",
+            "--edge_force_compile_tracing_mode",
+            "symbolic",
             "--no-edge_force_compile_graph",
             "--no-edge_force_compile_dynamic",
             "--no-edge_force_compile_cache_hit_gate",
@@ -730,6 +732,7 @@ def test_arg_parser_accepts_edge_force_compile_flags():
 
     assert args.edge_force_compile is True
     assert args.edge_force_compile_mode == "reduce-overhead"
+    assert args.edge_force_compile_tracing_mode == "symbolic"
     assert args.edge_force_compile_graph is False
     assert args.edge_force_compile_dynamic is False
     assert args.edge_force_compile_cache_hit_gate is False

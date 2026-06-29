@@ -121,6 +121,13 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default="default",
     )
     parser.add_argument(
+        "--edge_force_compile_tracing_mode",
+        help="make_fx tracing mode for the edge-force closure",
+        type=str,
+        choices=["real", "symbolic"],
+        default="real",
+    )
+    parser.add_argument(
         "--edge_force_compile_graph",
         help="Run torch.compile on the repaired edge-force FX graph",
         action=argparse.BooleanOptionalAction,

@@ -873,6 +873,7 @@ def run(args) -> None:
             model,
             config=EdgeForceCompileConfig(
                 enabled=args.edge_force_compile,
+                tracing_mode=args.edge_force_compile_tracing_mode,
                 compile_graph=args.edge_force_compile_graph,
                 compile_mode=args.edge_force_compile_mode,
                 compile_dynamic=args.edge_force_compile_dynamic,
