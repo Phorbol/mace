@@ -6,6 +6,8 @@ from mace.tools.scripts_utils import get_optimizer
 
 from mace.tools.hybrid_muon import (
     HybridMuon,
+    _orthogonalize_newton_schulz,
+    _orthogonalize_newton_schulz_batched,
     build_hybrid_muon_param_groups,
     summarize_hybrid_muon_routes,
 )
@@ -114,6 +116,50 @@ def test_hybrid_muon_routes_radial_tp_weight_mlps_to_muon():
         ]
         == "adam"
     )
+
+
+def test_batched_newton_schulz_matches_per_tensor_helper():
+    torch.manual_seed(37)
+    for shape in ((4, 64, 64), (3, 8, 64), (2, 80, 8)):
+        updates = torch.randn(*shape)
+
+        batched = _orthogonalize_newton_schulz_batched(updates)
+        looped = torch.stack(
+            [_orthogonalize_newton_schulz(update) for update in updates]
+        )
+
+        assert torch.allclose(batched, looped, atol=1.0e-6, rtol=1.0e-6)
+
+
+def test_hybrid_muon_batches_same_shape_muon_updates(monkeypatch):
+    params = [torch.nn.Parameter(torch.randn(4, 8)) for _ in range(3)]
+    for param in params:
+        param.grad = torch.randn_like(param)
+    groups, _ = build_hybrid_muon_param_groups(
+        [
+            (f"interactions.0.conv_tp_weights.layer{i}.weight", param)
+            for i, param in enumerate(params)
+        ],
+        lr=1.0e-3,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+    )
+    optimizer = HybridMuon(groups, lr=1.0e-3)
+    calls = []
+
+    def fake_batched(updates, steps=5):
+        calls.append(tuple(updates.shape))
+        return torch.zeros_like(updates)
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon._orthogonalize_newton_schulz_batched",
+        fake_batched,
+    )
+
+    optimizer.step()
+
+    assert calls == [(3, 4, 8)]
 
 
 def test_hybrid_muon_adam_route_uses_torch_functional_adam(monkeypatch):

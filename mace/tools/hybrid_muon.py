@@ -163,6 +163,28 @@ def _orthogonalize_newton_schulz(update: torch.Tensor, steps: int = 5) -> torch.
     return x.to(dtype=original_dtype)
 
 
+def _orthogonalize_newton_schulz_batched(
+    updates: torch.Tensor, steps: int = 5
+) -> torch.Tensor:
+    original_dtype = updates.dtype
+    x = updates.float()
+    if x.ndim != 3:
+        raise ValueError(
+            "batched Newton-Schulz input must have shape (batch, rows, cols)"
+        )
+    transposed = x.shape[-2] > x.shape[-1]
+    if transposed:
+        x = x.transpose(-2, -1)
+    norm = x.flatten(start_dim=1).norm(dim=1).clamp_min(1.0e-7)
+    x = x / norm.view(-1, 1, 1)
+    for _ in range(steps):
+        a = x @ x.transpose(-2, -1)
+        x = 1.5 * x - 0.5 * (a @ x)
+    if transposed:
+        x = x.transpose(-2, -1)
+    return x.to(dtype=original_dtype)
+
+
 class HybridMuon(Optimizer):
     def __init__(
         self,
@@ -202,6 +224,7 @@ class HybridMuon(Optimizer):
         lr = group["lr"]
         beta = group.get("beta", 0.9)
         weight_decay = group.get("weight_decay", 0.0)
+        updates_by_shape = {}
         for param in group["params"]:
             if param.grad is None:
                 continue
@@ -215,11 +238,23 @@ class HybridMuon(Optimizer):
             momentum.mul_(beta).add_(grad, alpha=1.0 - beta)
             update = momentum.mul(beta).add(grad, alpha=1.0 - beta)
             flat_update = update.reshape(update.shape[0], -1)
-            ortho = _orthogonalize_newton_schulz(flat_update).reshape_as(param)
             scale = math.sqrt(
                 max(1, flat_update.shape[0] / max(flat_update.shape[1], 1))
             )
-            param.add_(ortho, alpha=-lr * scale)
+            key = (tuple(flat_update.shape), flat_update.device, flat_update.dtype)
+            updates_by_shape.setdefault(key, []).append((param, flat_update, scale))
+
+        for records in updates_by_shape.values():
+            if len(records) == 1:
+                param, flat_update, scale = records[0]
+                ortho = _orthogonalize_newton_schulz(flat_update).reshape_as(param)
+                param.add_(ortho, alpha=-lr * scale)
+                continue
+
+            stacked_updates = torch.stack([record[1] for record in records])
+            orthogonalized = _orthogonalize_newton_schulz_batched(stacked_updates)
+            for (param, _flat_update, scale), ortho in zip(records, orthogonalized):
+                param.add_(ortho.reshape_as(param), alpha=-lr * scale)
 
     def _step_adam_group(self, group: dict) -> None:
         params = []
