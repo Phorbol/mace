@@ -120,3 +120,44 @@ def test_build_parser_accepts_make_fx_compile_flags():
     assert args.compile_make_fx is True
     assert args.make_fx_compile_mode == "reduce-overhead"
     assert args.make_fx_compile_dynamic is False
+
+
+def test_build_parser_accepts_cueq_debug_flags():
+    probe = load_probe()
+
+    args = probe.build_parser().parse_args([
+        "--enable-cueq",
+        "--no-cueq-conv-fusion",
+        "--no-cueq-optimize-all",
+    ])
+
+    assert args.enable_cueq is True
+    assert args.cueq_conv_fusion is False
+    assert args.cueq_optimize_all is False
+
+
+def test_build_parser_keeps_cueq_conv_fusion_auto_by_default():
+    probe = load_probe()
+
+    args = probe.build_parser().parse_args(["--enable-cueq"])
+
+    assert args.cueq_conv_fusion is None
+
+
+def test_build_parser_accepts_granular_cueq_optimization_flags():
+    probe = load_probe()
+
+    args = probe.build_parser().parse_args([
+        "--enable-cueq",
+        "--no-cueq-optimize-all",
+        "--cueq-optimize-linear",
+        "--cueq-optimize-channelwise",
+        "--cueq-optimize-symmetric",
+        "--cueq-optimize-fctp",
+    ])
+
+    assert args.cueq_optimize_all is False
+    assert args.cueq_optimize_linear is True
+    assert args.cueq_optimize_channelwise is True
+    assert args.cueq_optimize_symmetric is True
+    assert args.cueq_optimize_fctp is True

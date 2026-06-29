@@ -16,6 +16,24 @@ CUEQ_ARGS=()
 if [[ "${MACE_EDGE_FORCE_ENABLE_CUEQ:-1}" == "1" ]]; then
   CUEQ_ARGS+=(--enable-cueq)
 fi
+if [[ "${MACE_EDGE_FORCE_CUEQ_CONV_FUSION:-1}" == "0" ]]; then
+  CUEQ_ARGS+=(--no-cueq-conv-fusion)
+fi
+if [[ "${MACE_EDGE_FORCE_CUEQ_OPTIMIZE_ALL:-1}" == "0" ]]; then
+  CUEQ_ARGS+=(--no-cueq-optimize-all)
+fi
+if [[ "${MACE_EDGE_FORCE_CUEQ_OPTIMIZE_LINEAR:-0}" == "1" ]]; then
+  CUEQ_ARGS+=(--cueq-optimize-linear)
+fi
+if [[ "${MACE_EDGE_FORCE_CUEQ_OPTIMIZE_CHANNELWISE:-0}" == "1" ]]; then
+  CUEQ_ARGS+=(--cueq-optimize-channelwise)
+fi
+if [[ "${MACE_EDGE_FORCE_CUEQ_OPTIMIZE_SYMMETRIC:-0}" == "1" ]]; then
+  CUEQ_ARGS+=(--cueq-optimize-symmetric)
+fi
+if [[ "${MACE_EDGE_FORCE_CUEQ_OPTIMIZE_FCTP:-0}" == "1" ]]; then
+  CUEQ_ARGS+=(--cueq-optimize-fctp)
+fi
 
 MAKE_FX_ARGS=()
 if [[ "${MACE_EDGE_FORCE_MAKE_FX:-0}" == "1" ]]; then

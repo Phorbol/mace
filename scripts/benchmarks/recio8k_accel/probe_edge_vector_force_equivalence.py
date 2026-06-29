@@ -50,15 +50,28 @@ def parse_indices(value: str) -> list[int]:
     return indices
 
 
-def _cueq_config(enabled: bool, device: torch.device):
+def _cueq_config(
+    *,
+    enabled: bool,
+    conv_fusion: bool,
+    optimize_all: bool,
+    optimize_linear: bool,
+    optimize_channelwise: bool,
+    optimize_symmetric: bool,
+    optimize_fctp: bool,
+):
     if not enabled:
         return None
     return CuEquivarianceConfig(
         enabled=True,
         layout="ir_mul",
         group="O3_e3nn",
-        optimize_all=True,
-        conv_fusion=(device.type == "cuda"),
+        optimize_all=optimize_all,
+        optimize_linear=optimize_linear,
+        optimize_channelwise=optimize_channelwise,
+        optimize_symmetric=optimize_symmetric,
+        optimize_fctp=optimize_fctp,
+        conv_fusion=conv_fusion,
     )
 
 
@@ -72,6 +85,12 @@ def create_probe_model(
     num_interactions: int,
     correlation: int,
     enable_cueq: bool,
+    cueq_conv_fusion: bool,
+    cueq_optimize_all: bool,
+    cueq_optimize_linear: bool,
+    cueq_optimize_channelwise: bool,
+    cueq_optimize_symmetric: bool,
+    cueq_optimize_fctp: bool,
 ) -> torch.nn.Module:
     model_config = {
         "r_max": cutoff,
@@ -98,7 +117,15 @@ def create_probe_model(
         "radial_type": "bessel",
         "atomic_inter_scale": 1.0,
         "atomic_inter_shift": 0.0,
-        "cueq_config": _cueq_config(enable_cueq, device),
+        "cueq_config": _cueq_config(
+            enabled=enable_cueq,
+            conv_fusion=cueq_conv_fusion,
+            optimize_all=cueq_optimize_all,
+            optimize_linear=cueq_optimize_linear,
+            optimize_channelwise=cueq_optimize_channelwise,
+            optimize_symmetric=cueq_optimize_symmetric,
+            optimize_fctp=cueq_optimize_fctp,
+        ),
     }
     return modules.ScaleShiftMACE(**model_config).to(device)
 
@@ -510,6 +537,11 @@ def run_probe(args: argparse.Namespace) -> dict:
 
     indices = parse_indices(args.indices)
     batch, z_table = _load_batch(Path(args.xyz), indices, cutoff=args.cutoff, device=device)
+    cueq_conv_fusion = (
+        args.cueq_conv_fusion
+        if args.cueq_conv_fusion is not None
+        else device.type == "cuda"
+    )
     model = create_probe_model(
         z_table=z_table,
         cutoff=args.cutoff,
@@ -519,6 +551,12 @@ def run_probe(args: argparse.Namespace) -> dict:
         num_interactions=args.num_interactions,
         correlation=args.correlation,
         enable_cueq=args.enable_cueq,
+        cueq_conv_fusion=cueq_conv_fusion,
+        cueq_optimize_all=args.cueq_optimize_all,
+        cueq_optimize_linear=args.cueq_optimize_linear,
+        cueq_optimize_channelwise=args.cueq_optimize_channelwise,
+        cueq_optimize_symmetric=args.cueq_optimize_symmetric,
+        cueq_optimize_fctp=args.cueq_optimize_fctp,
     )
     position = _position_snapshot(model, batch)
     edge = _edge_vector_snapshot(model, batch)
@@ -557,6 +595,14 @@ def run_probe(args: argparse.Namespace) -> dict:
         "device": str(device),
         "device_name": torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu",
         "enable_cueq": args.enable_cueq,
+        "cueq_config": {
+            "conv_fusion": cueq_conv_fusion,
+            "optimize_all": args.cueq_optimize_all,
+            "optimize_linear": args.cueq_optimize_linear,
+            "optimize_channelwise": args.cueq_optimize_channelwise,
+            "optimize_symmetric": args.cueq_optimize_symmetric,
+            "optimize_fctp": args.cueq_optimize_fctp,
+        } if args.enable_cueq else None,
         "xyz": args.xyz,
         "indices": indices,
         "num_atoms": int(batch.num_nodes),
@@ -592,6 +638,52 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-interactions", type=int, default=1)
     parser.add_argument("--correlation", type=int, default=1)
     parser.add_argument("--enable-cueq", action="store_true")
+    parser.add_argument(
+        "--cueq-conv-fusion",
+        dest="cueq_conv_fusion",
+        action="store_true",
+        default=None,
+    )
+    parser.add_argument(
+        "--no-cueq-conv-fusion",
+        dest="cueq_conv_fusion",
+        action="store_false",
+    )
+    parser.add_argument(
+        "--cueq-optimize-all",
+        dest="cueq_optimize_all",
+        action="store_true",
+        default=True,
+    )
+    parser.add_argument(
+        "--no-cueq-optimize-all",
+        dest="cueq_optimize_all",
+        action="store_false",
+    )
+    parser.add_argument(
+        "--cueq-optimize-linear",
+        dest="cueq_optimize_linear",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--cueq-optimize-channelwise",
+        dest="cueq_optimize_channelwise",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--cueq-optimize-symmetric",
+        dest="cueq_optimize_symmetric",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--cueq-optimize-fctp",
+        dest="cueq_optimize_fctp",
+        action="store_true",
+        default=False,
+    )
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--atol", type=float, default=1.0e-5)
     parser.add_argument("--rtol", type=float, default=1.0e-4)
