@@ -264,6 +264,24 @@ def test_edge_force_compile_gate_rejects_disabled_config():
     assert result.node_count is None
 
 
+def test_edge_force_compile_gate_rejects_unsupported_outputs():
+    from mace.tools.training_compile import (
+        EdgeForceCompileConfig,
+        edge_force_compile_gate,
+    )
+
+    result = edge_force_compile_gate(
+        model=torch.nn.Linear(1, 1),
+        batch=object(),
+        config=EdgeForceCompileConfig(enabled=True),
+        compute_virials=True,
+    )
+
+    assert result.enabled is True
+    assert result.accepted is False
+    assert result.fallback_reason == "unsupported_outputs"
+
+
 def test_training_compile_allow_fallback_suppresses_dynamo_errors():
     import torch._dynamo.config as dynamo_config
 

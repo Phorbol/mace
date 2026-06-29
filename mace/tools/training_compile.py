@@ -35,12 +35,38 @@ class EdgeForceCompileGateResult:
     compile_kwargs: dict[str, Any] | None = None
 
 
-def edge_force_compile_gate(*, model, batch, config: EdgeForceCompileConfig):
+def edge_force_compile_gate(
+    *,
+    model,
+    batch,
+    config: EdgeForceCompileConfig,
+    compute_virials: bool = False,
+    compute_stress: bool = False,
+    compute_displacement: bool = False,
+    compute_hessian: bool = False,
+    compute_edge_forces: bool = False,
+    compute_atomic_stresses: bool = False,
+):
     if not config.enabled:
         return EdgeForceCompileGateResult(
             enabled=False,
             accepted=False,
             fallback_reason="disabled",
+        )
+    if any(
+        (
+            compute_virials,
+            compute_stress,
+            compute_displacement,
+            compute_hessian,
+            compute_edge_forces,
+            compute_atomic_stresses,
+        )
+    ):
+        return EdgeForceCompileGateResult(
+            enabled=True,
+            accepted=False,
+            fallback_reason="unsupported_outputs",
         )
     return EdgeForceCompileGateResult(
         enabled=True,
