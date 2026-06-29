@@ -130,6 +130,27 @@ class EdgeForceCachePolicyState:
         stats.compile_count += 1
         stats.compile_setup_seconds += float(setup_seconds)
 
+    def record_step_time(
+        self,
+        cache_key: tuple,
+        *,
+        compiled: bool,
+        seconds: float,
+        ema_decay: float = 0.9,
+    ) -> None:
+        stats = self.stats_for(cache_key)
+        value = float(seconds)
+        if compiled:
+            old = stats.compiled_step_seconds_ema
+            stats.compiled_step_seconds_ema = (
+                value if old is None else ema_decay * old + (1.0 - ema_decay) * value
+            )
+        else:
+            old = stats.eager_step_seconds_ema
+            stats.eager_step_seconds_ema = (
+                value if old is None else ema_decay * old + (1.0 - ema_decay) * value
+            )
+
     def disable(self, cache_key: tuple, reason: str) -> None:
         self.stats_for(cache_key).disabled_reason = reason
 
@@ -726,12 +747,27 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 cache_hit=cache_hit,
             )
             if not policy_decision.compile_allowed:
-                return self._eager_force_loss(
+                eager_start = time.perf_counter()
+                loss, metrics = self._eager_force_loss(
                     batch=batch,
                     loss_fn=loss_fn,
                     disabled_reason=policy_decision.reason or "policy_disabled",
                     policy_decision=policy_decision,
                 )
+                self.cache_policy_state.record_step_time(
+                    cache_key,
+                    compiled=False,
+                    seconds=time.perf_counter() - eager_start,
+                )
+                stats = self.cache_policy_state.stats_for(cache_key)
+                metrics.update(
+                    {
+                        "edge_force_compile_setup_seconds": stats.compile_setup_seconds,
+                        "edge_force_compiled_step_seconds_ema": stats.compiled_step_seconds_ema,
+                        "edge_force_eager_step_seconds_ema": stats.eager_step_seconds_ema,
+                    }
+                )
+                return loss, metrics
             cache_hit_gate_accepted = None
             if compiled is None:
                 setup_start = time.perf_counter()
@@ -794,6 +830,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                         f"edge-force compile cache-hit gate failed: {comparison}"
                     )
                 self.model.zero_grad(set_to_none=True)
+            compiled_start = time.perf_counter()
             vectors = vectors.detach().clone().requires_grad_(True)
             inputs = [data_dict[name] for name in compiled.input_names]
             energy, forces = compiled.executable(vectors, *inputs)
@@ -803,7 +840,20 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 energy=energy,
                 forces=forces,
             )
+            self.cache_policy_state.record_step_time(
+                cache_key,
+                compiled=True,
+                seconds=time.perf_counter() - compiled_start,
+            )
             stats = self.cache_policy_state.stats_for(cache_key)
+            if (
+                self.config.disable_negative_speedup
+                and stats.cache_hit_count >= self.config.negative_speedup_min_steps
+                and stats.compiled_step_seconds_ema is not None
+                and stats.eager_step_seconds_ema is not None
+                and stats.compiled_step_seconds_ema >= stats.eager_step_seconds_ema
+            ):
+                self.cache_policy_state.disable(cache_key, "negative_speedup")
             metrics = {
                 "edge_force_compile": True,
                 "edge_force_cache_hit": cache_hit,
@@ -813,6 +863,8 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 "edge_force_cache_compile_count": stats.compile_count,
                 "edge_force_cache_hit_count": stats.cache_hit_count,
                 "edge_force_compile_setup_seconds": stats.compile_setup_seconds,
+                "edge_force_compiled_step_seconds_ema": stats.compiled_step_seconds_ema,
+                "edge_force_eager_step_seconds_ema": stats.eager_step_seconds_ema,
             }
             if self.config.compile_graph:
                 metrics["_retain_graph_for_backward"] = True

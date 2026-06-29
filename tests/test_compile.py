@@ -498,6 +498,40 @@ def test_edge_force_cache_policy_repeat_only_allows_repeated_shape():
     assert second.seen_count == 2
 
 
+def test_edge_force_cache_policy_records_step_time_emas():
+    from mace.tools.training_compile import EdgeForceCachePolicyState
+
+    cache_key = ("shape", 4, 8)
+    state = EdgeForceCachePolicyState()
+
+    state.record_step_time(cache_key, compiled=False, seconds=10.0, ema_decay=0.5)
+    state.record_step_time(cache_key, compiled=False, seconds=6.0, ema_decay=0.5)
+    state.record_step_time(cache_key, compiled=True, seconds=4.0, ema_decay=0.5)
+    state.record_step_time(cache_key, compiled=True, seconds=2.0, ema_decay=0.5)
+
+    stats = state.stats_for(cache_key)
+    assert stats.eager_step_seconds_ema == 8.0
+    assert stats.compiled_step_seconds_ema == 3.0
+
+
+def test_edge_force_cache_policy_can_disable_negative_speedup_shape():
+    from mace.tools.training_compile import EdgeForceCachePolicyState
+
+    state = EdgeForceCachePolicyState()
+    cache_key = ("shape", 4, 8)
+    state.disable(cache_key, "negative_speedup")
+
+    decision = state.record_and_decide(
+        cache_key,
+        policy="shape",
+        min_repeats=1,
+    )
+
+    assert decision.compile_allowed is False
+    assert decision.disabled is True
+    assert decision.reason == "negative_speedup"
+
+
 def test_edge_force_compile_cache_hit_gate_result_records_failure():
     from mace.tools.training_compile import edge_force_cache_hit_gate_result
 
