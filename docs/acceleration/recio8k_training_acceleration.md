@@ -96,6 +96,17 @@ SAI job `580285` is the current authoritative step-level timing result. It ran o
 
 This is the first non-toy evidence that the force-backward compile route can accelerate a real RECIO training step while keeping HybridMuon, force-loss gradients, and most cueq acceleration active. It is still not an end-to-end training-speed or final-accuracy claim. The compile/setup cost is tens of seconds, the benchmark repeats one fixed batch, and real RECIO training sees changing graph sizes and dataloader behavior. The next acceptance gate must wire this path into the training loop with shape/cache policy, run real epochs with validation and guard logging, and show that setup cost is amortized without degrading the energy/force validation trend.
 
+A follow-up epoch-like multi-batch gate now quantifies that setup issue. The first attempt, job `580506`, failed after the Adam `position_eager` case when the same Python process moved into `edge_compile`, reproducing the same PyTorch saved-tensor/backward reuse failure seen in the single-step sweeps. The epoch profiler now uses isolated child processes for each optimizer/mode case, matching the fixed step profiler. Job `580633` then completed on `4V100PX` with RECIO `0:64` split into two real batches, two epochs, Adam and HybridMuon, `position_eager` and `edge_compile`, `hidden_channels=64`, `max_ell=2`, `num_interactions=2`, `correlation=3`, and cueq-minus-linear. All edge-compile gates were accepted.
+
+| Optimizer | Mode | Cache hits | Compile setups | Median step excluding setup | Median step including setup | Setup total |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Adam | `position_eager` | `0/4` | `0` | `148.57 ms` | `148.57 ms` | `0.00 s` |
+| Adam | `edge_compile` | `2/4` | `2` | `6.39 ms` | `6696.45 ms` | `49.38 s` |
+| HybridMuon | `position_eager` | `0/4` | `0` | `148.90 ms` | `148.90 ms` | `0.00 s` |
+| HybridMuon | `edge_compile` | `2/4` | `2` | `6.85 ms` | `1695.24 ms` | `28.70 s` |
+
+This is the first real multi-batch evidence that the compiled edge-force path can train over multiple RECIO batches with HybridMuon once process isolation is used. It also exposes the next blocker: the current compiled closure captures batch tensors and labels, so the safe cache key is batch identity rather than shape. That is enough to study repeated fixed batches, but not enough for shuffled epoch training. The next implementation step is to promote non-vector batch tensors to explicit FX graph inputs, then gate shape-based reuse with energy, force, loss, and parameter-gradient equivalence before wiring the path into `take_step`.
+
 ## Force-Loss Compile Design
 
 MACE force training must keep forces as `-dE/dR` and must let the force loss backpropagate through that gradient to model parameters. In code this is the `get_outputs(..., training=True)` path, where `torch.autograd.grad(..., create_graph=True)` is required. A compiled path that drops this second-order gradient would train a different objective, even if the forward forces look numerically close for one batch.
