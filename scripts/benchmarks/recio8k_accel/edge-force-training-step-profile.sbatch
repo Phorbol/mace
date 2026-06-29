@@ -14,6 +14,11 @@ export PYTHONPATH=/home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace:${P
 
 cueq_profile="${MACE_EDGE_STEP_CUEQ_PROFILE:-minus_linear}"
 cueq_args=()
+extra_args=()
+if [[ -n "${MACE_EDGE_STEP_EXTRA_ARGS:-}" ]]; then
+  # shellcheck disable=SC2206
+  extra_args=(${MACE_EDGE_STEP_EXTRA_ARGS})
+fi
 case "${cueq_profile}" in
   full)
     cueq_args+=(--enable-cueq --cueq-optimize-all)
@@ -51,4 +56,5 @@ python /home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace/scripts/benchm
   --repeats "${MACE_EDGE_STEP_REPEATS:-20}" \
   --edge-compile-mode "${MACE_EDGE_STEP_COMPILE_MODE:-default}" \
   --output "${MACE_EDGE_STEP_OUTPUT:-edge_force_training_steps_${SLURM_JOB_ID}.json}" \
-  "${cueq_args[@]}"
+  "${cueq_args[@]}" \
+  "${extra_args[@]}"
