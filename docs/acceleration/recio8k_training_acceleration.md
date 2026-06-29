@@ -155,6 +155,15 @@ A 20 epoch ordinary `ScaleShiftMACE` smoke pair was run on SAI `4V100` with cueq
 
 This is useful positive evidence for ordinary MACE: the new Muon route is active, finite, checkpoint/eval compatible, and the early validation trend improved versus Adam in this matched short smoke. It is not yet a speedup claim: these two jobs ran concurrently on the same node and HybridMuon was about `3.9%` slower by logged epoch intervals. The next gate should run a longer ordinary-MACE comparison, preferably one job at a time or under identical occupancy, before accepting the route as an accuracy/generalization improvement or tuning Muon lr/weight decay for speed.
 
+A cleaner 60 epoch serial gate then ran the same ordinary `ScaleShiftMACE` Adam case first, followed by HybridMuon with a Slurm `afterok` dependency, so the two jobs did not share the GPU concurrently. Both jobs used `4V100`, cueq, `mace_env`, `max_num_epochs=60`, `start_swa=45`, and `eval_interval=10`; the root was `/home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/ordinary-mace-hybrid-muon-radial-tp-serial60-20260629`.
+
+| Case | Slurm job | Exit state | Last logged valid MAE E | Last logged valid MAE F | Final table valid MAE E | Final table valid MAE F | Mean seconds/epoch | Max FB memory |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `ordinary_mace_adam_cueq` | `577382` | `COMPLETED`, `0:0` | `27.34 meV/atom` | `241.39 meV/A` | `27.3 meV/atom` | `241.4 meV/A` | `6.301 s` | `4162 MB` |
+| `ordinary_mace_hybrid_muon_cueq` | `577387` | `COMPLETED`, `0:0` | `24.24 meV/atom` | `228.77 meV/A` | `24.2 meV/atom` | `228.8 meV/A` | `6.535 s` | `4160 MB` |
+
+The serial gate strengthens the optimizer conclusion: the radial-TP-MLP Muon route remains active and stable for ordinary MACE, improves the 60 epoch validation trend versus Adam, and does not increase peak GPU memory. It is still not a throughput win on this V100/PyTorch stack: logged epoch intervals are about `3.7%` slower than Adam. The rational next optimizer step is not to broaden routing into equivariant/contraction tensors; it is to tune Muon hyperparameters or make the Muon update cheaper while preserving the current conservative route and the force/energy validation gains.
+
 ## GPU D3 Backend Status
 
 `mace_mp(..., dispersion=True, dispersion_backend="nvalchemi")` now routes D3 dispersion through an optional `NvalchemiDFTD3Calculator` ASE adapter. The adapter keeps the dispersion correction outside the MACE neural model and sums it at the calculator level, matching the existing `torch_dftd` architecture and preserving MACE model semantics.
