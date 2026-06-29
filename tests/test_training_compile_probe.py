@@ -55,3 +55,58 @@ def test_get_probe_modes_rejects_unknown_mode():
 
     with pytest.raises(ValueError, match="unknown probe mode"):
         probe.get_probe_modes(["missing"])
+
+
+def test_run_probe_includes_force_loss_equivalence_when_enabled(monkeypatch):
+    import argparse
+
+    probe = load_probe()
+
+    class FakeBatch:
+        num_nodes = 3
+
+    class FakeZTable:
+        zs = [1]
+
+    monkeypatch.setattr(
+        probe,
+        "_load_batch",
+        lambda xyz, indices, cutoff, device: (FakeBatch(), FakeZTable()),
+    )
+    monkeypatch.setattr(
+        probe,
+        "_create_model",
+        lambda **kwargs: probe.torch.nn.Linear(1, 1),
+    )
+    monkeypatch.setattr(
+        probe,
+        "compare_force_loss_equivalence",
+        lambda *args, **kwargs: {"ok": True, "failed_checks": []},
+    )
+
+    payload = probe.run_probe(
+        argparse.Namespace(
+            device="cpu",
+            dtype="float32",
+            seed=123,
+            indices="0",
+            xyz="train.xyz",
+            cutoff=5.0,
+            hidden_channels=8,
+            max_ell=1,
+            num_interactions=1,
+            correlation=1,
+            enable_cueq=False,
+            modes=[],
+            compile_mode="default",
+            compile_fullgraph=False,
+            allow_fallback=True,
+            warmup=0,
+            repeats=1,
+            equivalence_gate=True,
+            equivalence_atol=1.0e-6,
+            equivalence_rtol=1.0e-5,
+        )
+    )
+
+    assert payload["force_loss_equivalence"] == {"ok": True, "failed_checks": []}

@@ -20,6 +20,11 @@ if [[ "${MACE_PROBE_ENABLE_CUEQ:-1}" == "1" ]]; then
   CUEQ_ARGS+=(--enable-cueq)
 fi
 
+EQUIVALENCE_ARGS=()
+if [[ "${MACE_PROBE_EQUIVALENCE_GATE:-1}" == "1" ]]; then
+  EQUIVALENCE_ARGS+=(--equivalence-gate)
+fi
+
 python /home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace/scripts/benchmarks/recio8k_accel/probe_training_compile.py \
   --xyz "${RECIO_XYZ:-/home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/train.xyz}" \
   --indices "${RECIO_INDICES:-0}" \
@@ -31,4 +36,5 @@ python /home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace/scripts/benchm
   --num-interactions "${MACE_PROBE_NUM_INTERACTIONS:-2}" \
   --correlation "${MACE_PROBE_CORRELATION:-2}" \
   --output "training_compile_probe_${SLURM_JOB_ID}.json" \
-  "${CUEQ_ARGS[@]}"
+  "${CUEQ_ARGS[@]}" \
+  "${EQUIVALENCE_ARGS[@]}"

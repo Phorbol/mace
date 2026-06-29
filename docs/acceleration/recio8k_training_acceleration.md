@@ -89,7 +89,7 @@ cd /home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/compile-probe
 sbatch /home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace/scripts/benchmarks/recio8k_accel/training-compile-probe.sbatch
 ```
 
-The sbatch writes `training_compile_probe_${SLURM_JOB_ID}.json` and `nvdmon_job-${SLURM_JOB_ID}.log`. It defaults to RECIO `train.xyz` index `0`, `mace_env`, `4V100`, `improper-gpu`, and cueq enabled; override with environment variables such as `RECIO_INDICES=0,4,8`, `MACE_PROBE_REPEATS=10`, or `MACE_PROBE_ENABLE_CUEQ=0`.
+The sbatch writes `training_compile_probe_${SLURM_JOB_ID}.json` and `nvdmon_job-${SLURM_JOB_ID}.log`. It defaults to RECIO `train.xyz` index `0`, `mace_env`, `4V100`, `improper-gpu`, cueq enabled, and the force-loss equivalence gate enabled; override with environment variables such as `RECIO_INDICES=0,4,8`, `MACE_PROBE_REPEATS=10`, `MACE_PROBE_ENABLE_CUEQ=0`, or `MACE_PROBE_EQUIVALENCE_GATE=0`.
 
 Initial SAI probe results:
 
@@ -103,6 +103,8 @@ Initial SAI probe results:
 | `576782` | `0,4,8` | 22 | `compile_energy_only` | no | `3.215e-03` | `22.8 MB` |
 
 Both probe jobs completed with Slurm `COMPLETED` / `ExitCode 0:0` on `4V100` with cueq enabled. The force-loss compile mode logged the expected AOTAutograd double-backward fallback and then timed the eager fallback path; it must not be interpreted as compiled force-loss acceleration. The energy-only mode kept compile enabled, which confirms the current compile boundary works when training does not need conservative-force second derivatives.
+
+A local CPU smoke of `--equivalence-gate` on RECIO index `0` returned `ok: true` with zero energy, force, loss, and selected parameter-gradient differences for eager-vs-eager candidates. This is now the required precondition for future compiled subgraph candidates: any candidate must pass the same force-loss equivalence gate before it can be wired into training.
 
 ## Training Infrastructure Reference
 

@@ -220,6 +220,99 @@ def _run_with_training_fallback(model: torch.nn.Module, batch, mode: ProbeMode) 
         return _run_backward_once(model, batch, mode)
 
 
+def _max_abs_diff(left: torch.Tensor, right: torch.Tensor) -> float:
+    if left.shape != right.shape:
+        return float("inf")
+    return float((left.detach() - right.detach()).abs().max().cpu())
+
+
+def _within_tolerance(
+    left: torch.Tensor,
+    right: torch.Tensor,
+    *,
+    atol: float,
+    rtol: float,
+) -> bool:
+    if left.shape != right.shape:
+        return False
+    return bool(torch.allclose(left.detach(), right.detach(), atol=atol, rtol=rtol))
+
+
+def _force_loss_snapshot(model: torch.nn.Module, batch) -> dict:
+    model.zero_grad(set_to_none=True)
+    output = model(
+        _batch_dict(batch),
+        training=True,
+        compute_force=True,
+        compute_virials=False,
+        compute_stress=False,
+    )
+    loss = _loss(output, batch, "energy_forces")
+    loss.backward()
+    grads = {
+        name: None if param.grad is None else param.grad.detach().clone()
+        for name, param in model.named_parameters()
+        if param.requires_grad
+    }
+    return {
+        "energy": output["energy"].detach().clone(),
+        "forces": output["forces"].detach().clone(),
+        "loss": loss.detach().clone(),
+        "grads": grads,
+    }
+
+
+def compare_force_loss_equivalence(
+    reference_model: torch.nn.Module,
+    candidate_model: torch.nn.Module,
+    batch,
+    *,
+    atol: float = 1.0e-6,
+    rtol: float = 1.0e-5,
+) -> dict:
+    reference = _force_loss_snapshot(reference_model, batch)
+    candidate = _force_loss_snapshot(candidate_model, batch)
+
+    failed_checks: list[str] = []
+    if not _within_tolerance(reference["energy"], candidate["energy"], atol=atol, rtol=rtol):
+        failed_checks.append("energy")
+    if not _within_tolerance(reference["forces"], candidate["forces"], atol=atol, rtol=rtol):
+        failed_checks.append("forces")
+    if not _within_tolerance(reference["loss"], candidate["loss"], atol=atol, rtol=rtol):
+        failed_checks.append("loss")
+
+    grad_diffs: dict[str, float] = {}
+    reference_grad_names = set(reference["grads"])
+    candidate_grad_names = set(candidate["grads"])
+    for missing_name in sorted(reference_grad_names ^ candidate_grad_names):
+        grad_diffs[missing_name] = float("inf")
+        failed_checks.append(f"grad:{missing_name}")
+    for name in sorted(reference_grad_names & candidate_grad_names):
+        ref_grad = reference["grads"][name]
+        cand_grad = candidate["grads"][name]
+        if ref_grad is None and cand_grad is None:
+            grad_diffs[name] = 0.0
+            continue
+        if ref_grad is None or cand_grad is None:
+            grad_diffs[name] = float("inf")
+            failed_checks.append(f"grad:{name}")
+            continue
+        grad_diffs[name] = _max_abs_diff(ref_grad, cand_grad)
+        if not _within_tolerance(ref_grad, cand_grad, atol=atol, rtol=rtol):
+            failed_checks.append(f"grad:{name}")
+
+    return {
+        "ok": not failed_checks,
+        "atol": atol,
+        "rtol": rtol,
+        "energy_max_abs_diff": _max_abs_diff(reference["energy"], candidate["energy"]),
+        "forces_max_abs_diff": _max_abs_diff(reference["forces"], candidate["forces"]),
+        "loss_abs_diff": _max_abs_diff(reference["loss"], candidate["loss"]),
+        "param_grad_max_abs_diff": grad_diffs,
+        "failed_checks": failed_checks,
+    }
+
+
 def run_mode(
     *,
     base_model: torch.nn.Module,
@@ -313,7 +406,7 @@ def run_probe(args: argparse.Namespace) -> dict:
         )
         for mode in modes
     ]
-    return {
+    payload = {
         "xyz": str(args.xyz),
         "indices": indices,
         "num_graphs": len(indices),
@@ -325,6 +418,15 @@ def run_probe(args: argparse.Namespace) -> dict:
         "torch_version": torch.__version__,
         "results": results,
     }
+    if getattr(args, "equivalence_gate", False):
+        payload["force_loss_equivalence"] = compare_force_loss_equivalence(
+            base_model,
+            copy.deepcopy(base_model),
+            batch,
+            atol=args.equivalence_atol,
+            rtol=args.equivalence_rtol,
+        )
+    return payload
 
 
 def main() -> None:
@@ -346,6 +448,9 @@ def main() -> None:
     parser.add_argument("--allow-fallback", action="store_true", default=True)
     parser.add_argument("--no-allow-fallback", dest="allow_fallback", action="store_false")
     parser.add_argument("--enable-cueq", action="store_true")
+    parser.add_argument("--equivalence-gate", action="store_true")
+    parser.add_argument("--equivalence-atol", type=float, default=1.0e-6)
+    parser.add_argument("--equivalence-rtol", type=float, default=1.0e-5)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--seed", type=int, default=123)
