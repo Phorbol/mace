@@ -228,6 +228,42 @@ def test_training_compile_helper_noop_cpu():
     assert compiled is model
 
 
+def test_edge_force_compile_config_defaults_to_disabled():
+    from mace.tools.training_compile import EdgeForceCompileConfig
+
+    config = EdgeForceCompileConfig()
+
+    assert config.enabled is False
+    assert config.tracing_mode == "real"
+    assert config.strip_detach is True
+    assert config.compile_graph is True
+    assert config.compile_mode == "default"
+    assert config.compile_dynamic is True
+    assert config.allow_fallback is True
+    assert config.atol == 1.0e-5
+    assert config.rtol == 1.0e-4
+
+
+def test_edge_force_compile_gate_rejects_disabled_config():
+    from mace.tools.training_compile import (
+        EdgeForceCompileConfig,
+        edge_force_compile_gate,
+    )
+
+    result = edge_force_compile_gate(
+        model=torch.nn.Linear(1, 1),
+        batch=object(),
+        config=EdgeForceCompileConfig(enabled=False),
+    )
+
+    assert result.enabled is False
+    assert result.accepted is False
+    assert result.fallback_reason == "disabled"
+    assert result.detach_nodes_before is None
+    assert result.detach_nodes_after is None
+    assert result.node_count is None
+
+
 def test_training_compile_allow_fallback_suppresses_dynamo_errors():
     import torch._dynamo.config as dynamo_config
 

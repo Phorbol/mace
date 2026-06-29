@@ -1,11 +1,52 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
+from typing import Any
 
 import torch
 
 from mace.modules.utils import get_outputs, prepare_graph
 from mace.tools import compile as mace_compile
+
+
+@dataclasses.dataclass(frozen=True)
+class EdgeForceCompileConfig:
+    enabled: bool = False
+    tracing_mode: str = "real"
+    strip_detach: bool = True
+    compile_graph: bool = True
+    compile_mode: str = "default"
+    compile_dynamic: bool = True
+    allow_fallback: bool = True
+    atol: float = 1.0e-5
+    rtol: float = 1.0e-4
+
+
+@dataclasses.dataclass(frozen=True)
+class EdgeForceCompileGateResult:
+    enabled: bool
+    accepted: bool
+    fallback_reason: str | None
+    detach_nodes_before: int | None = None
+    detach_nodes_after: int | None = None
+    node_count: int | None = None
+    comparison: dict[str, Any] | None = None
+    compile_kwargs: dict[str, Any] | None = None
+
+
+def edge_force_compile_gate(*, model, batch, config: EdgeForceCompileConfig):
+    if not config.enabled:
+        return EdgeForceCompileGateResult(
+            enabled=False,
+            accepted=False,
+            fallback_reason="disabled",
+        )
+    return EdgeForceCompileGateResult(
+        enabled=True,
+        accepted=False,
+        fallback_reason="gate_not_run",
+    )
 
 
 class RuntimeFallbackCompiledModule(torch.nn.Module):
