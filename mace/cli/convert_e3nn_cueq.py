@@ -190,6 +190,12 @@ def run(
     device="cpu",
     return_model=True,
     layout: str = "ir_mul",
+    optimize_all: bool = True,
+    optimize_linear: bool = False,
+    optimize_channelwise: bool = False,
+    optimize_symmetric: bool = False,
+    optimize_fctp: bool = False,
+    conv_fusion: bool | None = None,
 ):
     # Setup logging
 
@@ -211,13 +217,20 @@ def run(
     use_reduced_cg = config.get("use_reduced_cg", True)
     keep_last_layer_irreps = config.get("keep_last_layer_irreps", False)
 
+    if conv_fusion is None:
+        conv_fusion = device == "cuda"
+
     # Add cuequivariance config
     config["cueq_config"] = CuEquivarianceConfig(
         enabled=True,
         layout=layout,
         group="O3_e3nn",
-        optimize_all=True,
-        conv_fusion=(device == "cuda"),
+        optimize_all=optimize_all,
+        optimize_linear=optimize_linear,
+        optimize_channelwise=optimize_channelwise,
+        optimize_symmetric=optimize_symmetric,
+        optimize_fctp=optimize_fctp,
+        conv_fusion=conv_fusion,
     )
 
     # Create new model with cuequivariance config

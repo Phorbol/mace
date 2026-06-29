@@ -1189,6 +1189,56 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         type=str2bool,
         default=False,
     )
+    parser.add_argument(
+        "--cueq_layout",
+        "--cueq-layout",
+        help="cuequivariance irreps layout used during e3nn-to-cueq conversion",
+        type=str,
+        choices=["mul_ir", "ir_mul"],
+        default="ir_mul",
+    )
+    parser.add_argument(
+        "--cueq_optimize_all",
+        "--cueq-optimize-all",
+        help="Enable all cuequivariance optimizations",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
+        "--cueq_optimize_linear",
+        "--cueq-optimize-linear",
+        help="Enable cuequivariance Linear replacement",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--cueq_optimize_channelwise",
+        "--cueq-optimize-channelwise",
+        help="Enable cuequivariance channelwise tensor products",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--cueq_optimize_symmetric",
+        "--cueq-optimize-symmetric",
+        help="Enable cuequivariance symmetric contractions",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--cueq_optimize_fctp",
+        "--cueq-optimize-fctp",
+        help="Enable cuequivariance fully connected tensor products",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--cueq_conv_fusion",
+        "--cueq-conv-fusion",
+        help="Enable cuequivariance convolution fusion; default enables it only on CUDA",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+    )
     # option for openequivariance acceleration
     parser.add_argument(
         "--enable_oeq",

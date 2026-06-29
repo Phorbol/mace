@@ -819,7 +819,29 @@ def run(args) -> None:
             "MACELES",
             "PolarMACE",
         ]
-        model = run_e3nn_to_cueq(deepcopy(model), device=device)
+        logging.info(
+            "CUEQ config: layout=%s optimize_all=%s optimize_linear=%s "
+            "optimize_channelwise=%s optimize_symmetric=%s optimize_fctp=%s "
+            "conv_fusion=%s",
+            args.cueq_layout,
+            args.cueq_optimize_all,
+            args.cueq_optimize_linear,
+            args.cueq_optimize_channelwise,
+            args.cueq_optimize_symmetric,
+            args.cueq_optimize_fctp,
+            args.cueq_conv_fusion,
+        )
+        model = run_e3nn_to_cueq(
+            deepcopy(model),
+            device=device,
+            layout=args.cueq_layout,
+            optimize_all=args.cueq_optimize_all,
+            optimize_linear=args.cueq_optimize_linear,
+            optimize_channelwise=args.cueq_optimize_channelwise,
+            optimize_symmetric=args.cueq_optimize_symmetric,
+            optimize_fctp=args.cueq_optimize_fctp,
+            conv_fusion=args.cueq_conv_fusion,
+        )
     if args.enable_oeq:
         logging.info("Converting model to OEQ for accelerated training")
         assert model.__class__.__name__ in [

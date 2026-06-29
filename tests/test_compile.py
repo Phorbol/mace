@@ -595,6 +595,86 @@ def test_arg_parser_accepts_edge_force_compile_flags():
     assert args.edge_force_compile_allow_fallback is False
 
 
+def test_arg_parser_accepts_compile_compatible_cueq_flags():
+    from mace.tools import build_default_arg_parser
+
+    args = build_default_arg_parser().parse_args(
+        [
+            "--name=test",
+            "--enable_cueq=True",
+            "--cueq_layout=mul_ir",
+            "--no-cueq-optimize-all",
+            "--no-cueq-optimize-linear",
+            "--cueq-optimize-channelwise",
+            "--cueq-optimize-symmetric",
+            "--cueq-optimize-fctp",
+            "--no-cueq-conv-fusion",
+        ]
+    )
+
+    assert args.enable_cueq is True
+    assert args.cueq_layout == "mul_ir"
+    assert args.cueq_optimize_all is False
+    assert args.cueq_optimize_linear is False
+    assert args.cueq_optimize_channelwise is True
+    assert args.cueq_optimize_symmetric is True
+    assert args.cueq_optimize_fctp is True
+    assert args.cueq_conv_fusion is False
+
+
+def test_e3nn_to_cueq_run_uses_granular_config(monkeypatch):
+    import torch
+
+    from mace.cli import convert_e3nn_cueq
+
+    class HiddenIrreps:
+        def slices(self):
+            return [slice(0, 1), slice(1, 2)]
+
+    class DummyModel(torch.nn.Module):
+        def __init__(self, **config):
+            super().__init__()
+            self.config = config
+            self.weight = torch.nn.Parameter(torch.ones(()))
+
+    def fake_extract_config(_model):
+        return {
+            "hidden_irreps": HiddenIrreps(),
+            "correlation": 3,
+            "num_interactions": 1,
+            "use_reduced_cg": True,
+            "keep_last_layer_irreps": False,
+        }
+
+    monkeypatch.setattr(
+        convert_e3nn_cueq, "extract_config_mace_model", fake_extract_config
+    )
+    monkeypatch.setattr(
+        convert_e3nn_cueq, "transfer_weights", lambda *args, **kwargs: None
+    )
+
+    target = convert_e3nn_cueq.run(
+        DummyModel(),
+        device="cpu",
+        layout="mul_ir",
+        optimize_all=False,
+        optimize_linear=False,
+        optimize_channelwise=True,
+        optimize_symmetric=True,
+        optimize_fctp=True,
+        conv_fusion=False,
+    )
+
+    cueq_config = target.config["cueq_config"]
+    assert cueq_config.layout_str == "mul_ir"
+    assert cueq_config.optimize_all is False
+    assert cueq_config.optimize_linear is False
+    assert cueq_config.optimize_channelwise is True
+    assert cueq_config.optimize_symmetric is True
+    assert cueq_config.optimize_fctp is True
+    assert cueq_config.conv_fusion is False
+
+
 def test_training_compile_allow_fallback_suppresses_dynamo_errors():
     import torch._dynamo.config as dynamo_config
 
