@@ -121,6 +121,10 @@ The local TACE reference checkout is `/home/sjtu-caoxiaoming/gengjianrui/trae-re
 
 These references suggest a two-track roadmap: keep small acceleration knobs compatible with existing MACE scripts now, and separately design a training-infra refactor around data caching, typed configs, callback isolation, and distributed strategy.
 
+The first low-risk data-movement knob is `--non_blocking_transfer`, which forwards `non_blocking=True` to every batch `.to(device)` call in training, validation, and LBFGS closures. It is opt-in and does not change MACE energies, conservative forces, losses, optimizers, or cueq execution. It can only help when host tensors come from pinned memory, so use it together with the existing default `--pin_memory True`.
+
+A 1 epoch RECIO/8k CUDA/cueq entry smoke with `--non_blocking_transfer True` completed as SAI job `578509` on `4V100` with Slurm `COMPLETED` / `ExitCode 0:0` in `00:02:20`. The run directory is `/home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/nonblocking-transfer-smoke-20260629/ordinary_adam_cueq_nonblocking`; it reached epoch `0`, wrote the final train/valid error table, and ended with `Done`. This validates the training-entry wiring, not a throughput claim; speed acceptance still needs a paired RECIO timing run because a one-epoch smoke is dominated by startup, preprocessing, and final export.
+
 ## Full RECIO/8k Validation Runs
 
 Full 800 epoch single-GPU validation jobs were submitted on SAI `4V100` with the same random seed and split. The later `576509` run is a shorter 200 epoch stability gate for the corrected HybridMuon routing, not an equal-budget accuracy comparison against the 800 epoch baseline:

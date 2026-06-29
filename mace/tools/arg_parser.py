@@ -521,6 +521,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         type=str2bool,
     )
     parser.add_argument(
+        "--non_blocking_transfer",
+        help="Use non-blocking host-to-device batch transfers when supported",
+        default=False,
+        type=str2bool,
+    )
+    parser.add_argument(
         "--atomic_numbers",
         help="List of atomic numbers",
         type=str,

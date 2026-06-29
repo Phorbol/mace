@@ -986,6 +986,7 @@ def run(args) -> None:
         rank=rank,
         precision_config=precision_config,
         training_model=training_model,
+        non_blocking_transfer=args.non_blocking_transfer,
     )
 
     logging.info("")

@@ -175,6 +175,7 @@ def train(
     rank: Optional[int] = 0,
     precision_config: Optional[TrainingPrecisionConfig] = None,
     training_model: Optional[torch.nn.Module] = None,
+    non_blocking_transfer: bool = False,
 ):
     lowest_loss = np.inf
     valid_loss = np.inf
@@ -201,6 +202,7 @@ def train(
             data_loader=valid_loader,
             output_args=output_args,
             device=device,
+            non_blocking_transfer=non_blocking_transfer,
         )
         valid_err_log(
             valid_loss_head, eval_metrics, logger, log_errors, None, valid_loader_name
@@ -248,6 +250,7 @@ def train(
             rank=rank,
             precision_config=precision_config,
             training_model=training_model,
+            non_blocking_transfer=non_blocking_transfer,
         )
         if distributed:
             torch.distributed.barrier()
@@ -271,6 +274,7 @@ def train(
                         data_loader=valid_loader,
                         output_args=output_args,
                         device=device,
+                        non_blocking_transfer=non_blocking_transfer,
                     )
                     if rank == 0:
                         valid_err_log(
@@ -368,6 +372,7 @@ def train_one_epoch(
     rank: Optional[int] = 0,
     precision_config: Optional[TrainingPrecisionConfig] = None,
     training_model: Optional[torch.nn.Module] = None,
+    non_blocking_transfer: bool = False,
 ) -> None:
     if distributed_model is not None:
         model_to_train = distributed_model
@@ -386,6 +391,7 @@ def train_one_epoch(
             device=device,
             distributed=distributed,
             rank=rank,
+            non_blocking_transfer=non_blocking_transfer,
         )
         opt_metrics["mode"] = "opt"
         opt_metrics["epoch"] = epoch
@@ -403,6 +409,7 @@ def train_one_epoch(
                 max_grad_norm=max_grad_norm,
                 device=device,
                 precision_config=precision_config,
+                non_blocking_transfer=non_blocking_transfer,
             )
             opt_metrics["mode"] = "opt"
             opt_metrics["epoch"] = epoch
@@ -420,9 +427,10 @@ def take_step(
     max_grad_norm: Optional[float],
     device: torch.device,
     precision_config: Optional[TrainingPrecisionConfig] = None,
+    non_blocking_transfer: bool = False,
 ) -> Tuple[float, Dict[str, Any]]:
     start_time = time.time()
-    batch = batch.to(device)
+    batch = batch.to(device, non_blocking=non_blocking_transfer)
     batch_dict = batch.to_dict()
     if precision_config is None:
         precision_config = TrainingPrecisionConfig(enabled=False, dtype=None)
@@ -475,6 +483,7 @@ def take_step_lbfgs(
     device: torch.device,
     distributed: bool,
     rank: int,
+    non_blocking_transfer: bool = False,
 ) -> Tuple[float, Dict[str, Any]]:
     start_time = time.time()
     logging.debug(
@@ -508,7 +517,7 @@ def take_step_lbfgs(
 
         # Process each batch and then collect the results we pass to the optimizer
         for batch in data_loader:
-            batch = batch.to(device)
+            batch = batch.to(device, non_blocking=non_blocking_transfer)
             batch_dict = batch.to_dict()
             output = model(
                 batch_dict,
@@ -582,6 +591,7 @@ def evaluate(
     data_loader: DataLoader,
     output_args: Dict[str, bool],
     device: torch.device,
+    non_blocking_transfer: bool = False,
 ) -> Tuple[float, Dict[str, Any]]:
 
     metrics = MACELoss(loss_fn=loss_fn).to(device)
@@ -590,7 +600,7 @@ def evaluate(
 
     with preserve_grad_state(model):
         for batch in data_loader:
-            batch = batch.to(device)
+            batch = batch.to(device, non_blocking=non_blocking_transfer)
             batch_dict = batch.to_dict()
             output = model(
                 batch_dict,

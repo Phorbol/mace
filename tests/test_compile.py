@@ -255,8 +255,8 @@ class _MiniBatch:
     def __init__(self):
         self.x = torch.ones(1)
 
-    def to(self, device):
-        self.x = self.x.to(device)
+    def to(self, device, **kwargs):
+        self.x = self.x.to(device, **kwargs)
         return self
 
     def to_dict(self):
@@ -458,3 +458,82 @@ def test_take_step_retries_eager_after_compile_backward_failure():
     assert model.forward_calls == 2
     assert metrics["loss"] == 1.0
     assert loss.requires_grad is True
+
+
+class _TransferRecordingBatch:
+    def __init__(self):
+        self.to_calls = []
+
+    def to(self, device, **kwargs):
+        self.to_calls.append((device, kwargs))
+        return self
+
+    def to_dict(self):
+        return {"value": torch.tensor([1.0])}
+
+
+class _TransferModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.tensor([1.0]))
+
+    def forward(self, batch_dict, **kwargs):
+        return {"value": self.weight * batch_dict["value"]}
+
+
+def test_take_step_uses_non_blocking_batch_transfer_when_requested():
+    from mace.tools.train import take_step
+
+    batch = _TransferRecordingBatch()
+    model = _TransferModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+
+    take_step(
+        model=model,
+        loss_fn=_MiniLoss(),
+        batch=batch,
+        optimizer=optimizer,
+        ema=None,
+        output_args={"forces": False, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+        non_blocking_transfer=True,
+    )
+
+    assert batch.to_calls == [(torch.device("cpu"), {"non_blocking": True})]
+
+
+def test_train_one_epoch_passes_non_blocking_transfer_to_take_step(monkeypatch):
+    import importlib
+
+    train_module = importlib.import_module("mace.tools.train")
+
+    seen = {}
+
+    def fake_take_step(**kwargs):
+        seen["non_blocking_transfer"] = kwargs["non_blocking_transfer"]
+        return torch.tensor(0.0), {"loss": 0.0}
+
+    class FakeLogger:
+        def log(self, metrics):
+            seen["logged"] = metrics
+
+    monkeypatch.setattr(train_module, "take_step", fake_take_step)
+
+    train_module.train_one_epoch(
+        model=torch.nn.Linear(1, 1),
+        loss_fn=_MiniLoss(),
+        data_loader=[object()],
+        optimizer=torch.optim.SGD([torch.nn.Parameter(torch.tensor([1.0]))], lr=0.1),
+        epoch=3,
+        output_args={"forces": False, "virials": False, "stress": False},
+        max_grad_norm=None,
+        ema=None,
+        logger=FakeLogger(),
+        device=torch.device("cpu"),
+        distributed=False,
+        non_blocking_transfer=True,
+    )
+
+    assert seen["non_blocking_transfer"] is True
+    assert seen["logged"]["epoch"] == 3
