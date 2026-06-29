@@ -55,8 +55,8 @@ python -m mace.cli.run_train \
   --edge_force_compile_cache_policy="${EDGE_FORCE_CACHE_POLICY:-repeat_only}" \
   --edge_force_compile_min_repeats="${EDGE_FORCE_MIN_REPEATS:-2}" \
   --edge_force_compile_mode=default \
-  --edge_force_compile_dynamic=True \
-  --edge_force_compile_graph=True \
+  --edge_force_compile_dynamic \
+  --edge_force_compile_graph \
   --no-edge_force_compile_allow_fallback \
   --work_dir="${RUN_ROOT}" \
   --log_dir="${RUN_ROOT}/logs" \
