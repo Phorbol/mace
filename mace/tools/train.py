@@ -544,7 +544,13 @@ def take_step(
             if skip_result.skip:
                 return loss, skip_result, grad_norm, compile_metrics
 
-        loss.backward()
+        retain_graph_for_backward = False
+        if compile_metrics is not None:
+            retain_graph_for_backward = bool(
+                compile_metrics.pop("_retain_graph_for_backward", False)
+            )
+
+        loss.backward(retain_graph=retain_graph_for_backward)
         if max_grad_norm is not None:
             grad_norm = stable_clip_grad_norm_(
                 model.parameters(),

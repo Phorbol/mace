@@ -11,6 +11,7 @@ from mace.modules.utils import get_edge_vectors_and_lengths, get_outputs, prepar
 from mace.tools import compile as mace_compile
 from mace.tools.force_compile import (
     compile_fx_graph_module,
+    disable_functorch_donated_buffer,
     edge_gradient_to_atomic_forces,
     trace_force_closure,
 )
@@ -418,6 +419,9 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         self.config = config
         self.cache: dict[tuple, _CompiledEdgeForceStep] = {}
         self.disabled = False
+        self.functorch_donated_buffer_disabled = (
+            disable_functorch_donated_buffer() if config.compile_graph else False
+        )
 
     def disable_compile_fallback(self, exc: Exception) -> bool:
         if not self.config.allow_fallback:
@@ -512,9 +516,22 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         )
         if not gate_result.accepted:
             raise RuntimeError(f"edge-force compile gate failed: {comparison}")
+
+        training_executable = executable
+        if self.config.compile_graph:
+            # The gate runs a backward pass through the compiled callable.  Some
+            # Inductor/AOTAutograd graphs keep saved-tensor state on the callable,
+            # so cache a fresh executable for the real optimizer step.
+            training_executable, _ = compile_fx_graph_module(
+                trace_result.graph_module,
+                compile_graph=self.config.compile_graph,
+                compile_mode=self.config.compile_mode,
+                compile_dynamic=self.config.compile_dynamic,
+            )
+
         self.model.zero_grad(set_to_none=True)
         return _CompiledEdgeForceStep(
-            executable=executable,
+            executable=training_executable,
             gate_result=gate_result,
             cache_key=cache_key,
             input_names=input_names,
@@ -590,6 +607,8 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 "edge_force_cache_hit": cache_hit,
                 "edge_force_gate_accepted": compiled.gate_result.accepted,
             }
+            if self.config.compile_graph:
+                metrics["_retain_graph_for_backward"] = True
             if cache_hit_gate_accepted is not None:
                 metrics["edge_force_cache_hit_gate_accepted"] = cache_hit_gate_accepted
             return loss, metrics

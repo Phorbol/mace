@@ -102,4 +102,28 @@ def compile_fx_graph_module(
     }
     if compile_mode != "default":
         compile_kwargs["mode"] = compile_mode
-    return torch.compile(graph_module, **compile_kwargs), compile_kwargs
+
+    try:
+        import torch._functorch.config as functorch_config
+    except (ImportError, AttributeError):
+        return torch.compile(graph_module, **compile_kwargs), compile_kwargs
+
+    previous_donated_buffer = functorch_config.donated_buffer
+    functorch_config.donated_buffer = False
+    try:
+        executable = torch.compile(graph_module, **compile_kwargs)
+    finally:
+        functorch_config.donated_buffer = previous_donated_buffer
+    return executable, compile_kwargs
+
+
+def disable_functorch_donated_buffer() -> bool:
+    try:
+        import torch._functorch.config as functorch_config
+    except (ImportError, AttributeError):
+        return False
+
+    if not functorch_config.donated_buffer:
+        return False
+    functorch_config.donated_buffer = False
+    return True

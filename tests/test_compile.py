@@ -288,6 +288,37 @@ def test_training_compile_helper_noop_cpu():
     assert compiled is model
 
 
+def test_compile_fx_graph_module_disables_donated_buffer_during_compile(monkeypatch):
+    import torch._functorch.config as functorch_config
+
+    from mace.tools.force_compile import compile_fx_graph_module
+
+    graph_module = torch.fx.symbolic_trace(torch.nn.Identity())
+    previous = functorch_config.donated_buffer
+    compile_seen_donated_buffer = []
+
+    def fake_compile(module, **kwargs):
+        compile_seen_donated_buffer.append(functorch_config.donated_buffer)
+        return module
+
+    monkeypatch.setattr(torch, "compile", fake_compile)
+    functorch_config.donated_buffer = True
+    try:
+        executable, compile_kwargs = compile_fx_graph_module(
+            graph_module,
+            compile_graph=True,
+            compile_mode="default",
+            compile_dynamic=True,
+        )
+    finally:
+        functorch_config.donated_buffer = previous
+
+    assert executable is graph_module
+    assert compile_kwargs == {"backend": "inductor", "dynamic": True}
+    assert compile_seen_donated_buffer == [False]
+    assert functorch_config.donated_buffer is True
+
+
 def test_edge_force_compile_config_defaults_to_disabled():
     from mace.tools.training_compile import EdgeForceCompileConfig
 
@@ -448,6 +479,35 @@ def test_prepare_edge_force_compiled_loss_disabled_returns_model():
     assert prepared is model
 
 
+
+def test_edge_force_compiled_loss_disables_functorch_donated_buffer_for_graph_compile():
+    import torch._functorch.config as functorch_config
+
+    from mace.tools.training_compile import (
+        EdgeForceCompileConfig,
+        prepare_edge_force_compiled_loss,
+    )
+
+    previous = functorch_config.donated_buffer
+    try:
+        functorch_config.donated_buffer = True
+        eager_only = prepare_edge_force_compiled_loss(
+            create_tiny_mace("cpu"),
+            config=EdgeForceCompileConfig(enabled=True, compile_graph=False),
+        )
+        assert eager_only.functorch_donated_buffer_disabled is False
+        assert functorch_config.donated_buffer is True
+
+        graph_compiled = prepare_edge_force_compiled_loss(
+            create_tiny_mace("cpu"),
+            config=EdgeForceCompileConfig(enabled=True, compile_graph=True),
+        )
+        assert graph_compiled.functorch_donated_buffer_disabled is True
+        assert functorch_config.donated_buffer is False
+    finally:
+        functorch_config.donated_buffer = previous
+
+
 def test_edge_force_compiled_loss_gates_shape_cache_hits():
     from mace.tools.train import take_step
     from mace.tools.training_compile import (
@@ -552,6 +612,81 @@ def test_prepare_edge_force_compiled_loss_wraps_scaleshiftmace_for_take_step():
     assert metrics["edge_force_compile"] is True
     assert metrics["edge_force_cache_hit"] is False
     assert metrics["edge_force_gate_accepted"] is True
+
+
+def test_edge_force_compile_step_uses_fresh_executable_after_gate(monkeypatch):
+    import types
+
+    from mace.tools import training_compile
+
+    compiled_executables = []
+    gate_executables = []
+
+    def fake_trace_force_closure(*args, **kwargs):
+        return types.SimpleNamespace(
+            graph_module=types.SimpleNamespace(
+                graph=types.SimpleNamespace(nodes=[object()])
+            ),
+            detach_nodes_before=0,
+            detach_nodes_after=0,
+        )
+
+    def fake_compile_fx_graph_module(*args, **kwargs):
+        executable = object()
+        compiled_executables.append(executable)
+        return executable, {"compile_graph": kwargs["compile_graph"]}
+
+    def snapshot_payload():
+        return {
+            "energy": torch.zeros(1),
+            "forces": torch.zeros(1, 3),
+            "loss": torch.zeros(()),
+            "grads": {},
+        }
+
+    def fake_snapshot(*, executable, **kwargs):
+        gate_executables.append(executable)
+        return snapshot_payload()
+
+    monkeypatch.setattr(
+        training_compile, "trace_force_closure", fake_trace_force_closure
+    )
+    monkeypatch.setattr(
+        training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "_position_force_snapshot", lambda **kwargs: snapshot_payload()
+    )
+    monkeypatch.setattr(
+        training_compile, "_edge_force_snapshot_from_executable", fake_snapshot
+    )
+
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        create_mace("cpu"),
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=True,
+        ),
+    )
+
+    class BatchWrapper:
+        def __init__(self, data):
+            self._data = data
+            self.positions = data["positions"]
+            self.edge_index = data["edge_index"]
+
+        def to_dict(self):
+            return self._data
+
+    compiled = wrapper._compile_step(
+        batch=BatchWrapper(create_batch("cpu")),
+        loss_fn=torch.nn.MSELoss(),
+        cache_key=("shape",),
+    )
+
+    assert len(compiled_executables) == 2
+    assert gate_executables == [compiled_executables[0]]
+    assert compiled.executable is compiled_executables[1]
 
 
 def test_prepare_edge_force_compiled_loss_falls_back_for_unsupported_model():
@@ -934,6 +1069,45 @@ def test_take_step_uses_compiled_force_training_loss_hook():
     assert ema.updates == 1
     assert metrics["edge_force_compile"] is True
     assert metrics["edge_force_cache_hit"] is False
+
+
+def test_take_step_honors_compiled_force_retain_graph_marker(monkeypatch):
+    from mace.tools.train import take_step
+
+    class RetainGraphCompiledForceLossModel(_CompiledForceLossModel):
+        def compiled_force_training_loss(self, *, batch, loss_fn, output_args):
+            loss, metrics = super().compiled_force_training_loss(
+                batch=batch, loss_fn=loss_fn, output_args=output_args
+            )
+            metrics["_retain_graph_for_backward"] = True
+            return loss, metrics
+
+    backward_retain_graph_values = []
+    original_backward = torch.Tensor.backward
+
+    def recording_backward(self, *args, **kwargs):
+        backward_retain_graph_values.append(kwargs.get("retain_graph", False))
+        return original_backward(self, *args, **kwargs)
+
+    monkeypatch.setattr(torch.Tensor, "backward", recording_backward)
+
+    model = RetainGraphCompiledForceLossModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+
+    _, metrics = take_step(
+        model=model,
+        loss_fn=_MiniLoss(),
+        batch=_MiniBatch(),
+        optimizer=optimizer,
+        ema=None,
+        output_args={"forces": True, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+
+    assert backward_retain_graph_values == [True]
+    assert "_retain_graph_for_backward" not in metrics
+    assert metrics["edge_force_compile"] is True
 
 
 def test_take_step_retries_eager_after_compile_backward_failure():
