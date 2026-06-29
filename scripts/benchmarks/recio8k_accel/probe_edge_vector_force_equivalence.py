@@ -27,6 +27,7 @@ from mace.tools.force_compile import (
     trace_force_closure,
 )
 from mace.tools.scatter import scatter_sum
+from mace.tools.training_compile import edge_force_compile_result_from_trace
 
 from scripts.benchmarks.recio8k_accel.probe_training_compile import (  # noqa: E402
     _batch_dict,
@@ -401,6 +402,7 @@ def _make_fx_edge_vector_snapshot(
         "node_count": len(list(traced.graph.nodes)),
         "detach_nodes_before": trace_result.detach_nodes_before,
         "detach_nodes_after": trace_result.detach_nodes_after,
+        "_trace_result": trace_result,
         "snapshot": {
             "energy": energy.detach().clone(),
             "forces": forces.detach().clone(),
@@ -526,12 +528,19 @@ def run_probe(args: argparse.Namespace) -> dict:
                 compile_mode=args.make_fx_compile_mode,
                 compile_dynamic=args.make_fx_compile_dynamic,
             )
-            make_fx_result["comparison"] = compare_snapshots(
+            make_fx_comparison = compare_snapshots(
                 position,
                 make_fx_result["snapshot"],
                 atol=args.atol,
                 rtol=args.rtol,
             )
+            trace_result = make_fx_result.pop("_trace_result")
+            make_fx_result["comparison"] = make_fx_comparison
+            make_fx_result["gate_result"] = edge_force_compile_result_from_trace(
+                trace_result=trace_result,
+                comparison=make_fx_comparison,
+                compile_kwargs=make_fx_result["compile_kwargs"],
+            ).__dict__
             make_fx_result["snapshot"] = _summarize_snapshot(make_fx_result["snapshot"])
         except Exception as exc:  # pylint: disable=broad-except
             make_fx_result = {

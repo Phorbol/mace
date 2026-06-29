@@ -161,3 +161,27 @@ def test_build_parser_accepts_granular_cueq_optimization_flags():
     assert args.cueq_optimize_channelwise is True
     assert args.cueq_optimize_symmetric is True
     assert args.cueq_optimize_fctp is True
+
+
+def test_edge_force_compile_result_payload_contains_gate_metadata():
+    from mace.tools.force_compile import trace_force_closure
+    from mace.tools.training_compile import edge_force_compile_result_from_trace
+
+    def fn(x):
+        y = x + x.detach().detach()
+        return y
+
+    x = torch.tensor([1.0], requires_grad=True)
+    trace_result = trace_force_closure(fn, (x,), tracing_mode="real", strip_detach=True)
+    result = edge_force_compile_result_from_trace(
+        trace_result=trace_result,
+        comparison={"ok": True, "failed_checks": []},
+        compile_kwargs=None,
+    )
+
+    payload = result.__dict__
+
+    assert payload["enabled"] is True
+    assert payload["accepted"] is True
+    assert payload["fallback_reason"] is None
+    assert payload["detach_nodes_after"] == 0
