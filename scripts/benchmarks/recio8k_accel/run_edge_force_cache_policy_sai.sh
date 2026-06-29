@@ -41,7 +41,6 @@ python -m mace.cli.run_train \
   --default_dtype=float32 \
   --device=cuda \
   --seed=123 \
-  --shuffle="${SHUFFLE:-False}" \
   --enable_cueq=True \
   --cueq_optimize_all \
   --no-cueq_optimize_linear \
