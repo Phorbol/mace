@@ -452,6 +452,52 @@ def test_edge_force_compile_shape_cache_key_ignores_batch_identity():
     assert left[0] == "shape"
 
 
+def test_edge_force_cache_policy_repeat_only_skips_first_seen_shape():
+    from mace.tools.training_compile import (
+        EdgeForceCachePolicyState,
+        edge_force_compile_shape_cache_key,
+    )
+
+    cache_key = edge_force_compile_shape_cache_key(
+        num_atoms=4,
+        num_edges=8,
+        input_shapes={
+            "positions": (4, 3),
+            "edge_index": (2, 8),
+            "node_attrs": (4, 2),
+            "batch": (4,),
+            "ptr": (2,),
+        },
+    )
+    state = EdgeForceCachePolicyState()
+
+    decision = state.record_and_decide(
+        cache_key,
+        policy="repeat_only",
+        min_repeats=2,
+    )
+
+    assert decision.compile_allowed is False
+    assert decision.reason == "min_repeats"
+    assert decision.seen_count == 1
+    assert decision.cache_policy == "repeat_only"
+
+
+def test_edge_force_cache_policy_repeat_only_allows_repeated_shape():
+    from mace.tools.training_compile import EdgeForceCachePolicyState
+
+    cache_key = ("shape", 4, 8)
+    state = EdgeForceCachePolicyState()
+
+    first = state.record_and_decide(cache_key, policy="repeat_only", min_repeats=2)
+    second = state.record_and_decide(cache_key, policy="repeat_only", min_repeats=2)
+
+    assert first.compile_allowed is False
+    assert second.compile_allowed is True
+    assert second.reason is None
+    assert second.seen_count == 2
+
+
 def test_edge_force_compile_cache_hit_gate_result_records_failure():
     from mace.tools.training_compile import edge_force_cache_hit_gate_result
 

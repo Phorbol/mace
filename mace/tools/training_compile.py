@@ -30,6 +30,10 @@ class EdgeForceCompileConfig:
     atol: float = 1.0e-5
     rtol: float = 1.0e-4
     cache_hit_gate: bool = True
+    cache_policy: str = "repeat_only"
+    min_repeats: int = 2
+    disable_negative_speedup: bool = True
+    negative_speedup_min_steps: int = 4
 
 
 @dataclasses.dataclass(frozen=True)
@@ -44,6 +48,89 @@ class EdgeForceCompileGateResult:
     compile_kwargs: dict[str, Any] | None = None
     cache_hit: bool | None = None
     cache_key: list[Any] | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class EdgeForceCachePolicyDecision:
+    cache_policy: str
+    compile_allowed: bool
+    reason: str | None
+    seen_count: int
+    compile_count: int
+    cache_hit_count: int
+    disabled: bool = False
+
+
+@dataclasses.dataclass
+class EdgeForceCacheEntryStats:
+    seen_count: int = 0
+    compile_count: int = 0
+    cache_hit_count: int = 0
+    disabled_reason: str | None = None
+    compile_setup_seconds: float = 0.0
+    compiled_step_seconds_ema: float | None = None
+    eager_step_seconds_ema: float | None = None
+
+
+@dataclasses.dataclass
+class EdgeForceCachePolicyState:
+    entries: dict[tuple, EdgeForceCacheEntryStats] = dataclasses.field(
+        default_factory=dict
+    )
+
+    def stats_for(self, cache_key: tuple) -> EdgeForceCacheEntryStats:
+        return self.entries.setdefault(cache_key, EdgeForceCacheEntryStats())
+
+    def record_and_decide(
+        self,
+        cache_key: tuple,
+        *,
+        policy: str,
+        min_repeats: int,
+        cache_hit: bool = False,
+    ) -> EdgeForceCachePolicyDecision:
+        stats = self.stats_for(cache_key)
+        stats.seen_count += 1
+        if cache_hit:
+            stats.cache_hit_count += 1
+        if stats.disabled_reason is not None:
+            return EdgeForceCachePolicyDecision(
+                cache_policy=policy,
+                compile_allowed=False,
+                reason=stats.disabled_reason,
+                seen_count=stats.seen_count,
+                compile_count=stats.compile_count,
+                cache_hit_count=stats.cache_hit_count,
+                disabled=True,
+            )
+        if policy == "shape":
+            allowed = True
+            reason = None
+        elif policy == "repeat_only":
+            allowed = stats.seen_count >= max(1, int(min_repeats))
+            reason = None if allowed else "min_repeats"
+        elif policy == "bucket":
+            allowed = True
+            reason = None
+        else:
+            raise ValueError(f"unknown edge-force cache policy: {policy}")
+        return EdgeForceCachePolicyDecision(
+            cache_policy=policy,
+            compile_allowed=allowed,
+            reason=reason,
+            seen_count=stats.seen_count,
+            compile_count=stats.compile_count,
+            cache_hit_count=stats.cache_hit_count,
+            disabled=False,
+        )
+
+    def record_compile(self, cache_key: tuple, *, setup_seconds: float) -> None:
+        stats = self.stats_for(cache_key)
+        stats.compile_count += 1
+        stats.compile_setup_seconds += float(setup_seconds)
+
+    def disable(self, cache_key: tuple, reason: str) -> None:
+        self.stats_for(cache_key).disabled_reason = reason
 
 
 _EDGE_FORCE_INPUT_KEYS = ("positions", "edge_index", "node_attrs", "batch", "ptr", "head")
