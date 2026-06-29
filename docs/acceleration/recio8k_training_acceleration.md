@@ -104,7 +104,7 @@ Initial SAI probe results:
 
 Both probe jobs completed with Slurm `COMPLETED` / `ExitCode 0:0` on `4V100` with cueq enabled. The force-loss compile mode logged the expected AOTAutograd double-backward fallback and then timed the eager fallback path; it must not be interpreted as compiled force-loss acceleration. The energy-only mode kept compile enabled, which confirms the current compile boundary works when training does not need conservative-force second derivatives.
 
-A local CPU smoke of `--equivalence-gate` on RECIO index `0` returned `ok: true` with zero energy, force, loss, and selected parameter-gradient differences for eager-vs-eager candidates. This is now the required precondition for future compiled subgraph candidates: any candidate must pass the same force-loss equivalence gate before it can be wired into training.
+A local CPU smoke of `--equivalence-gate` on RECIO index `0` returned `ok: true` with zero energy, force, loss, and selected parameter-gradient differences for eager-vs-eager candidates. SAI job `576838` repeated the gate on `4V100` with cueq enabled and completed with Slurm `COMPLETED` / `ExitCode 0:0`; the gate returned `ok: true`, no failed checks, energy max diff `2.384e-07`, force max diff `4.470e-08`, and loss diff `2.980e-07`. This is now the required precondition for future compiled subgraph candidates: any candidate must pass the same force-loss equivalence gate before it can be wired into training.
 
 ## Training Infrastructure Reference
 
