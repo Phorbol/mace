@@ -193,7 +193,18 @@ python scripts/benchmarks/recio8k_accel/profile_force_energy_modes.py \
   --warmup 0 --repeats 1 --output /tmp/mace_force_energy_smoke.json
 ```
 
-SAI job `577998` completed on `4V100` with cueq, RECIO indices `0:32`, warmup `10`, repeats `30`, and Slurm `COMPLETED` / `ExitCode 0:0`. Median timings were `energy_forward=4.59 ms`, `energy_loss_backward=9.18 ms`, `force_forward=9.55 ms`, and `force_loss_backward=19.25 ms`. The derived conservative-force increments are therefore about `+4.96 ms` for force construction (`force_forward - energy_forward`) and `+10.07 ms` for the force-loss second-order backward path (`force_loss_backward - energy_loss_backward`). This reinforces the compile roadmap: ordinary `torch.compile` wrappers around differentiable force-loss regions are currently blocked by AOTAutograd double-backward support, but the largest speed opportunity is precisely that force/backward region. Future work should prototype force-safe lower-level kernels, custom autograd boundaries, or DeepMD-style make_fx/AOT handling with explicit energy/force/parameter-gradient equivalence gates.
+SAI job `577998` completed on `4V100` with cueq, RECIO indices `0:32`, warmup `10`, repeats `30`, and Slurm `COMPLETED` / `ExitCode 0:0`. Median timings were `energy_forward=4.59 ms`, `energy_loss_backward=9.18 ms`, `force_forward=9.55 ms`, and `force_loss_backward=19.25 ms`. The derived conservative-force increments are therefore about `+4.96 ms` for force construction (`force_forward - energy_forward`) and `+10.07 ms` for the force-loss second-order backward path (`force_loss_backward - energy_loss_backward`).
+
+A matched no-cueq run, job `578064`, used the same SAI `4V100` node class, RECIO indices `0:32`, warmup `10`, repeats `30`, and only added `--no-enable-cueq` to the profiler command. It completed with Slurm `COMPLETED` / `ExitCode 0:0` and produced this median comparison:
+
+| Mode | cueq job `577998` | no-cueq job `578064` | no-cueq / cueq |
+| --- | ---: | ---: | ---: |
+| `energy_forward` | `4.59 ms` | `6.07 ms` | `1.32x` |
+| `energy_loss_backward` | `9.18 ms` | `19.71 ms` | `2.15x` |
+| `force_forward` | `9.55 ms` | `17.18 ms` | `1.80x` |
+| `force_loss_backward` | `19.25 ms` | `49.49 ms` | `2.57x` |
+
+With cueq disabled, the force-construction increment rises from `+4.96 ms` to `+11.11 ms`, and the force-loss second-order backward increment rises from `+10.07 ms` to `+29.77 ms`. cueq is therefore already a major part of the answer for ordinary MACE on this V100 stack and should remain compatible with any DPA4-inspired compile or training-infra work. The remaining high-leverage region is still conservative force/backward: ordinary `torch.compile` wrappers around differentiable force-loss regions are currently blocked by AOTAutograd double-backward support, so future work should prototype force-safe lower-level kernels, custom autograd boundaries, or DeepMD-style make_fx/AOT handling with explicit energy/force/parameter-gradient equivalence gates instead of replacing MACE architecture.
 
 ## GPU D3 Backend Status
 
