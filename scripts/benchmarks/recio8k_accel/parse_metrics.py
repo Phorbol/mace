@@ -14,6 +14,10 @@ EPOCH_RE = re.compile(
     r"Epoch (?P<epoch>\d+):.*MAE_E_per_atom=\s*(?P<mae_e>nan|[0-9.]+) meV, "
     r"MAE_F=\s*(?P<mae_f>nan|[0-9.]+)"
 )
+TRAIN_COMPILE_FALLBACK_RE = re.compile(
+    r"training torch\.compile failed during backward; disabling compiled "
+    r"training model and retrying eager: (?P<reason>.*)$"
+)
 
 
 def _parse_timestamp(value: str) -> datetime:
@@ -58,6 +62,7 @@ def _summarize_timing(epochs: list[dict]) -> dict | None:
 
 def parse_log(path: Path) -> dict:
     epochs = []
+    train_compile_fallback_reasons = []
     for line in path.read_text(errors="ignore").splitlines():
         match = EPOCH_RE.search(line)
         if match:
@@ -70,6 +75,12 @@ def parse_log(path: Path) -> dict:
                     "timestamp": timestamp.isoformat(),
                 }
             )
+            continue
+        fallback_match = TRAIN_COMPILE_FALLBACK_RE.search(line)
+        if fallback_match:
+            train_compile_fallback_reasons.append(
+                fallback_match.group("reason").strip()
+            )
 
     nan_epochs = [
         epoch["epoch"]
@@ -81,7 +92,11 @@ def parse_log(path: Path) -> dict:
         "epochs": epochs,
         "last": epochs[-1] if epochs else None,
         "has_nan": bool(nan_epochs),
+        "train_compile_fallback": bool(train_compile_fallback_reasons),
+        "train_compile_fallback_count": len(train_compile_fallback_reasons),
     }
+    if train_compile_fallback_reasons:
+        summary["train_compile_fallback_reasons"] = train_compile_fallback_reasons
     if nan_epochs:
         summary["first_nan_epoch"] = nan_epochs[0]
     timing = _summarize_timing(epochs)

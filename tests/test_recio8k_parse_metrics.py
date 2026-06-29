@@ -92,3 +92,24 @@ def test_parse_log_reports_nan_epochs(tmp_path):
     assert summary["last"]["epoch"] == 125
     assert summary["last"]["mae_e_mev_atom"] != summary["last"]["mae_e_mev_atom"]
     assert summary["last"]["mae_f_mev_a"] != summary["last"]["mae_f_mev_a"]
+
+
+def test_parse_log_reports_training_compile_fallback(tmp_path):
+    parse_metrics = load_parse_metrics()
+    log = tmp_path / "train.log"
+    log.write_text(
+        "2026-06-29 04:07:06.930 INFO: Epoch 0: head: Default, "
+        "loss=16.75404358, MAE_E_per_atom=  302.25 meV, "
+        "MAE_F=  600.83 meV / A\n"
+        "2026-06-29 04:07:10.120 WARNING: training torch.compile failed during "
+        "backward; disabling compiled training model and retrying eager: "
+        "torch.compile with aot_autograd does not currently support double backward\n"
+    )
+
+    summary = parse_metrics.parse_log(log)
+
+    assert summary["train_compile_fallback"] is True
+    assert summary["train_compile_fallback_count"] == 1
+    assert summary["train_compile_fallback_reasons"] == [
+        "torch.compile with aot_autograd does not currently support double backward"
+    ]
