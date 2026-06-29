@@ -26,6 +26,8 @@ python -m mace.cli.run_train \
   --valid_fraction=0.05 \
   --test_file="${TRAIN_FILE}" \
   --E0s=average \
+  --energy_key=energy \
+  --forces_key=forces \
   --model=ScaleShiftMACE \
   --num_interactions=2 \
   --num_channels="${NUM_CHANNELS:-64}" \
