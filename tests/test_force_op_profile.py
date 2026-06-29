@@ -100,3 +100,40 @@ def test_summarize_events_excludes_outer_mace_record_function_by_default():
     summary = profile.summarize_events(events, sort_by="device_time_total", top_k=2)
 
     assert [row["name"] for row in summary] == ["aten::bmm"]
+
+
+@dataclass
+class FakeShapeEvent:
+    key: str
+    input_shapes: tuple = ()
+    self_device_time_total: float = 0.0
+    device_time_total: float = 0.0
+    self_cpu_time_total: float = 0.0
+    cpu_time_total: float = 0.0
+    count: int = 1
+
+
+def test_summarize_events_includes_input_shapes_when_recorded():
+    profile = load_op_profile()
+    events = [
+        FakeShapeEvent(
+            "aten::bmm",
+            input_shapes=([32, 16, 64], [32, 64, 32]),
+            device_time_total=3000.0,
+            count=2,
+        ),
+    ]
+
+    summary = profile.summarize_events(events, sort_by="device_time_total", top_k=1)
+
+    assert summary[0]["input_shapes"] == [[32, 16, 64], [32, 64, 32]]
+
+
+
+def test_group_by_input_shape_parser_enables_record_shapes():
+    profile = load_op_profile()
+
+    args = profile.build_parser().parse_args(["--group-by-input-shape"])
+
+    assert args.group_by_input_shape is True
+    assert args.record_shapes is True

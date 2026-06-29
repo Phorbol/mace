@@ -39,6 +39,16 @@ def _event_value_ms(event, field: str) -> float:
     return _event_value_us(event, field) / 1000.0
 
 
+def _serialize_input_shapes(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, torch.Size):
+        return list(value)
+    if isinstance(value, (list, tuple)):
+        return [_serialize_input_shapes(item) for item in value]
+    return value
+
+
 def summarize_events(
     events: Iterable[object], *, sort_by: str, top_k: int
 ) -> list[dict]:
@@ -50,16 +60,18 @@ def summarize_events(
     )
     rows: list[dict] = []
     for event in sorted_events[:top_k]:
-        rows.append(
-            {
-                "name": str(getattr(event, "key", "")),
-                "count": int(getattr(event, "count", 0) or 0),
-                "self_cuda_time_ms": _event_value_ms(event, "self_cuda_time_total"),
-                "cuda_time_ms": _event_value_ms(event, "cuda_time_total"),
-                "self_cpu_time_ms": _event_value_ms(event, "self_cpu_time_total"),
-                "cpu_time_ms": _event_value_ms(event, "cpu_time_total"),
-            }
-        )
+        row = {
+            "name": str(getattr(event, "key", "")),
+            "count": int(getattr(event, "count", 0) or 0),
+            "self_cuda_time_ms": _event_value_ms(event, "self_cuda_time_total"),
+            "cuda_time_ms": _event_value_ms(event, "cuda_time_total"),
+            "self_cpu_time_ms": _event_value_ms(event, "self_cpu_time_total"),
+            "cpu_time_ms": _event_value_ms(event, "cpu_time_total"),
+        }
+        input_shapes = _serialize_input_shapes(getattr(event, "input_shapes", None))
+        if input_shapes is not None:
+            row["input_shapes"] = input_shapes
+        rows.append(row)
     return rows
 
 
@@ -85,7 +97,7 @@ def _profile_mode(model, batch, mode: str, args: argparse.Namespace, device: tor
             output, loss = _run_mode_once_with_fallback(model, batch, mode, args)
             _sync(device)
 
-    events = prof.key_averages()
+    events = prof.key_averages(group_by_input_shape=args.group_by_input_shape)
     sort_by = "device_time_total" if device.type == "cuda" else "cpu_time_total"
     payload = {
         "mode": mode,
@@ -147,8 +159,16 @@ def run_profile(args: argparse.Namespace) -> dict:
     }
 
 
+class ShapeAwareArgumentParser(argparse.ArgumentParser):
+    def parse_args(self, args=None, namespace=None):
+        parsed = super().parse_args(args=args, namespace=namespace)
+        if getattr(parsed, "group_by_input_shape", False):
+            parsed.record_shapes = True
+        return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser()
+    parser = ShapeAwareArgumentParser()
     parser.add_argument("--xyz", type=Path, default=Path("/home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/train.xyz"))
     parser.add_argument("--indices", default="0:32")
     parser.add_argument("--output", type=Path, default=Path("force_op_profile.json"))
@@ -179,6 +199,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--top-k", type=int, default=20)
     parser.add_argument("--record-shapes", action="store_true", default=False)
+    parser.add_argument("--group-by-input-shape", action="store_true", default=False)
     parser.add_argument("--profile-memory", action="store_true", default=False)
     parser.add_argument("--with-stack", action="store_true", default=False)
     parser.add_argument("--seed", type=int, default=123)

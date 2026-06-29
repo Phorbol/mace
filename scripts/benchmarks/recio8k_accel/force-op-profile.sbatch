@@ -25,6 +25,9 @@ fi
 if [[ "${MACE_FORCE_OP_PROFILE_RECORD_SHAPES:-0}" == "1" ]]; then
   EXTRA_ARGS+=(--record-shapes)
 fi
+if [[ "${MACE_FORCE_OP_PROFILE_GROUP_BY_INPUT_SHAPE:-0}" == "1" ]]; then
+  EXTRA_ARGS+=(--group-by-input-shape)
+fi
 if [[ "${MACE_FORCE_OP_PROFILE_MEMORY:-0}" == "1" ]]; then
   EXTRA_ARGS+=(--profile-memory)
 fi
