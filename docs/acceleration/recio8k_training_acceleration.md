@@ -106,6 +106,8 @@ Both probe jobs completed with Slurm `COMPLETED` / `ExitCode 0:0` on `4V100` wit
 
 A local CPU smoke of `--equivalence-gate` on RECIO index `0` returned `ok: true` with zero energy, force, loss, and selected parameter-gradient differences for eager-vs-eager candidates. SAI job `576838` repeated the gate on `4V100` with cueq enabled and completed with Slurm `COMPLETED` / `ExitCode 0:0`; the gate returned `ok: true`, no failed checks, energy max diff `2.384e-07`, force max diff `4.470e-08`, and loss diff `2.980e-07`. This is now the required precondition for future compiled subgraph candidates: any candidate must pass the same force-loss equivalence gate before it can be wired into training.
 
+The first real subgraph candidate, `compile_readouts`, compiles only the readout modules on the equivalence candidate model. A CPU RECIO index `0` smoke passed after canonicalizing `torch.compile` wrapper parameter names from `_orig_mod.*` back to their logical MACE names. On SAI `4V100` with cueq enabled, job `576896` completed with Slurm `COMPLETED` / `ExitCode 0:0`, but the equivalence gate returned `status=error`, `ok=false`, and `RuntimeError('torch.compile with aot_autograd does not currently support double backward')`. Therefore readout-level `torch.compile` is not accepted for conservative force-loss training on this stack; the gate correctly prevents wiring it into `run_train`.
+
 ## Training Infrastructure Reference
 
 The local TACE reference checkout is `/home/sjtu-caoxiaoming/gengjianrui/trae-research-code/reference_repos/tace` at commit `c669bee`. The useful lessons for a larger MACE training refactor are infrastructure-level rather than model-copying:

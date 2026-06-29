@@ -35,6 +35,7 @@ python /home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace/scripts/benchm
   --max-ell "${MACE_PROBE_MAX_ELL:-1}" \
   --num-interactions "${MACE_PROBE_NUM_INTERACTIONS:-2}" \
   --correlation "${MACE_PROBE_CORRELATION:-2}" \
+  --equivalence-candidate "${MACE_PROBE_EQUIVALENCE_CANDIDATE:-eager_copy}" \
   --output "training_compile_probe_${SLURM_JOB_ID}.json" \
   "${CUEQ_ARGS[@]}" \
   "${EQUIVALENCE_ARGS[@]}"

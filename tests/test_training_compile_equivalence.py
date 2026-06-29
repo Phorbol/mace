@@ -5,6 +5,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 
 
@@ -97,3 +98,56 @@ def test_force_loss_equivalence_reports_mismatched_gradients():
 
     assert result["ok"] is False
     assert result["failed_checks"]
+
+def test_force_loss_equivalence_matches_compiled_wrapper_parameter_names(monkeypatch):
+    probe = load_probe()
+    torch.manual_seed(789)
+    device = torch.device("cpu")
+    batch, z_table = probe._load_batch(
+        Path("/home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/train.xyz"),
+        [0],
+        cutoff=5.0,
+        device=device,
+    )
+    model = probe._create_model(
+        z_table=z_table,
+        cutoff=5.0,
+        device=device,
+        hidden_channels=8,
+        max_ell=1,
+        num_interactions=1,
+        correlation=1,
+        enable_cueq=False,
+    )
+
+    class FakeCompiled(torch.nn.Module):
+        def __init__(self, wrapped):
+            super().__init__()
+            self._orig_mod = wrapped
+
+        def forward(self, *args, **kwargs):
+            return self._orig_mod(*args, **kwargs)
+
+    monkeypatch.setattr(
+        probe.torch,
+        "compile",
+        lambda module, *, mode, fullgraph: FakeCompiled(module),
+    )
+    candidate = probe.build_equivalence_candidate_model(
+        model,
+        candidate="compile_readouts",
+        compile_mode="default",
+        compile_fullgraph=False,
+    )
+
+    result = probe.compare_force_loss_equivalence(
+        model,
+        candidate,
+        batch,
+        atol=1.0e-6,
+        rtol=1.0e-5,
+    )
+
+    assert result["ok"] is True
+    assert "readouts.0.linear.weight" in result["param_grad_max_abs_diff"]
+    assert not any("_orig_mod" in name for name in result["param_grad_max_abs_diff"])

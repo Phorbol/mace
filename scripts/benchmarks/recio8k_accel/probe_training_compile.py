@@ -35,6 +35,9 @@ class ProbeMode:
     loss_kind: str
 
 
+EQUIVALENCE_CANDIDATES = ("eager_copy", "compile_readouts")
+
+
 PROBE_MODES: tuple[ProbeMode, ...] = (
     ProbeMode(
         name="eager_force_loss",
@@ -238,6 +241,10 @@ def _within_tolerance(
     return bool(torch.allclose(left.detach(), right.detach(), atol=atol, rtol=rtol))
 
 
+def _canonical_parameter_name(name: str) -> str:
+    return name.replace("._orig_mod", "").replace("_orig_mod.", "")
+
+
 def _force_loss_snapshot(model: torch.nn.Module, batch) -> dict:
     model.zero_grad(set_to_none=True)
     output = model(
@@ -250,7 +257,9 @@ def _force_loss_snapshot(model: torch.nn.Module, batch) -> dict:
     loss = _loss(output, batch, "energy_forces")
     loss.backward()
     grads = {
-        name: None if param.grad is None else param.grad.detach().clone()
+        _canonical_parameter_name(name): (
+            None if param.grad is None else param.grad.detach().clone()
+        )
         for name, param in model.named_parameters()
         if param.requires_grad
     }
@@ -311,6 +320,69 @@ def compare_force_loss_equivalence(
         "param_grad_max_abs_diff": grad_diffs,
         "failed_checks": failed_checks,
     }
+
+
+def build_equivalence_candidate_model(
+    base_model: torch.nn.Module,
+    *,
+    candidate: str,
+    compile_mode: str,
+    compile_fullgraph: bool,
+) -> torch.nn.Module:
+    candidate_model = copy.deepcopy(base_model)
+    if candidate == "eager_copy":
+        return candidate_model
+    if candidate == "compile_readouts":
+        if not hasattr(candidate_model, "readouts"):
+            raise ValueError("compile_readouts candidate requires model.readouts")
+        for index, readout in enumerate(candidate_model.readouts):
+            candidate_model.readouts[index] = torch.compile(
+                readout,
+                mode=compile_mode,
+                fullgraph=compile_fullgraph,
+            )
+        return candidate_model
+    raise ValueError(
+        f"unknown equivalence candidate {candidate!r}; "
+        f"choices: {list(EQUIVALENCE_CANDIDATES)}"
+    )
+
+
+def run_force_loss_equivalence_gate(
+    base_model: torch.nn.Module,
+    batch,
+    *,
+    candidate: str,
+    compile_mode: str,
+    compile_fullgraph: bool,
+    atol: float,
+    rtol: float,
+) -> dict:
+    try:
+        candidate_model = build_equivalence_candidate_model(
+            base_model,
+            candidate=candidate,
+            compile_mode=compile_mode,
+            compile_fullgraph=compile_fullgraph,
+        )
+        result = compare_force_loss_equivalence(
+            base_model,
+            candidate_model,
+            batch,
+            atol=atol,
+            rtol=rtol,
+        )
+        result["candidate"] = candidate
+        result["status"] = "ok"
+        return result
+    except Exception as exc:  # pylint: disable=broad-except
+        return {
+            "candidate": candidate,
+            "status": "error",
+            "ok": False,
+            "error": repr(exc),
+            "failed_checks": ["exception"],
+        }
 
 
 def run_mode(
@@ -419,10 +491,12 @@ def run_probe(args: argparse.Namespace) -> dict:
         "results": results,
     }
     if getattr(args, "equivalence_gate", False):
-        payload["force_loss_equivalence"] = compare_force_loss_equivalence(
+        payload["force_loss_equivalence"] = run_force_loss_equivalence_gate(
             base_model,
-            copy.deepcopy(base_model),
             batch,
+            candidate=getattr(args, "equivalence_candidate", "eager_copy"),
+            compile_mode=args.compile_mode,
+            compile_fullgraph=args.compile_fullgraph,
             atol=args.equivalence_atol,
             rtol=args.equivalence_rtol,
         )
@@ -449,6 +523,11 @@ def main() -> None:
     parser.add_argument("--no-allow-fallback", dest="allow_fallback", action="store_false")
     parser.add_argument("--enable-cueq", action="store_true")
     parser.add_argument("--equivalence-gate", action="store_true")
+    parser.add_argument(
+        "--equivalence-candidate",
+        choices=EQUIVALENCE_CANDIDATES,
+        default="eager_copy",
+    )
     parser.add_argument("--equivalence-atol", type=float, default=1.0e-6)
     parser.add_argument("--equivalence-rtol", type=float, default=1.0e-5)
     parser.add_argument("--warmup", type=int, default=1)
