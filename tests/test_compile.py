@@ -371,6 +371,24 @@ class _MiniLoss(torch.nn.Module):
         return pred["value"]
 
 
+class _CompiledForceLossModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.ones(()))
+        self.forward_calls = 0
+        self.compiled_loss_calls = 0
+
+    def forward(self, batch, **kwargs):
+        self.forward_calls += 1
+        return {"value": batch["x"].sum() * self.weight}
+
+    def compiled_force_training_loss(self, *, batch, loss_fn, output_args):
+        self.compiled_loss_calls += 1
+        assert output_args == {"forces": True, "virials": False, "stress": False}
+        loss = loss_fn(pred={"value": batch.x.sum() * self.weight}, ref=batch)
+        return loss, {"edge_force_compile": True, "edge_force_cache_hit": False}
+
+
 class _MiniLogger:
     def __init__(self):
         self.records = []
@@ -529,6 +547,33 @@ class _BackwardFallbackModel(torch.nn.Module):
         self.disable_calls += 1
         self.disabled = True
         return True
+
+
+def test_take_step_uses_compiled_force_training_loss_hook():
+    from mace.tools.train import take_step
+
+    model = _CompiledForceLossModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    ema = _MiniEma()
+
+    loss, metrics = take_step(
+        model=model,
+        loss_fn=_MiniLoss(),
+        batch=_MiniBatch(),
+        optimizer=optimizer,
+        ema=ema,
+        output_args={"forces": True, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+
+    assert loss.item() == pytest.approx(1.0)
+    assert model.forward_calls == 0
+    assert model.compiled_loss_calls == 1
+    assert model.weight.item() == pytest.approx(0.9)
+    assert ema.updates == 1
+    assert metrics["edge_force_compile"] is True
+    assert metrics["edge_force_cache_hit"] is False
 
 
 def test_take_step_retries_eager_after_compile_backward_failure():

@@ -513,21 +513,36 @@ def take_step(
 
     def closure():
         optimizer.zero_grad(set_to_none=True)
+        compile_metrics = None
+        compiled_force_loss = getattr(model, "compiled_force_training_loss", None)
+        can_use_compiled_force_loss = (
+            callable(compiled_force_loss)
+            and output_args["forces"]
+            and not output_args["virials"]
+            and not output_args["stress"]
+        )
         with get_autocast_context(precision_config):
-            output = model(
-                batch_dict,
-                training=True,
-                compute_force=output_args["forces"],
-                compute_virials=output_args["virials"],
-                compute_stress=output_args["stress"],
-            )
-        loss = loss_fn(pred=output, ref=batch)
+            if can_use_compiled_force_loss:
+                loss, compile_metrics = compiled_force_loss(
+                    batch=batch,
+                    loss_fn=loss_fn,
+                    output_args=output_args,
+                )
+            else:
+                output = model(
+                    batch_dict,
+                    training=True,
+                    compute_force=output_args["forces"],
+                    compute_virials=output_args["virials"],
+                    compute_stress=output_args["stress"],
+                )
+                loss = loss_fn(pred=output, ref=batch)
         skip_result = None
         grad_norm = None
         if guard_config.loss_skip and loss_skip_controller is not None:
             skip_result = loss_skip_controller.check(loss, global_step=global_step)
             if skip_result.skip:
-                return loss, skip_result, grad_norm
+                return loss, skip_result, grad_norm, compile_metrics
 
         loss.backward()
         if max_grad_norm is not None:
@@ -545,15 +560,15 @@ def take_step(
         if nonfinite_grad_guard is not None and grad_norm is not None:
             nonfinite_grad_guard.update(grad_norm)
 
-        return loss, skip_result, grad_norm
+        return loss, skip_result, grad_norm, compile_metrics
 
     try:
-        loss, skip_result, grad_norm = closure()
+        loss, skip_result, grad_norm, compile_metrics = closure()
     except RuntimeError as exc:
         disable_compile_fallback = getattr(model, "disable_compile_fallback", None)
         if disable_compile_fallback is None or not disable_compile_fallback(exc):
             raise
-        loss, skip_result, grad_norm = closure()
+        loss, skip_result, grad_norm, compile_metrics = closure()
 
     loss_skipped = skip_result.skip if skip_result is not None else False
     if not loss_skipped:
@@ -570,6 +585,8 @@ def take_step(
             skip_result.reason if skip_result is not None else "none"
         ),
     }
+    if compile_metrics is not None:
+        loss_dict.update(compile_metrics)
     if skip_result is not None:
         loss_dict["loss_skip_threshold"] = skip_result.threshold
         loss_dict["loss_ema"] = skip_result.loss_ema
