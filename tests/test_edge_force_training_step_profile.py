@@ -22,7 +22,6 @@ def load_profile():
     spec.loader.exec_module(module)
     return module
 
-
 def test_parse_csv_choices_accepts_known_values():
     profile = load_profile()
 
@@ -31,13 +30,11 @@ def test_parse_csv_choices_accepts_known_values():
         "hybrid_muon",
     ]
 
-
 def test_parse_csv_choices_rejects_unknown_value():
     profile = load_profile()
 
     with pytest.raises(ValueError, match="unknown value"):
         profile.parse_csv_choices("adam,sgd", {"adam", "hybrid_muon"})
-
 
 def test_build_parser_accepts_edge_compile_and_cueq_minus_linear_flags():
     profile = load_profile()
@@ -82,7 +79,6 @@ def load_parse_edge_profile():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
-
 
 def test_parse_edge_force_step_profile_summarizes_gates_and_speedups(tmp_path):
     parser = load_parse_edge_profile()
@@ -141,14 +137,12 @@ def load_epoch_profile():
     spec.loader.exec_module(module)
     return module
 
-
 def test_epoch_profile_splits_indices_into_limited_batches():
     profile = load_epoch_profile()
 
     batches = profile.split_index_batches([0, 1, 2, 3, 4], batch_size=2, max_batches=2)
 
     assert batches == [(0, 1), (2, 3)]
-
 
 def test_epoch_profile_cache_key_is_batch_identity_not_shape():
     profile = load_epoch_profile()
@@ -157,7 +151,6 @@ def test_epoch_profile_cache_key_is_batch_identity_not_shape():
     right = profile.compile_cache_key((3, 4, 5), num_atoms=18, num_edges=256)
 
     assert left != right
-
 
 def test_epoch_profile_summary_reports_setup_and_steady_step_times():
     profile = load_epoch_profile()
@@ -174,8 +167,6 @@ def test_epoch_profile_summary_reports_setup_and_steady_step_times():
     assert summary["mean_total_ms_excluding_setup"] == 15.0
     assert summary["mean_total_ms_including_setup"] == 65.0
 
-
-
 def test_epoch_profile_runs_multi_case_parent_in_isolated_workers():
     profile = load_epoch_profile()
 
@@ -183,3 +174,63 @@ def test_epoch_profile_runs_multi_case_parent_in_isolated_workers():
     assert profile.should_run_isolated(["adam", "hybrid_muon"], ["edge_compile"], case_worker=False) is True
     assert profile.should_run_isolated(["adam"], ["position_eager", "edge_compile"], case_worker=False) is True
     assert profile.should_run_isolated(["adam", "hybrid_muon"], ["edge_compile"], case_worker=True) is False
+
+def test_epoch_profile_edge_compile_input_names_exclude_labels_and_unused_geometry():
+    profile = load_epoch_profile()
+    data_keys = {
+        "positions",
+        "edge_index",
+        "node_attrs",
+        "batch",
+        "ptr",
+        "head",
+        "shifts",
+        "energy",
+        "forces",
+        "stress",
+        "virials",
+    }
+
+    names = profile.edge_compile_input_names(data_keys)
+
+    assert names == ("positions", "edge_index", "node_attrs", "batch", "ptr", "head")
+
+def test_epoch_profile_shape_cache_key_ignores_batch_identity():
+    profile = load_epoch_profile()
+
+    left = profile.compile_shape_cache_key(
+        num_atoms=286,
+        num_edges=4632,
+        input_shapes={"positions": (286, 3), "node_attrs": (286, 4)},
+    )
+    right = profile.compile_shape_cache_key(
+        num_atoms=286,
+        num_edges=4632,
+        input_shapes={"positions": (286, 3), "node_attrs": (286, 4)},
+    )
+
+    assert left == right
+
+def test_epoch_profile_gates_shape_cache_hits_by_default():
+    profile = load_epoch_profile()
+
+    assert profile.should_gate_cache_hit(cache_hit=True, scope="shape", enabled=True) is True
+    assert profile.should_gate_cache_hit(cache_hit=False, scope="shape", enabled=True) is False
+    assert profile.should_gate_cache_hit(cache_hit=True, scope="batch", enabled=True) is False
+    assert profile.should_gate_cache_hit(cache_hit=True, scope="shape", enabled=False) is False
+
+def test_epoch_profile_builds_cache_hit_gate_result_from_comparison():
+    profile = load_epoch_profile()
+    comparison = {"ok": False, "failed_checks": ["forces"]}
+
+    result = profile.build_cache_hit_gate_result(
+        comparison=comparison,
+        cache_key=("shape", 2, 4),
+    )
+
+    assert result["enabled"] is True
+    assert result["accepted"] is False
+    assert result["fallback_reason"] == "cache_hit_equivalence_failed"
+    assert result["comparison"] == comparison
+    assert result["cache_hit"] is True
+    assert result["cache_key"] == ["shape", 2, 4]

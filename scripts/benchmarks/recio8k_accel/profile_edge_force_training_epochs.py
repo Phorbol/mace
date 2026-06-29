@@ -36,24 +36,29 @@ from scripts.benchmarks.recio8k_accel.profile_edge_force_training_steps import (
     MODE_CHOICES,
     OPTIMIZER_CHOICES,
     _edge_force_loss_outputs,
-    _edge_snapshot,
     _edge_vector_inputs,
     _force_loss_fn,
+    _named_parameter_grads,
     _position_snapshot,
     _sync,
     compare_snapshots,
     parse_csv_choices,
     parse_indices,
 )
+from scripts.benchmarks.recio8k_accel.probe_edge_vector_force_equivalence import (  # noqa: E402
+    _mace_energy_from_vectors,
+    edge_gradient_to_atomic_forces,
+)
 from scripts.benchmarks.recio8k_accel.probe_training_compile import _batch_dict  # noqa: E402
 
 
 @dataclass
 class CachedStep:
-    executable: Callable[[torch.Tensor], tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
+    executable: Callable[..., tuple[torch.Tensor, torch.Tensor]]
     gate_result: dict | None
     setup_ms: float
-    cache_key: tuple[int, ...]
+    cache_key: tuple
+    input_names: tuple[str, ...]
 
 
 def split_index_batches(
@@ -79,6 +84,41 @@ def compile_cache_key(
     # Shape-only reuse across different batches would be incorrect until those
     # tensors are promoted to explicit FX graph inputs.
     return tuple(batch_indices) + (int(num_atoms), int(num_edges))
+
+
+_CORE_EDGE_INPUT_KEYS = ("positions", "edge_index", "node_attrs", "batch", "ptr", "head")
+
+
+def edge_compile_input_names(data_keys) -> tuple[str, ...]:
+    keys = set(data_keys)
+    return tuple(name for name in _CORE_EDGE_INPUT_KEYS if name in keys)
+
+
+def compile_shape_cache_key(
+    *, num_atoms: int, num_edges: int, input_shapes: dict[str, tuple[int, ...]]
+) -> tuple:
+    return (
+        "shape",
+        int(num_atoms),
+        int(num_edges),
+        tuple((name, tuple(shape)) for name, shape in sorted(input_shapes.items())),
+    )
+
+
+def should_gate_cache_hit(*, cache_hit: bool, scope: str, enabled: bool) -> bool:
+    return enabled and cache_hit and scope == "shape"
+
+
+def build_cache_hit_gate_result(*, comparison: dict, cache_key: tuple) -> dict:
+    accepted = bool(comparison["ok"])
+    return {
+        "enabled": True,
+        "accepted": accepted,
+        "fallback_reason": None if accepted else "cache_hit_equivalence_failed",
+        "comparison": comparison,
+        "cache_hit": True,
+        "cache_key": list(cache_key),
+    }
 
 
 def summarize_steps(steps: list[dict]) -> dict:
@@ -256,6 +296,111 @@ def _build_optimizer(args: argparse.Namespace, optimizer_name: str, model):
     raise ValueError(f"unknown optimizer {optimizer_name!r}")
 
 
+def _edge_force_outputs(
+    model,
+    data_dict: dict[str, torch.Tensor],
+    positions: torch.Tensor,
+    edge_index: torch.Tensor,
+    vectors: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    lengths = torch.linalg.vector_norm(vectors, dim=1, keepdim=True)
+    output = _mace_energy_from_vectors(model, data_dict, vectors=vectors, lengths=lengths)
+    edge_grad = torch.autograd.grad(
+        outputs=[output["energy"]],
+        inputs=[vectors],
+        grad_outputs=[torch.ones_like(output["energy"])],
+        retain_graph=True,
+        create_graph=True,
+        allow_unused=False,
+    )[0]
+    forces = edge_gradient_to_atomic_forces(
+        edge_grad,
+        edge_index=edge_index,
+        num_atoms=positions.shape[0],
+    )
+    return output["energy"], forces
+
+
+def _loss_from_energy_forces(
+    *,
+    batch,
+    loss_fn,
+    energy: torch.Tensor,
+    forces: torch.Tensor,
+) -> torch.Tensor:
+    output = {
+        "energy": energy,
+        "forces": forces,
+        "virials": None,
+        "stress": None,
+    }
+    return loss_fn(pred=output, ref=batch)
+
+
+def _edge_snapshot_from_executable(
+    *,
+    model,
+    batch,
+    loss_fn,
+    executable: Callable[..., tuple[torch.Tensor, torch.Tensor]],
+    input_names: tuple[str, ...],
+) -> dict:
+    model.zero_grad(set_to_none=True)
+    data_dict, _, _, vectors = _edge_vector_inputs(batch)
+    vectors = vectors.detach().clone().requires_grad_(True)
+    inputs = [data_dict[name] for name in input_names]
+    energy, forces = executable(vectors, *inputs)
+    loss = _loss_from_energy_forces(
+        batch=batch,
+        loss_fn=loss_fn,
+        energy=energy,
+        forces=forces,
+    )
+    loss.backward()
+    return {
+        "energy": energy.detach().clone(),
+        "forces": forces.detach().clone(),
+        "loss": loss.detach().clone(),
+        "grads": _named_parameter_grads(model),
+    }
+
+
+def _shape_cache_key_for_inputs(
+    *,
+    batch,
+    input_names: tuple[str, ...],
+    data_dict: dict[str, torch.Tensor],
+) -> tuple:
+    return compile_shape_cache_key(
+        num_atoms=batch.positions.shape[0],
+        num_edges=batch.edge_index.shape[1],
+        input_shapes={name: tuple(data_dict[name].shape) for name in input_names},
+    )
+
+
+def _cache_key_for_batch(
+    *,
+    batch,
+    batch_indices: tuple[int, ...],
+    input_names: tuple[str, ...],
+    data_dict: dict[str, torch.Tensor],
+    scope: str,
+) -> tuple:
+    if scope == "batch":
+        return compile_cache_key(
+            batch_indices,
+            num_atoms=batch.positions.shape[0],
+            num_edges=batch.edge_index.shape[1],
+        )
+    if scope == "shape":
+        return _shape_cache_key_for_inputs(
+            batch=batch,
+            input_names=input_names,
+            data_dict=data_dict,
+        )
+    raise ValueError(f"unknown edge cache scope {scope!r}")
+
+
 def _make_edge_compile_step(
     *,
     model,
@@ -265,16 +410,26 @@ def _make_edge_compile_step(
     args: argparse.Namespace,
 ) -> CachedStep:
     setup_start = time.perf_counter()
-    data_dict, positions, edge_index, vectors = _edge_vector_inputs(batch)
+    data_dict, _, _, vectors = _edge_vector_inputs(batch)
+    input_names = edge_compile_input_names(data_dict.keys())
+    example_inputs = tuple(data_dict[name] for name in input_names)
 
-    def closure(vectors_arg: torch.Tensor):
-        return _edge_force_loss_outputs(
-            model, batch, data_dict, positions, edge_index, vectors_arg, loss_fn
+    def closure(
+        vectors_arg: torch.Tensor, *input_tensors: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        current_data = dict(data_dict)
+        current_data.update(zip(input_names, input_tensors, strict=True))
+        return _edge_force_outputs(
+            model,
+            current_data,
+            current_data["positions"],
+            current_data["edge_index"],
+            vectors_arg,
         )
 
     trace_result = trace_force_closure(
         closure,
-        (vectors,),
+        (vectors, *example_inputs),
         tracing_mode=args.edge_tracing_mode,
         strip_detach=args.edge_strip_detach,
     )
@@ -285,7 +440,13 @@ def _make_edge_compile_step(
         compile_dynamic=args.edge_compile_dynamic,
     )
     reference = _position_snapshot(model, batch, loss_fn)
-    candidate = _edge_snapshot(model, batch, loss_fn, executable=executable)
+    candidate = _edge_snapshot_from_executable(
+        model=model,
+        batch=batch,
+        loss_fn=loss_fn,
+        executable=executable,
+        input_names=input_names,
+    )
     comparison = compare_snapshots(reference, candidate, atol=args.atol, rtol=args.rtol)
     gate_result = edge_force_compile_result_from_trace(
         trace_result=trace_result,
@@ -298,11 +459,14 @@ def _make_edge_compile_step(
         executable=executable,
         gate_result=gate_result,
         setup_ms=(time.perf_counter() - setup_start) * 1.0e3,
-        cache_key=compile_cache_key(
-            batch_indices,
-            num_atoms=batch.positions.shape[0],
-            num_edges=edge_index.shape[1],
+        cache_key=_cache_key_for_batch(
+            batch=batch,
+            batch_indices=batch_indices,
+            input_names=input_names,
+            data_dict=data_dict,
+            scope=args.edge_cache_scope,
         ),
+        input_names=input_names,
     )
 
 
@@ -335,10 +499,14 @@ def _loss_for_mode(
         return loss, {"setup_ms": 0.0, "cache_hit": False}
 
     if mode_name == "edge_compile":
-        key = compile_cache_key(
-            batch_indices,
-            num_atoms=batch.positions.shape[0],
-            num_edges=batch.edge_index.shape[1],
+        data_dict, _, _, vectors = _edge_vector_inputs(batch)
+        input_names = edge_compile_input_names(data_dict.keys())
+        key = _cache_key_for_batch(
+            batch=batch,
+            batch_indices=batch_indices,
+            input_names=input_names,
+            data_dict=data_dict,
+            scope=args.edge_cache_scope,
         )
         cached = cache.get(key)
         cache_hit = cached is not None
@@ -351,14 +519,54 @@ def _loss_for_mode(
                 args=args,
             )
             cache[key] = cached
-        _, _, _, vectors = _edge_vector_inputs(batch)
+        elif cached.input_names != input_names:
+            raise RuntimeError(
+                f"edge compile cache input mismatch: {cached.input_names} != {input_names}"
+            )
+        gate_result = cached.gate_result
+        if should_gate_cache_hit(
+            cache_hit=cache_hit,
+            scope=args.edge_cache_scope,
+            enabled=args.edge_cache_hit_gate,
+        ):
+            reference = _position_snapshot(model, batch, loss_fn)
+            candidate = _edge_snapshot_from_executable(
+                model=model,
+                batch=batch,
+                loss_fn=loss_fn,
+                executable=cached.executable,
+                input_names=cached.input_names,
+            )
+            comparison = compare_snapshots(
+                reference,
+                candidate,
+                atol=args.atol,
+                rtol=args.rtol,
+            )
+            gate_result = build_cache_hit_gate_result(
+                comparison=comparison,
+                cache_key=cached.cache_key,
+            )
+            if not gate_result["accepted"] and not args.allow_gate_failure:
+                raise RuntimeError(
+                    f"edge compile cache-hit gate failed for batch {batch_indices}: {comparison}"
+                )
+            model.zero_grad(set_to_none=True)
         vectors = vectors.detach().clone().requires_grad_(True)
-        _, _, loss = cached.executable(vectors)
+        inputs = [data_dict[name] for name in cached.input_names]
+        energy, forces = cached.executable(vectors, *inputs)
+        loss = _loss_from_energy_forces(
+            batch=batch,
+            loss_fn=loss_fn,
+            energy=energy,
+            forces=forces,
+        )
         return loss, {
             "setup_ms": 0.0 if cache_hit else cached.setup_ms,
             "cache_hit": cache_hit,
-            "gate_result": cached.gate_result,
+            "gate_result": gate_result,
             "cache_key": list(cached.cache_key),
+            "input_names": list(cached.input_names),
         }
 
     raise ValueError(f"unknown mode {mode_name!r}")
@@ -427,7 +635,7 @@ def run_case(
         "mode": mode_name,
         "summary": summarize_steps(steps),
         "steps": steps,
-        "compile_cache_scope": "batch_identity_captured_tensors",
+        "compile_cache_scope": args.edge_cache_scope,
         "route_summary": route_summary,
     }
     if route_summary is not None:
@@ -460,6 +668,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--correlation", type=int, default=3)
     parser.add_argument("--edge-tracing-mode", default="real")
     parser.add_argument("--edge-compile-mode", default="default")
+    parser.add_argument("--edge-cache-scope", choices=("batch", "shape"), default="batch")
     parser.add_argument("--atol", type=float, default=1.0e-5)
     parser.add_argument("--rtol", type=float, default=1.0e-4)
     parser.add_argument("--lr", type=float, default=0.01)
@@ -480,6 +689,7 @@ def build_parser() -> argparse.ArgumentParser:
     _append_bool_flag(parser, "edge-strip-detach", True)
     _append_bool_flag(parser, "edge-compile-graph", True)
     _append_bool_flag(parser, "edge-compile-dynamic", True)
+    _append_bool_flag(parser, "edge-cache-hit-gate", True)
     _append_bool_flag(parser, "allow-gate-failure", False)
     return parser
 
