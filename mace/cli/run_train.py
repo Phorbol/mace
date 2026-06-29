@@ -866,6 +866,7 @@ def run(args) -> None:
     if args.edge_force_compile:
         from mace.tools.training_compile import (
             EdgeForceCompileConfig,
+            parse_edge_force_bucket_sizes,
             prepare_edge_force_compiled_loss,
         )
 
@@ -882,6 +883,13 @@ def run(args) -> None:
                 cache_policy=args.edge_force_compile_cache_policy,
                 min_repeats=args.edge_force_compile_min_repeats,
                 disable_negative_speedup=args.edge_force_compile_disable_negative_speedup,
+                bucket_atoms=parse_edge_force_bucket_sizes(
+                    args.edge_force_compile_bucket_atoms
+                ),
+                bucket_edges=parse_edge_force_bucket_sizes(
+                    args.edge_force_compile_bucket_edges
+                ),
+                bucket_margin=args.edge_force_compile_bucket_margin,
             ),
         )
 

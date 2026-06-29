@@ -165,6 +165,24 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=True,
     )
     parser.add_argument(
+        "--edge_force_compile_bucket_atoms",
+        help="Comma-separated atom-count buckets for edge-force compile bucket mode",
+        type=str,
+        default="",
+    )
+    parser.add_argument(
+        "--edge_force_compile_bucket_edges",
+        help="Comma-separated edge-count buckets for edge-force compile bucket mode",
+        type=str,
+        default="",
+    )
+    parser.add_argument(
+        "--edge_force_compile_bucket_margin",
+        help="Maximum bucket/input size ratio allowed for bucket mode",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
         "--edge_force_compile_allow_fallback",
         help="Continue eager training if edge-force compile setup or runtime fails",
         action=argparse.BooleanOptionalAction,

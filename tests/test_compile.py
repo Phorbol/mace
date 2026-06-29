@@ -532,6 +532,16 @@ def test_edge_force_cache_policy_can_disable_negative_speedup_shape():
     assert decision.reason == "negative_speedup"
 
 
+def test_parse_edge_force_bucket_sizes_sorts_and_validates_values():
+    from mace.tools.training_compile import parse_edge_force_bucket_sizes
+
+    assert parse_edge_force_bucket_sizes("") == ()
+    assert parse_edge_force_bucket_sizes(None) == ()
+    assert parse_edge_force_bucket_sizes("512,256,512") == (256, 512)
+    with pytest.raises(ValueError, match="positive integers"):
+        parse_edge_force_bucket_sizes("128,0")
+
+
 def test_edge_force_compile_cache_hit_gate_result_records_failure():
     from mace.tools.training_compile import edge_force_cache_hit_gate_result
 
@@ -592,6 +602,38 @@ def test_edge_force_compiled_loss_disables_functorch_donated_buffer_for_graph_co
         assert functorch_config.donated_buffer is False
     finally:
         functorch_config.donated_buffer = previous
+
+
+def test_edge_force_compiled_loss_bucket_policy_without_buckets_uses_eager(monkeypatch):
+    from mace.tools import training_compile
+
+    model = create_tiny_mace("cpu")
+    prepared = training_compile.prepare_edge_force_compiled_loss(
+        model,
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_policy="bucket",
+            bucket_atoms=(),
+            bucket_edges=(),
+            allow_fallback=False,
+        ),
+    )
+
+    def fail_compile(**kwargs):
+        raise AssertionError("_compile_step should not run without buckets")
+
+    monkeypatch.setattr(prepared, "_compile_step", fail_compile)
+
+    loss, metrics = prepared.compiled_force_training_loss(
+        batch=_BatchDictAdapter(create_batch("cpu")),
+        loss_fn=_EnergyForcesMiniLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert torch.isfinite(loss)
+    assert metrics["edge_force_compile"] is False
+    assert metrics["edge_force_compile_disabled_reason"] == "no_bucket"
 
 
 def test_edge_force_compiled_loss_repeat_only_uses_eager_before_threshold(monkeypatch):
@@ -864,6 +906,12 @@ def test_arg_parser_accepts_edge_force_compile_flags():
             "repeat_only",
             "--edge_force_compile_min_repeats",
             "3",
+            "--edge_force_compile_bucket_atoms",
+            "256,512",
+            "--edge_force_compile_bucket_edges",
+            "2048,4096",
+            "--edge_force_compile_bucket_margin",
+            "1.15",
             "--no-edge_force_compile_disable_negative_speedup",
             "--no-edge_force_compile_allow_fallback",
         ]
@@ -877,6 +925,9 @@ def test_arg_parser_accepts_edge_force_compile_flags():
     assert args.edge_force_compile_cache_hit_gate is False
     assert args.edge_force_compile_cache_policy == "repeat_only"
     assert args.edge_force_compile_min_repeats == 3
+    assert args.edge_force_compile_bucket_atoms == "256,512"
+    assert args.edge_force_compile_bucket_edges == "2048,4096"
+    assert args.edge_force_compile_bucket_margin == 1.15
     assert args.edge_force_compile_disable_negative_speedup is False
     assert args.edge_force_compile_allow_fallback is False
 

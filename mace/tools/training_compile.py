@@ -35,6 +35,9 @@ class EdgeForceCompileConfig:
     min_repeats: int = 2
     disable_negative_speedup: bool = True
     negative_speedup_min_steps: int = 4
+    bucket_atoms: tuple[int, ...] = ()
+    bucket_edges: tuple[int, ...] = ()
+    bucket_margin: float = 1.0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -161,6 +164,15 @@ _EDGE_FORCE_INPUT_KEYS = ("positions", "edge_index", "node_attrs", "batch", "ptr
 def edge_force_compile_input_names(data_keys) -> tuple[str, ...]:
     keys = set(data_keys)
     return tuple(name for name in _EDGE_FORCE_INPUT_KEYS if name in keys)
+
+
+def parse_edge_force_bucket_sizes(value: str | None) -> tuple[int, ...]:
+    if value is None or value == "":
+        return ()
+    sizes = tuple(int(part.strip()) for part in value.split(",") if part.strip())
+    if any(size <= 0 for size in sizes):
+        raise ValueError("edge-force bucket sizes must be positive integers")
+    return tuple(sorted(set(sizes)))
 
 
 def edge_force_compile_shape_cache_key(
@@ -738,6 +750,15 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 input_names=input_names,
                 data_dict=data_dict,
             )
+            if (
+                self.config.cache_policy == "bucket"
+                and (not self.config.bucket_atoms or not self.config.bucket_edges)
+            ):
+                return self._eager_force_loss(
+                    batch=batch,
+                    loss_fn=loss_fn,
+                    disabled_reason="no_bucket",
+                )
             compiled = self.cache.get(cache_key)
             cache_hit = compiled is not None
             policy_decision = self.cache_policy_state.record_and_decide(
