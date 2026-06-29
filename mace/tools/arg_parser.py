@@ -1080,6 +1080,60 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=10.0,
     )
     parser.add_argument(
+        "--loss_skip",
+        help="Skip optimizer steps for non-finite or unusually large losses",
+        type=str2bool,
+        default=False,
+    )
+    parser.add_argument(
+        "--loss_skip_nan",
+        help="Skip optimizer steps when the loss is NaN or infinite",
+        type=str2bool,
+        default=True,
+    )
+    parser.add_argument(
+        "--loss_skip_large",
+        help="Skip optimizer steps when the loss exceeds the configured threshold",
+        type=str2bool,
+        default=True,
+    )
+    parser.add_argument(
+        "--loss_skip_ema_window",
+        help="EMA window used to estimate the dynamic large-loss threshold",
+        type=int,
+        default=100,
+    )
+    parser.add_argument(
+        "--loss_skip_multiplier",
+        help="Multiplier applied to the EMA loss for dynamic large-loss skipping",
+        type=float,
+        default=3.0,
+    )
+    parser.add_argument(
+        "--loss_skip_start_step",
+        help="Global step at which large-loss skipping starts",
+        type=int,
+        default=1000,
+    )
+    parser.add_argument(
+        "--loss_skip_threshold",
+        help="Manual large-loss skip threshold; none uses only the dynamic EMA threshold",
+        type=check_float_or_none,
+        default=None,
+    )
+    parser.add_argument(
+        "--stable_grad_clip",
+        help="Use overflow-stable gradient norm computation for clipping",
+        type=str2bool,
+        default=False,
+    )
+    parser.add_argument(
+        "--nonfinite_grad_guard",
+        help="Raise before checkpointing if a non-finite gradient norm was observed",
+        type=str2bool,
+        default=False,
+    )
+    parser.add_argument(
         "--dry_run",
         help="Run all steps upto training to test settings.",
         action="store_true",

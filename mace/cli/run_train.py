@@ -41,6 +41,7 @@ from mace.tools import torch_geometric
 from mace.tools.distributed_tools import init_distributed
 from mace.tools.model_script_utils import configure_model
 from mace.tools.precision import TrainingPrecisionConfig
+from mace.tools.training_guards import TrainingGuardConfig
 from mace.tools.multihead_tools import (
     HeadConfig,
     apply_pseudolabels_to_pt_head_configs,
@@ -76,6 +77,20 @@ from mace.tools.scripts_utils import (
 )
 from mace.tools.tables_utils import create_error_table
 from mace.tools.utils import AtomicNumberTable
+
+
+def _training_guard_config_from_args(args) -> TrainingGuardConfig:
+    return TrainingGuardConfig(
+        loss_skip=args.loss_skip,
+        loss_skip_nan=args.loss_skip_nan,
+        loss_skip_large=args.loss_skip_large,
+        loss_skip_ema_window=args.loss_skip_ema_window,
+        loss_skip_multiplier=args.loss_skip_multiplier,
+        loss_skip_start_step=args.loss_skip_start_step,
+        loss_skip_threshold=args.loss_skip_threshold,
+        stable_grad_clip=args.stable_grad_clip,
+        nonfinite_grad_guard=args.nonfinite_grad_guard,
+    )
 
 
 def main() -> None:
@@ -987,6 +1002,7 @@ def run(args) -> None:
         precision_config=precision_config,
         training_model=training_model,
         non_blocking_transfer=args.non_blocking_transfer,
+        guard_config=_training_guard_config_from_args(args),
     )
 
     logging.info("")

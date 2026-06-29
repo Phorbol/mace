@@ -25,6 +25,38 @@ except ImportError:
 run_train = Path(__file__).parent.parent / "mace" / "cli" / "run_train.py"
 
 
+def test_training_guard_cli_flags_build_config():
+    from mace.cli.run_train import _training_guard_config_from_args
+    from mace.tools import build_default_arg_parser
+
+    args = build_default_arg_parser().parse_args(
+        [
+            "--name=guard_cli",
+            "--loss_skip=True",
+            "--loss_skip_nan=False",
+            "--loss_skip_large=True",
+            "--loss_skip_ema_window=7",
+            "--loss_skip_multiplier=4.5",
+            "--loss_skip_start_step=11",
+            "--loss_skip_threshold=12.5",
+            "--stable_grad_clip=True",
+            "--nonfinite_grad_guard=True",
+        ]
+    )
+
+    config = _training_guard_config_from_args(args)
+
+    assert config.loss_skip is True
+    assert config.loss_skip_nan is False
+    assert config.loss_skip_large is True
+    assert config.loss_skip_ema_window == 7
+    assert config.loss_skip_multiplier == pytest.approx(4.5)
+    assert config.loss_skip_start_step == 11
+    assert config.loss_skip_threshold == pytest.approx(12.5)
+    assert config.stable_grad_clip is True
+    assert config.nonfinite_grad_guard is True
+
+
 @pytest.fixture(name="fitting_configs")
 def fixture_fitting_configs():
     water = Atoms(
