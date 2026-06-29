@@ -560,6 +560,39 @@ def test_edge_force_compiled_loss_disables_functorch_donated_buffer_for_graph_co
         functorch_config.donated_buffer = previous
 
 
+def test_edge_force_compiled_loss_repeat_only_uses_eager_before_threshold(monkeypatch):
+    from mace.tools import training_compile
+
+    model = create_tiny_mace("cpu")
+    prepared = training_compile.prepare_edge_force_compiled_loss(
+        model,
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_policy="repeat_only",
+            min_repeats=2,
+            allow_fallback=False,
+        ),
+    )
+
+    def fail_compile(**kwargs):
+        raise AssertionError("_compile_step should not run before min_repeats")
+
+    monkeypatch.setattr(prepared, "_compile_step", fail_compile)
+
+    loss, metrics = prepared.compiled_force_training_loss(
+        batch=_BatchDictAdapter(create_batch("cpu")),
+        loss_fn=_EnergyForcesMiniLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert torch.isfinite(loss)
+    assert metrics["edge_force_compile"] is False
+    assert metrics["edge_force_compile_disabled_reason"] == "min_repeats"
+    assert metrics["edge_force_compile_cache_policy"] == "repeat_only"
+    assert metrics["edge_force_cache_seen_count"] == 1
+
+
 def test_edge_force_compiled_loss_gates_shape_cache_hits():
     from mace.tools.train import take_step
     from mace.tools.training_compile import (
@@ -574,6 +607,7 @@ def test_edge_force_compiled_loss_gates_shape_cache_hits():
             enabled=True,
             compile_graph=False,
             cache_hit_gate=True,
+            cache_policy="shape",
         ),
     )
     optimizer = torch.optim.SGD(model.parameters(), lr=1.0e-4)
@@ -613,7 +647,11 @@ def test_edge_force_compiled_loss_handles_nonidentity_scaleshift():
     model = create_tiny_mace("cpu", scale=2.0, shift=0.25)
     prepared = prepare_edge_force_compiled_loss(
         model,
-        config=EdgeForceCompileConfig(enabled=True, compile_graph=False),
+        config=EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_policy="shape",
+        ),
     )
     optimizer = torch.optim.SGD(model.parameters(), lr=1.0e-4)
 
@@ -642,7 +680,11 @@ def test_prepare_edge_force_compiled_loss_wraps_scaleshiftmace_for_take_step():
     model = create_tiny_mace("cpu")
     prepared = prepare_edge_force_compiled_loss(
         model,
-        config=EdgeForceCompileConfig(enabled=True, compile_graph=False),
+        config=EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_policy="shape",
+        ),
     )
     batch = _BatchDictAdapter(create_batch("cpu"))
     optimizer = torch.optim.SGD(model.parameters(), lr=1.0e-4)

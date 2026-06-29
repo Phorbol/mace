@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import time
 from typing import Any
 
 import torch
@@ -552,6 +553,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         self.model = model
         self.config = config
         self.cache: dict[tuple, _CompiledEdgeForceStep] = {}
+        self.cache_policy_state = EdgeForceCachePolicyState()
         self.disabled = False
         self.functorch_donated_buffer_disabled = (
             disable_functorch_donated_buffer() if config.compile_graph else False
@@ -571,7 +573,14 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
     def forward(self, *args, **kwargs):
         return self.model(*args, **kwargs)
 
-    def _eager_force_loss(self, *, batch, loss_fn):
+    def _eager_force_loss(
+        self,
+        *,
+        batch,
+        loss_fn,
+        disabled_reason: str = "disabled",
+        policy_decision: EdgeForceCachePolicyDecision | None = None,
+    ):
         output = self.model(
             batch.to_dict(),
             training=True,
@@ -579,10 +588,21 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             compute_virials=False,
             compute_stress=False,
         )
-        return loss_fn(pred=output, ref=batch), {
+        metrics = {
             "edge_force_compile": False,
             "edge_force_compile_disabled": True,
+            "edge_force_compile_disabled_reason": disabled_reason,
         }
+        if policy_decision is not None:
+            metrics.update(
+                {
+                    "edge_force_compile_cache_policy": policy_decision.cache_policy,
+                    "edge_force_cache_seen_count": policy_decision.seen_count,
+                    "edge_force_cache_compile_count": policy_decision.compile_count,
+                    "edge_force_cache_hit_count": policy_decision.cache_hit_count,
+                }
+            )
+        return loss_fn(pred=output, ref=batch), metrics
 
     def _cache_key(
         self,
@@ -699,12 +719,31 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             )
             compiled = self.cache.get(cache_key)
             cache_hit = compiled is not None
+            policy_decision = self.cache_policy_state.record_and_decide(
+                cache_key,
+                policy=self.config.cache_policy,
+                min_repeats=self.config.min_repeats,
+                cache_hit=cache_hit,
+            )
+            if not policy_decision.compile_allowed:
+                return self._eager_force_loss(
+                    batch=batch,
+                    loss_fn=loss_fn,
+                    disabled_reason=policy_decision.reason or "policy_disabled",
+                    policy_decision=policy_decision,
+                )
             cache_hit_gate_accepted = None
             if compiled is None:
+                setup_start = time.perf_counter()
                 compiled = self._compile_step(
                     batch=batch,
                     loss_fn=loss_fn,
                     cache_key=cache_key,
+                )
+                setup_seconds = time.perf_counter() - setup_start
+                self.cache_policy_state.record_compile(
+                    cache_key,
+                    setup_seconds=setup_seconds,
                 )
                 self.cache[cache_key] = compiled
             elif compiled.input_names != input_names:
@@ -764,10 +803,16 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 energy=energy,
                 forces=forces,
             )
+            stats = self.cache_policy_state.stats_for(cache_key)
             metrics = {
                 "edge_force_compile": True,
                 "edge_force_cache_hit": cache_hit,
                 "edge_force_gate_accepted": compiled.gate_result.accepted,
+                "edge_force_compile_cache_policy": policy_decision.cache_policy,
+                "edge_force_cache_seen_count": policy_decision.seen_count,
+                "edge_force_cache_compile_count": stats.compile_count,
+                "edge_force_cache_hit_count": stats.cache_hit_count,
+                "edge_force_compile_setup_seconds": stats.compile_setup_seconds,
             }
             if self.config.compile_graph:
                 metrics["_retain_graph_for_backward"] = True
