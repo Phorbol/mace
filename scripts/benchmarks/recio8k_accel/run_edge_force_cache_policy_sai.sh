@@ -54,6 +54,8 @@ python -m mace.cli.run_train \
   --optimizer=hybrid_muon \
   --edge_force_compile \
   --edge_force_compile_tracing_mode=real \
+  --edge_force_compile_atol="${EDGE_FORCE_ATOL:-5e-5}" \
+  --edge_force_compile_rtol="${EDGE_FORCE_RTOL:-2e-4}" \
   --edge_force_compile_cache_policy="${EDGE_FORCE_CACHE_POLICY:-repeat_only}" \
   --edge_force_compile_min_repeats="${EDGE_FORCE_MIN_REPEATS:-2}" \
   --edge_force_compile_mode=default \

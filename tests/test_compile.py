@@ -902,6 +902,10 @@ def test_arg_parser_accepts_edge_force_compile_flags():
             "--no-edge_force_compile_graph",
             "--no-edge_force_compile_dynamic",
             "--no-edge_force_compile_cache_hit_gate",
+            "--edge_force_compile_atol",
+            "5e-5",
+            "--edge_force_compile_rtol",
+            "2e-4",
             "--edge_force_compile_cache_policy",
             "repeat_only",
             "--edge_force_compile_min_repeats",
@@ -923,6 +927,8 @@ def test_arg_parser_accepts_edge_force_compile_flags():
     assert args.edge_force_compile_graph is False
     assert args.edge_force_compile_dynamic is False
     assert args.edge_force_compile_cache_hit_gate is False
+    assert args.edge_force_compile_atol == 5e-5
+    assert args.edge_force_compile_rtol == 2e-4
     assert args.edge_force_compile_cache_policy == "repeat_only"
     assert args.edge_force_compile_min_repeats == 3
     assert args.edge_force_compile_bucket_atoms == "256,512"

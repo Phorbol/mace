@@ -146,6 +146,18 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=True,
     )
     parser.add_argument(
+        "--edge_force_compile_atol",
+        help="Absolute tolerance for edge-force compile equivalence gates",
+        type=float,
+        default=1.0e-5,
+    )
+    parser.add_argument(
+        "--edge_force_compile_rtol",
+        help="Relative tolerance for edge-force compile equivalence gates",
+        type=float,
+        default=1.0e-4,
+    )
+    parser.add_argument(
         "--edge_force_compile_cache_policy",
         help="Cache policy for edge-force compile",
         type=str,
