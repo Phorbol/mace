@@ -574,6 +574,57 @@ def test_take_step_default_guards_preserve_optimizer_and_ema_update():
     assert metrics["loss_skipped"] is False
 
 
+class _RecordingCheckpointHandler:
+    def __init__(self):
+        self.calls = []
+
+    def save(self, **kwargs):
+        self.calls.append(kwargs)
+
+
+def test_save_checkpoint_after_guard_blocks_nonfinite_gradients():
+    from mace.tools.train import _save_checkpoint_after_guard
+    from mace.tools.training_guards import NonFiniteGradGuard
+
+    param = torch.nn.Parameter(torch.tensor([1.0]))
+    param.grad = torch.tensor([float("inf")])
+    guard = NonFiniteGradGuard()
+    guard.update(torch.tensor(float("inf")))
+    handler = _RecordingCheckpointHandler()
+
+    with pytest.raises(RuntimeError, match="Non-finite gradient norm"):
+        _save_checkpoint_after_guard(
+            checkpoint_handler=handler,
+            state=object(),
+            epochs=3,
+            keep_last=True,
+            grad_guard=guard,
+            named_parameters=lambda: [("weight", param)],
+        )
+
+    assert handler.calls == []
+
+
+def test_save_checkpoint_after_guard_saves_when_guard_is_clear():
+    from mace.tools.train import _save_checkpoint_after_guard
+
+    handler = _RecordingCheckpointHandler()
+    state = object()
+
+    _save_checkpoint_after_guard(
+        checkpoint_handler=handler,
+        state=state,
+        epochs=4,
+        keep_last=False,
+        grad_guard=None,
+        named_parameters=lambda: [],
+    )
+
+    assert handler.calls == [
+        {"state": state, "epochs": 4, "keep_last": False}
+    ]
+
+
 def test_train_one_epoch_passes_non_blocking_transfer_to_take_step(monkeypatch):
     import importlib
 

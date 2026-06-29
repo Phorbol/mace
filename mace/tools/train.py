@@ -68,6 +68,20 @@ def _make_loss_skip_controller(
     )
 
 
+def _save_checkpoint_after_guard(
+    *,
+    checkpoint_handler: CheckpointHandler,
+    state: CheckpointState,
+    epochs: int,
+    keep_last: bool,
+    grad_guard: NonFiniteGradGuard | None,
+    named_parameters,
+) -> None:
+    if grad_guard is not None:
+        grad_guard.raise_if_nonfinite(named_parameters)
+    checkpoint_handler.save(state=state, epochs=epochs, keep_last=keep_last)
+
+
 def valid_err_log(
     valid_loss,
     eval_metrics,
@@ -363,10 +377,13 @@ def train(
                             else nullcontext()
                         )
                         with param_context:
-                            checkpoint_handler.save(
+                            _save_checkpoint_after_guard(
+                                checkpoint_handler=checkpoint_handler,
                                 state=CheckpointState(model, optimizer, lr_scheduler),
                                 epochs=epoch,
                                 keep_last=True,
+                                grad_guard=nonfinite_grad_guard,
+                                named_parameters=model.named_parameters,
                             )
                 else:
                     lowest_loss = valid_loss
@@ -375,10 +392,13 @@ def train(
                         ema.average_parameters() if ema is not None else nullcontext()
                     )
                     with param_context:
-                        checkpoint_handler.save(
+                        _save_checkpoint_after_guard(
+                            checkpoint_handler=checkpoint_handler,
                             state=CheckpointState(model, optimizer, lr_scheduler),
                             epochs=epoch,
                             keep_last=keep_last,
+                            grad_guard=nonfinite_grad_guard,
+                            named_parameters=model.named_parameters,
                         )
                         keep_last = False or save_all_checkpoints
         if distributed:
