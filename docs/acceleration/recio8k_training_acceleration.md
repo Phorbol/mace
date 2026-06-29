@@ -59,6 +59,19 @@ The local DeepMD-kit reference checkout is `/home/sjtu-caoxiaoming/gengjianrui/t
 
 Current MACE implementation therefore treats DPA4-inspired bf16 and compile as conservative opt-in paths: AMP is allowed only where hardware supports it, while training compile preserves correctness through eager fallback until force-safe compiled subgraphs are proven.
 
+## Force-Loss Compile Design
+
+MACE force training must keep forces as `-dE/dR` and must let the force loss backpropagate through that gradient to model parameters. In code this is the `get_outputs(..., training=True)` path, where `torch.autograd.grad(..., create_graph=True)` is required. A compiled path that drops this second-order gradient would train a different objective, even if the forward forces look numerically close for one batch.
+
+The accepted compile roadmap is therefore staged:
+
+1. Keep whole-model training compile as an opt-in wrapper with explicit eager fallback for conservative force losses. The RECIO parser now reports `train_compile_fallback` so benchmark summaries cannot accidentally count fallback-eager runs as compile speedups.
+2. Add a dedicated force-loss micro-benchmark/profiler that runs the same RECIO batch in eager, energy-only compile, and force-loss compile modes, then records compile status, timing, memory, and the fallback reason. This should be the next code step before changing model internals.
+3. Only compile subgraphs whose outputs remain differentiable through the force-loss second-order path. Candidate regions are pure tensor compute blocks such as radial/readout MLPs or future cueq-backed tensor-product kernels, not the `autograd.grad` force construction itself unless an FX/AOT path proves second-order correctness.
+4. Gate any subgraph compile change with unit tests comparing energy, forces, and parameter gradients against eager on a small batch, followed by a RECIO/8k sbatch smoke with unchanged validation trend. A speedup without these equivalence checks is not acceptable for MACE because it may silently violate the conservative-force training objective.
+
+This differs from copying DeepMD DPA4 directly: DeepMD relies on model-specific make_fx/AOTInductor plumbing, shape control, detach repair, and Inductor patches for its second-order graph. MACE should borrow the principle, not the implementation, and should keep compatibility with cueq by placing compile/kernel boundaries around established equivariant operations rather than replacing MACE architecture.
+
 ## Training Infrastructure Reference
 
 The local TACE reference checkout is `/home/sjtu-caoxiaoming/gengjianrui/trae-research-code/reference_repos/tace` at commit `c669bee`. The useful lessons for a larger MACE training refactor are infrastructure-level rather than model-copying:
