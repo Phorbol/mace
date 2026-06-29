@@ -223,3 +223,47 @@ def test_run_probe_uses_selected_equivalence_candidate(monkeypatch):
     }
     assert payload["force_loss_equivalence"]["candidate"] == "compile_readouts"
     assert payload["force_loss_equivalence"]["ok"] is True
+
+def test_build_equivalence_candidate_compiles_radial_embedding(monkeypatch):
+    probe = load_probe()
+    compiled = []
+
+    class Tiny(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.radial_embedding = torch.nn.Linear(2, 2)
+            self.readouts = torch.nn.ModuleList([torch.nn.Linear(2, 1)])
+
+    class FakeCompiled(torch.nn.Module):
+        def __init__(self, wrapped):
+            super().__init__()
+            self.wrapped = wrapped
+
+        def forward(self, *args, **kwargs):
+            return self.wrapped(*args, **kwargs)
+
+    def fake_compile(module, *, mode, fullgraph):
+        compiled.append((module, mode, fullgraph))
+        return FakeCompiled(module)
+
+    monkeypatch.setattr(probe.torch, "compile", fake_compile)
+    model = Tiny()
+
+    candidate = probe.build_equivalence_candidate_model(
+        model,
+        candidate="compile_radial_embedding",
+        compile_mode="default",
+        compile_fullgraph=False,
+    )
+
+    assert candidate is not model
+    assert isinstance(candidate.radial_embedding, FakeCompiled)
+    assert len(compiled) == 1
+    assert compiled[0][1:] == ("default", False)
+    assert isinstance(model.radial_embedding, torch.nn.Linear)
+
+
+def test_equivalence_candidate_choices_include_radial_embedding():
+    probe = load_probe()
+
+    assert "compile_radial_embedding" in probe.EQUIVALENCE_CANDIDATES

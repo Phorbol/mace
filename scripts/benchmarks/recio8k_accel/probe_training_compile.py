@@ -35,7 +35,11 @@ class ProbeMode:
     loss_kind: str
 
 
-EQUIVALENCE_CANDIDATES = ("eager_copy", "compile_readouts")
+EQUIVALENCE_CANDIDATES = (
+    "eager_copy",
+    "compile_readouts",
+    "compile_radial_embedding",
+)
 
 
 PROBE_MODES: tuple[ProbeMode, ...] = (
@@ -341,6 +345,17 @@ def build_equivalence_candidate_model(
                 mode=compile_mode,
                 fullgraph=compile_fullgraph,
             )
+        return candidate_model
+    if candidate == "compile_radial_embedding":
+        if not hasattr(candidate_model, "radial_embedding"):
+            raise ValueError(
+                "compile_radial_embedding candidate requires model.radial_embedding"
+            )
+        candidate_model.radial_embedding = torch.compile(
+            candidate_model.radial_embedding,
+            mode=compile_mode,
+            fullgraph=compile_fullgraph,
+        )
         return candidate_model
     raise ValueError(
         f"unknown equivalence candidate {candidate!r}; "
