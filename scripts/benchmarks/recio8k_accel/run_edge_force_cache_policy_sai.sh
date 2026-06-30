@@ -58,6 +58,9 @@ python -m mace.cli.run_train \
   --edge_force_compile_rtol="${EDGE_FORCE_RTOL:-2e-4}" \
   --edge_force_compile_cache_policy="${EDGE_FORCE_CACHE_POLICY:-repeat_only}" \
   --edge_force_compile_min_repeats="${EDGE_FORCE_MIN_REPEATS:-2}" \
+  --edge_force_compile_bucket_atoms="${EDGE_FORCE_BUCKET_ATOMS:-}" \
+  --edge_force_compile_bucket_edges="${EDGE_FORCE_BUCKET_EDGES:-}" \
+  --edge_force_compile_bucket_margin="${EDGE_FORCE_BUCKET_MARGIN:-1.0}" \
   --edge_force_compile_mode=default \
   --edge_force_compile_dynamic \
   --edge_force_compile_graph \

@@ -186,6 +186,55 @@ def edge_force_compile_shape_cache_key(
     )
 
 
+def _select_edge_force_bucket(
+    size: int, buckets: tuple[int, ...], *, bucket_margin: float
+) -> int | None:
+    for bucket in buckets:
+        if bucket >= size:
+            if bucket_margin > 0.0 and bucket > size * bucket_margin:
+                return None
+            return bucket
+    return None
+
+
+def edge_force_compile_bucket_cache_key(
+    *,
+    num_atoms: int,
+    num_edges: int,
+    input_shapes: dict[str, tuple[int, ...]],
+    bucket_atoms: tuple[int, ...],
+    bucket_edges: tuple[int, ...],
+    bucket_margin: float,
+) -> tuple | None:
+    atom_bucket = _select_edge_force_bucket(
+        int(num_atoms), bucket_atoms, bucket_margin=float(bucket_margin)
+    )
+    edge_bucket = _select_edge_force_bucket(
+        int(num_edges), bucket_edges, bucket_margin=float(bucket_margin)
+    )
+    if atom_bucket is None or edge_bucket is None:
+        return None
+
+    bucketed_shapes: dict[str, tuple[int, ...]] = {}
+    for name, shape in input_shapes.items():
+        bucketed_shape = tuple(
+            atom_bucket
+            if int(dim) == int(num_atoms)
+            else edge_bucket
+            if int(dim) == int(num_edges)
+            else int(dim)
+            for dim in shape
+        )
+        bucketed_shapes[name] = bucketed_shape
+
+    return (
+        "bucket",
+        atom_bucket,
+        edge_bucket,
+        tuple((name, tuple(shape)) for name, shape in sorted(bucketed_shapes.items())),
+    )
+
+
 def edge_force_cache_hit_gate_result(
     *, comparison: dict[str, Any], cache_key: tuple
 ) -> EdgeForceCompileGateResult:
@@ -330,6 +379,10 @@ def _compare_edge_force_snapshots(
     }
 
 
+def _select_by_node_heads(values: torch.Tensor, node_heads: torch.Tensor) -> torch.Tensor:
+    return torch.gather(values, 1, node_heads.to(torch.int64).reshape(-1, 1)).squeeze(1)
+
+
 def _mace_energy_from_edge_vectors(
     model: torch.nn.Module,
     data: dict[str, torch.Tensor],
@@ -341,16 +394,16 @@ def _mace_energy_from_edge_vectors(
         raise TypeError("edge-force compiled loss currently supports ScaleShiftMACE only")
 
     num_graphs = int(data["ptr"].numel() - 1)
-    num_atoms_arange = torch.arange(data["positions"].shape[0], device=vectors.device)
-    node_heads = (
-        data["head"][data["batch"]]
-        if "head" in data
-        else torch.zeros_like(data["batch"])
-    ).to(torch.int64)
+    if "head" in data:
+        node_heads = torch.gather(
+            data["head"].to(torch.int64), 0, data["batch"].to(torch.int64)
+        )
+    else:
+        node_heads = torch.zeros_like(data["batch"], dtype=torch.int64)
 
-    node_e0 = model.atomic_energies_fn(data["node_attrs"])[
-        num_atoms_arange.to(torch.int64), node_heads
-    ]
+    node_e0 = _select_by_node_heads(
+        model.atomic_energies_fn(data["node_attrs"]), node_heads
+    )
     e0 = scatter_sum(src=node_e0, index=data["batch"], dim=0, dim_size=num_graphs).to(
         vectors.dtype
     )
@@ -407,9 +460,7 @@ def _mace_energy_from_edge_vectors(
     for i, readout in enumerate(model.readouts):
         feat_idx = -1 if len(model.readouts) == 1 else i
         node_es_list.append(
-            readout(node_feats_list[feat_idx], node_heads)[
-                num_atoms_arange.to(torch.int64), node_heads
-            ]
+            _select_by_node_heads(readout(node_feats_list[feat_idx], node_heads), node_heads)
         )
 
     node_inter_es = torch.sum(torch.stack(node_es_list, dim=0), dim=0)
@@ -625,6 +676,8 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             "edge_force_compile": False,
             "edge_force_compile_disabled": True,
             "edge_force_compile_disabled_reason": disabled_reason,
+            "edge_force_num_atoms": int(batch.positions.shape[0]),
+            "edge_force_num_edges": int(batch.edge_index.shape[1]),
         }
         if policy_decision is not None:
             metrics.update(
@@ -643,11 +696,21 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         batch,
         input_names: tuple[str, ...],
         data_dict: dict[str, torch.Tensor],
-    ) -> tuple:
+    ) -> tuple | None:
+        input_shapes = {name: tuple(data_dict[name].shape) for name in input_names}
+        if self.config.cache_policy == "bucket":
+            return edge_force_compile_bucket_cache_key(
+                num_atoms=batch.positions.shape[0],
+                num_edges=batch.edge_index.shape[1],
+                input_shapes=input_shapes,
+                bucket_atoms=self.config.bucket_atoms,
+                bucket_edges=self.config.bucket_edges,
+                bucket_margin=self.config.bucket_margin,
+            )
         return edge_force_compile_shape_cache_key(
             num_atoms=batch.positions.shape[0],
             num_edges=batch.edge_index.shape[1],
-            input_shapes={name: tuple(data_dict[name].shape) for name in input_names},
+            input_shapes=input_shapes,
         )
 
     def _compile_step(self, *, batch, loss_fn, cache_key: tuple) -> _CompiledEdgeForceStep:
@@ -750,15 +813,19 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 input_names=input_names,
                 data_dict=data_dict,
             )
-            if (
-                self.config.cache_policy == "bucket"
-                and (not self.config.bucket_atoms or not self.config.bucket_edges)
-            ):
-                return self._eager_force_loss(
-                    batch=batch,
-                    loss_fn=loss_fn,
-                    disabled_reason="no_bucket",
-                )
+            if self.config.cache_policy == "bucket":
+                if not self.config.bucket_atoms or not self.config.bucket_edges:
+                    return self._eager_force_loss(
+                        batch=batch,
+                        loss_fn=loss_fn,
+                        disabled_reason="no_bucket",
+                    )
+                if cache_key is None:
+                    return self._eager_force_loss(
+                        batch=batch,
+                        loss_fn=loss_fn,
+                        disabled_reason="no_bucket_match",
+                    )
             compiled = self.cache.get(cache_key)
             cache_hit = compiled is not None
             policy_decision = self.cache_policy_state.record_and_decide(
@@ -879,6 +946,8 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 "edge_force_compile": True,
                 "edge_force_cache_hit": cache_hit,
                 "edge_force_gate_accepted": compiled.gate_result.accepted,
+                "edge_force_num_atoms": int(batch.positions.shape[0]),
+                "edge_force_num_edges": int(batch.edge_index.shape[1]),
                 "edge_force_compile_cache_policy": policy_decision.cache_policy,
                 "edge_force_cache_seen_count": policy_decision.seen_count,
                 "edge_force_cache_compile_count": stats.compile_count,

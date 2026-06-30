@@ -434,6 +434,18 @@ def test_edge_force_compile_input_names_exclude_labels_and_geometry():
     assert names == ("positions", "edge_index", "node_attrs", "batch", "ptr", "head")
 
 
+def test_select_by_node_heads_matches_advanced_indexing():
+    from mace.tools.training_compile import _select_by_node_heads
+
+    values = torch.tensor(
+        [[1.0, 10.0, 100.0], [2.0, 20.0, 200.0], [3.0, 30.0, 300.0]]
+    )
+    node_heads = torch.tensor([2, 0, 1])
+    expected = values[torch.arange(values.shape[0]), node_heads]
+
+    assert torch.equal(_select_by_node_heads(values, node_heads), expected)
+
+
 def test_edge_force_compile_shape_cache_key_ignores_batch_identity():
     from mace.tools.training_compile import edge_force_compile_shape_cache_key
 
@@ -540,6 +552,63 @@ def test_parse_edge_force_bucket_sizes_sorts_and_validates_values():
     assert parse_edge_force_bucket_sizes("512,256,512") == (256, 512)
     with pytest.raises(ValueError, match="positive integers"):
         parse_edge_force_bucket_sizes("128,0")
+
+
+def test_edge_force_compile_bucket_cache_key_groups_nearby_shapes():
+    from mace.tools.training_compile import edge_force_compile_bucket_cache_key
+
+    left = edge_force_compile_bucket_cache_key(
+        num_atoms=286,
+        num_edges=4632,
+        input_shapes={
+            "positions": (286, 3),
+            "edge_index": (2, 4632),
+            "node_attrs": (286, 4),
+            "batch": (286,),
+            "ptr": (33,),
+        },
+        bucket_atoms=(320,),
+        bucket_edges=(5000,),
+        bucket_margin=2.0,
+    )
+    right = edge_force_compile_bucket_cache_key(
+        num_atoms=290,
+        num_edges=4700,
+        input_shapes={
+            "positions": (290, 3),
+            "edge_index": (2, 4700),
+            "node_attrs": (290, 4),
+            "batch": (290,),
+            "ptr": (33,),
+        },
+        bucket_atoms=(320,),
+        bucket_edges=(5000,),
+        bucket_margin=2.0,
+    )
+
+    assert left == right
+    assert left is not None
+    assert left[0] == "bucket"
+    assert ("positions", (320, 3)) in left[-1]
+    assert ("edge_index", (2, 5000)) in left[-1]
+
+
+def test_edge_force_compile_bucket_cache_key_rejects_oversized_bucket():
+    from mace.tools.training_compile import edge_force_compile_bucket_cache_key
+
+    cache_key = edge_force_compile_bucket_cache_key(
+        num_atoms=286,
+        num_edges=4632,
+        input_shapes={
+            "positions": (286, 3),
+            "edge_index": (2, 4632),
+        },
+        bucket_atoms=(512,),
+        bucket_edges=(8192,),
+        bucket_margin=1.15,
+    )
+
+    assert cache_key is None
 
 
 def test_edge_force_compile_cache_hit_gate_result_records_failure():
@@ -656,8 +725,9 @@ def test_edge_force_compiled_loss_repeat_only_uses_eager_before_threshold(monkey
 
     monkeypatch.setattr(prepared, "_compile_step", fail_compile)
 
+    batch = _BatchDictAdapter(create_batch("cpu"))
     loss, metrics = prepared.compiled_force_training_loss(
-        batch=_BatchDictAdapter(create_batch("cpu")),
+        batch=batch,
         loss_fn=_EnergyForcesMiniLoss(),
         output_args={"forces": True, "virials": False, "stress": False},
     )
@@ -667,6 +737,8 @@ def test_edge_force_compiled_loss_repeat_only_uses_eager_before_threshold(monkey
     assert metrics["edge_force_compile_disabled_reason"] == "min_repeats"
     assert metrics["edge_force_compile_cache_policy"] == "repeat_only"
     assert metrics["edge_force_cache_seen_count"] == 1
+    assert metrics["edge_force_num_atoms"] == batch.positions.shape[0]
+    assert metrics["edge_force_num_edges"] == batch.edge_index.shape[1]
 
 
 def test_edge_force_compiled_loss_gates_shape_cache_hits():

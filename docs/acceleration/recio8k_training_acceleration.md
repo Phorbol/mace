@@ -422,3 +422,19 @@ A real RECIO/8k strict smoke was run after adding the edge-force cache policy la
 This proves three useful things. First, the policy path works on a real MACE training job with cueq-minus-linear and HybridMuon: epoch 0 used eager force training with `edge_force_compile_disabled_reason=min_repeats`, and epoch 1 entered strict graph compile with `edge_force_gate_accepted=true`. Second, the original `1e-5` absolute gate was too tight for float32+CUEQ+Inductor on RECIO; one strict run (`581317`) failed with max force difference `1.86e-5`, while `5e-5` accepted the same real path. Third, `repeat_only` is only a safety policy, not a speed solution: the second epoch compiled each repeated shape but still had `edge_force_cache_hit=false`, so setup cost dominated and the run was intentionally cancelled to avoid wasting GPU time.
 
 The next speed-focused implementation must therefore move beyond exact-shape repeat-only caching. The practical next target is bucketed padding or a smaller DPA4-style compiled boundary whose cache key does not vary with batch identity. Any bucket implementation must first pass energy, force, scalar loss, and selected parameter-gradient equivalence before being wired into training.
+
+## Edge-Force Bucket Cache Follow-up on RECIO/8k
+
+A bucket-cache experiment was run after adding bucket cache keys and shape metrics. The goal was to test whether Inductor `dynamic=True` could reuse a real-traced edge-force graph across nearby RECIO batches without padding. This was tested with `HybridMuon`, cueq-minus-linear, strict no-fallback mode, atom buckets `320,512,768,1024,1536,2048`, edge buckets `8192,16384,32768,65536,131072,262144`, and `bucket_margin=2.0`.
+
+| Job | Code variant | Result | Evidence |
+| --- | --- | --- | --- |
+| `581357` | bucket key only | failed on second batch | first batch accepted; second batch hit `aten.index` fake-tensor shape error with baked atom length `469` |
+| `581376` | promoted `_num_atoms_arange` as explicit input | failed on second batch | first batch accepted; second batch hit `aten.expand(..., [469])` |
+| `581406` | replaced node-head energy/readout selection with `gather` | failed on second batch | first batch accepted; second batch still hit `aten.expand(..., [469])` |
+| `581417` | also replaced `head[batch]` with `gather` | failed on second batch | first batch accepted; second batch still hit `aten.expand(..., [469])` |
+
+The first batch in these runs had `edge_force_num_atoms=469` and `edge_force_num_edges=12276`, with strict gate acceptance and compile setup around 34-35 s. Every follow-up failed before recording a second opt row. This is useful negative evidence: changing the cache key to bucket shape is not sufficient because the real `make_fx` trace still bakes the first batch atom dimension into the FX graph. `torch.compile(dynamic=True)` cannot recover full atom-count polymorphism from that already-specialized graph.
+
+The next speed path should therefore not spend more effort on bucket keys without padding. The viable options are: (1) implement real padding plus masks so runtime tensors match the traced bucket sizes without changing energy/force/loss semantics, or (2) move the compiled boundary closer to DPA4's pure tensor core and make all variable graph data explicit symbolic inputs. Until one of those is implemented, `bucket` mode is diagnostic only and should be used with strict gate/no-fallback smoke tests, not as a claimed acceleration path.
+
