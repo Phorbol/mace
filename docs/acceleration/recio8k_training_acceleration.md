@@ -396,3 +396,29 @@ A cache-fixed RECIO supercell timing gate completed on SAI `4V100` after install
 
 This is the first production-like GPU D3 speed evidence: the nvalchemi CUDA backend is faster than both nvalchemi CPU and `torch_dftd` CUDA on RECIO periodic supercells while staying close in forces. The nonzero total D3 energy offset versus `torch_dftd` is small per atom but should be tracked across more chemistries before changing any default backend.
 
+
+
+## Edge-Force Cache Policy Smoke on RECIO/8k
+
+A real RECIO/8k strict smoke was run after adding the edge-force cache policy layer and CLI controls. This was not a toy task: the run used the full `/home/sjtu-caoxiaoming/gengjianrui/test/mace/RECIO/8k/train.xyz` split, `ScaleShiftMACE`, `num_interactions=2`, `num_channels=64`, `max_L=1`, `correlation=3`, batch size 32, `default_dtype=float32`, cueq-minus-linear (`optimize_linear=False`, channelwise/symmetric/FCTP/fusion enabled), and `HybridMuon`.
+
+| Check | Value |
+| --- | ---: |
+| Slurm job | `581318` |
+| Node | `4v100pxn10` |
+| Final state | `CANCELLED` after sufficient negative-speed evidence |
+| Elapsed | `00:07:52` |
+| Edge-force policy | `repeat_only`, `min_repeats=2` |
+| Gate tolerance | `atol=5e-5`, `rtol=2e-4` |
+| Epoch 0 opt rows | `474` eager policy skips |
+| Epoch 0 compile rows | `0` |
+| Epoch 1 sampled opt rows | `25` |
+| Epoch 1 compile rows | `25` |
+| Epoch 1 cache hits | `0` |
+| Epoch 1 mean setup seconds | `11.95 s` |
+| Epoch 1 mean opt-step wall time | `16.22 s` |
+| Validation after epoch 0 | `MAE_E_per_atom=666.55 meV`, `MAE_F=702.98 meV/A` |
+
+This proves three useful things. First, the policy path works on a real MACE training job with cueq-minus-linear and HybridMuon: epoch 0 used eager force training with `edge_force_compile_disabled_reason=min_repeats`, and epoch 1 entered strict graph compile with `edge_force_gate_accepted=true`. Second, the original `1e-5` absolute gate was too tight for float32+CUEQ+Inductor on RECIO; one strict run (`581317`) failed with max force difference `1.86e-5`, while `5e-5` accepted the same real path. Third, `repeat_only` is only a safety policy, not a speed solution: the second epoch compiled each repeated shape but still had `edge_force_cache_hit=false`, so setup cost dominated and the run was intentionally cancelled to avoid wasting GPU time.
+
+The next speed-focused implementation must therefore move beyond exact-shape repeat-only caching. The practical next target is bucketed padding or a smaller DPA4-style compiled boundary whose cache key does not vary with batch identity. Any bucket implementation must first pass energy, force, scalar loss, and selected parameter-gradient equivalence before being wired into training.
