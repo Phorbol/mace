@@ -436,6 +436,41 @@ def test_epoch_profile_gates_shape_cache_hits_by_default():
     assert profile.should_gate_cache_hit(cache_hit=True, scope="batch", enabled=True) is False
     assert profile.should_gate_cache_hit(cache_hit=True, scope="shape", enabled=False) is False
 
+def test_epoch_profile_parser_accepts_skip_training_step():
+    profile = load_epoch_profile()
+
+    args = profile.build_parser().parse_args(["--skip-training-step"])
+
+    assert args.skip_training_step is True
+
+
+def test_epoch_profile_resets_compile_state_only_when_requested(monkeypatch):
+    profile = load_epoch_profile()
+    calls = []
+    monkeypatch.setattr(profile, "_reset_compile_state", lambda: calls.append("reset"))
+
+    default_args = profile.build_parser().parse_args([])
+    profile.reset_compile_state_if_requested(default_args)
+    assert calls == []
+
+    enabled_args = profile.build_parser().parse_args(["--edge-reset-compile-state"])
+    profile.reset_compile_state_if_requested(enabled_args)
+    assert calls == ["reset"]
+
+
+def test_epoch_profile_clears_compile_cache_only_when_requested():
+    profile = load_epoch_profile()
+
+    default_args = profile.build_parser().parse_args([])
+    cache = {("shape", 1): object()}
+    profile.clear_compile_cache_on_miss_if_requested(cache, default_args)
+    assert cache
+
+    enabled_args = profile.build_parser().parse_args(["--edge-clear-cache-on-miss"])
+    profile.clear_compile_cache_on_miss_if_requested(cache, enabled_args)
+    assert cache == {}
+
+
 def test_epoch_profile_builds_cache_hit_gate_result_from_comparison():
     profile = load_epoch_profile()
     comparison = {"ok": False, "failed_checks": ["forces"]}

@@ -234,6 +234,27 @@ def test_edge_force_cache_policy_wrapper_defaults_to_safe_fx_dynamic_compile():
     assert '--lr_wsd_decay_type="${LR_WSD_DECAY_TYPE:-inverse_linear}"' in wrapper
 
 
+def test_edge_force_epoch_profile_sbatch_uses_sai_safe_defaults():
+    sbatch = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "benchmarks"
+        / "recio8k_accel"
+        / "edge-force-training-epoch-profile.sbatch"
+    ).read_text()
+
+    assert "#SBATCH --ntasks-per-node" not in sbatch
+    assert "#SBATCH --cpus-per-task" not in sbatch
+    assert "#SBATCH --mem" not in sbatch
+    assert 'conda activate "${MACE_EDGE_EPOCH_CONDA_ENV:-mace_develop}"' in sbatch
+    assert "MACE_EDGE_EPOCH_RESET_COMPILE_STATE" in sbatch
+    assert "--edge-reset-compile-state" in sbatch
+    assert "MACE_EDGE_EPOCH_CLEAR_CACHE_ON_MISS" in sbatch
+    assert "--edge-clear-cache-on-miss" in sbatch
+    assert "MACE_EDGE_EPOCH_SKIP_TRAINING_STEP" in sbatch
+    assert "--skip-training-step" in sbatch
+
+
 def test_generator_writes_wsd_scheduler_cases(tmp_path):
     generator = load_script("generate_recio8k_scaling_cases.py")
     case = generator.build_batch_case(

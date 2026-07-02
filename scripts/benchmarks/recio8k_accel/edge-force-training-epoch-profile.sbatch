@@ -4,12 +4,11 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=1
-#SBATCH --ntasks-per-node=1
 #SBATCH --qos=rush-1o2gpu
 
 set -euo pipefail
 source /opt/envs/anaconda3.env
-conda activate mace_env
+conda activate "${MACE_EDGE_EPOCH_CONDA_ENV:-mace_develop}"
 export PYTHONPATH=/home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace:${PYTHONPATH:-}
 
 cueq_profile="${MACE_EDGE_EPOCH_CUEQ_PROFILE:-minus_linear}"
@@ -18,6 +17,15 @@ extra_args=()
 if [[ -n "${MACE_EDGE_EPOCH_EXTRA_ARGS:-}" ]]; then
   # shellcheck disable=SC2206
   extra_args=(${MACE_EDGE_EPOCH_EXTRA_ARGS})
+fi
+if [[ "${MACE_EDGE_EPOCH_RESET_COMPILE_STATE:-False}" == "True" ]]; then
+  extra_args+=(--edge-reset-compile-state)
+fi
+if [[ "${MACE_EDGE_EPOCH_CLEAR_CACHE_ON_MISS:-False}" == "True" ]]; then
+  extra_args+=(--edge-clear-cache-on-miss)
+fi
+if [[ "${MACE_EDGE_EPOCH_SKIP_TRAINING_STEP:-False}" == "True" ]]; then
+  extra_args+=(--skip-training-step)
 fi
 case "${cueq_profile}" in
   full)

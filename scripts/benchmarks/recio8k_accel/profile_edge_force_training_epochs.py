@@ -40,6 +40,7 @@ from scripts.benchmarks.recio8k_accel.profile_edge_force_training_steps import (
     _force_loss_fn,
     _named_parameter_grads,
     _position_snapshot,
+    _reset_compile_state,
     _sync,
     compare_snapshots,
     parse_csv_choices,
@@ -107,6 +108,16 @@ def compile_shape_cache_key(
 
 def should_gate_cache_hit(*, cache_hit: bool, scope: str, enabled: bool) -> bool:
     return enabled and cache_hit and scope == "shape"
+
+
+def reset_compile_state_if_requested(args: argparse.Namespace) -> None:
+    if args.edge_reset_compile_state:
+        _reset_compile_state()
+
+
+def clear_compile_cache_on_miss_if_requested(cache: dict, args: argparse.Namespace) -> None:
+    if args.edge_clear_cache_on_miss:
+        cache.clear()
 
 
 def build_cache_hit_gate_result(*, comparison: dict, cache_key: tuple) -> dict:
@@ -412,6 +423,7 @@ def _make_edge_compile_step(
     loss_fn,
     args: argparse.Namespace,
 ) -> CachedStep:
+    reset_compile_state_if_requested(args)
     setup_start = time.perf_counter()
     data_dict, _, _, vectors = _edge_vector_inputs(batch)
     input_names = edge_compile_input_names(data_dict.keys())
@@ -514,6 +526,7 @@ def _loss_for_mode(
         cached = cache.get(key)
         cache_hit = cached is not None
         if cached is None:
+            clear_compile_cache_on_miss_if_requested(cache, args)
             cached = _make_edge_compile_step(
                 model=model,
                 batch=batch,
@@ -522,6 +535,7 @@ def _loss_for_mode(
                 args=args,
             )
             cache[key] = cached
+            model.zero_grad(set_to_none=True)
         elif cached.input_names != input_names:
             raise RuntimeError(
                 f"edge compile cache input mismatch: {cached.input_names} != {input_names}"
@@ -606,10 +620,15 @@ def run_case(
                 args=args,
                 cache=cache,
             )
-            loss.backward()
-            if args.max_grad_norm > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-            optimizer.step()
+            if args.skip_training_step:
+                loss_value = float(loss.detach().cpu())
+                model.zero_grad(set_to_none=True)
+            else:
+                loss.backward()
+                if args.max_grad_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                optimizer.step()
+                loss_value = float(loss.detach().cpu())
             _sync(device)
             elapsed_ms = (time.perf_counter() - start) * 1.0e3
             setup_ms = float(metadata.get("setup_ms", 0.0))
@@ -621,7 +640,7 @@ def run_case(
                 "num_edges": int(batch.edge_index.shape[1]),
                 "total_ms": max(0.0, elapsed_ms - setup_ms),
                 "elapsed_ms_including_setup": elapsed_ms,
-                "loss": float(loss.detach().cpu()),
+                "loss": loss_value,
                 **metadata,
             }
             steps.append(step)
@@ -683,6 +702,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--forces-weight", type=float, default=1000.0)
     parser.add_argument("--max-grad-norm", type=float, default=10.0)
     parser.add_argument("--seed", type=int, default=123)
+    parser.add_argument("--skip-training-step", action="store_true")
     parser.add_argument("--case-worker", action="store_true", help=argparse.SUPPRESS)
     _append_bool_flag(parser, "enable-cueq", True)
     parser.add_argument("--cueq-conv-fusion", action="store_true", default=None)
@@ -694,6 +714,8 @@ def build_parser() -> argparse.ArgumentParser:
     _append_bool_flag(parser, "edge-strip-detach", True)
     _append_bool_flag(parser, "edge-compile-graph", True)
     _append_bool_flag(parser, "edge-compile-dynamic", True)
+    _append_bool_flag(parser, "edge-reset-compile-state", False)
+    _append_bool_flag(parser, "edge-clear-cache-on-miss", False)
     _append_bool_flag(parser, "edge-cache-hit-gate", True)
     _append_bool_flag(parser, "allow-gate-failure", False)
     return parser
