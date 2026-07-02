@@ -9,6 +9,7 @@ import ast
 import dataclasses
 import json
 import logging
+import math
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -915,6 +916,7 @@ def get_optimizer(
     args: argparse.Namespace,
     param_options: Dict[str, Any],
     named_parameters=None,
+    named_modules=None,
 ) -> torch.optim.Optimizer:
     if args.optimizer == "adamw":
         optimizer = torch.optim.AdamW(**param_options)
@@ -936,6 +938,10 @@ def get_optimizer(
             beta=args.beta,
             adam_betas=(args.beta, 0.999),
             amsgrad=args.amsgrad,
+            muon_mode=getattr(args, "hybrid_muon_mode", "2d"),
+            routing=getattr(args, "hybrid_muon_routing", "mace"),
+            module_map=dict(named_modules) if named_modules is not None else None,
+            magma_lite=bool(getattr(args, "hybrid_muon_magma_lite", False)),
         )
         logging.info(summarize_hybrid_muon_routes(route_summary))
         optimizer = HybridMuon(groups, lr=args.lr, weight_decay=args.weight_decay)
@@ -1013,9 +1019,146 @@ def dict_to_array(input_data, heads):
     return result_array
 
 
+def _wsd_lr_factor(
+    current_step: int,
+    *,
+    num_steps: int,
+    warmup_steps: int,
+    warmup_ratio: float,
+    warmup_start_factor: float,
+    stop_lr_ratio: float,
+    decay_phase_ratio: float,
+    decay_type: str,
+) -> float:
+    if num_steps <= 0:
+        raise ValueError("lr_wsd num_steps must be positive")
+    if stop_lr_ratio <= 0.0:
+        raise ValueError("lr_wsd_stop_lr_ratio must be positive")
+    if decay_phase_ratio <= 0.0 or decay_phase_ratio > 1.0:
+        raise ValueError("lr_wsd_decay_phase_ratio must be in (0, 1]")
+    if decay_type not in {"inverse_linear", "cosine", "linear"}:
+        raise ValueError("lr_wsd_decay_type must be inverse_linear, cosine, or linear")
+    if warmup_steps < 0:
+        raise ValueError("lr_wsd_warmup_steps must be non-negative")
+    if warmup_ratio < 0.0 or warmup_ratio >= 1.0:
+        raise ValueError("lr_wsd_warmup_ratio must be in [0, 1)")
+    if warmup_start_factor < 0.0:
+        raise ValueError("lr_wsd_warmup_start_factor must be non-negative")
+
+    warmup = int(warmup_steps) if warmup_steps > 0 else int(warmup_ratio * num_steps)
+    warmup = max(0, min(warmup, num_steps - 1))
+    step = max(0, int(current_step))
+
+    if warmup > 0 and step < warmup:
+        progress = step / float(warmup)
+        return warmup_start_factor + (1.0 - warmup_start_factor) * progress
+
+    decay_num_steps = max(1, num_steps - warmup)
+    post_warmup_step = max(0, step - warmup)
+    decay_phase_steps = max(1, min(int(decay_phase_ratio * num_steps), decay_num_steps))
+    stable_steps = decay_num_steps - decay_phase_steps
+
+    if post_warmup_step < stable_steps:
+        return 1.0
+    if post_warmup_step >= decay_num_steps:
+        return stop_lr_ratio
+
+    tau = (post_warmup_step - stable_steps) / float(decay_phase_steps)
+    tau = min(max(tau, 0.0), 1.0)
+    if decay_type == "inverse_linear":
+        return 1.0 / (tau / stop_lr_ratio + (1.0 - tau))
+    if decay_type == "cosine":
+        return stop_lr_ratio + (1.0 - stop_lr_ratio) * 0.5 * (1.0 + math.cos(math.pi * tau))
+    return 1.0 + (stop_lr_ratio - 1.0) * tau
+
+
+class _WarmupStableDecayLR:
+    def __init__(
+        self,
+        optimizer,
+        *,
+        num_steps: int,
+        warmup_steps: int,
+        warmup_ratio: float,
+        warmup_start_factor: float,
+        stop_lr_ratio: float,
+        decay_phase_ratio: float,
+        decay_type: str,
+    ) -> None:
+        self.optimizer = optimizer
+        self.num_steps = int(num_steps)
+        self.warmup_steps = int(warmup_steps)
+        self.warmup_ratio = float(warmup_ratio)
+        self.warmup_start_factor = float(warmup_start_factor)
+        self.stop_lr_ratio = float(stop_lr_ratio)
+        self.decay_phase_ratio = float(decay_phase_ratio)
+        self.decay_type = str(decay_type)
+        self.base_lrs = [group["lr"] for group in optimizer.param_groups]
+        self.last_epoch = 0
+        self._last_lr = list(self.base_lrs)
+        self.step(epoch=0)
+
+    def _factor(self, step: int) -> float:
+        return _wsd_lr_factor(
+            step,
+            num_steps=self.num_steps,
+            warmup_steps=self.warmup_steps,
+            warmup_ratio=self.warmup_ratio,
+            warmup_start_factor=self.warmup_start_factor,
+            stop_lr_ratio=self.stop_lr_ratio,
+            decay_phase_ratio=self.decay_phase_ratio,
+            decay_type=self.decay_type,
+        )
+
+    def step(self, metrics=None, epoch=None):  # pylint: disable=unused-argument
+        step = self.last_epoch + 1 if epoch is None else int(epoch)
+        self.last_epoch = step
+        factor = self._factor(step)
+        self._last_lr = [base_lr * factor for base_lr in self.base_lrs]
+        for group, lr in zip(self.optimizer.param_groups, self._last_lr):
+            group["lr"] = lr
+
+    def get_last_lr(self) -> list[float]:
+        return list(self._last_lr)
+
+    def state_dict(self) -> dict:
+        return {
+            "num_steps": self.num_steps,
+            "warmup_steps": self.warmup_steps,
+            "warmup_ratio": self.warmup_ratio,
+            "warmup_start_factor": self.warmup_start_factor,
+            "stop_lr_ratio": self.stop_lr_ratio,
+            "decay_phase_ratio": self.decay_phase_ratio,
+            "decay_type": self.decay_type,
+            "base_lrs": list(self.base_lrs),
+            "last_epoch": self.last_epoch,
+            "_last_lr": list(self._last_lr),
+        }
+
+    def load_state_dict(self, state_dict: dict) -> None:
+        self.num_steps = int(state_dict["num_steps"])
+        self.warmup_steps = int(state_dict["warmup_steps"])
+        self.warmup_ratio = float(state_dict["warmup_ratio"])
+        self.warmup_start_factor = float(state_dict["warmup_start_factor"])
+        self.stop_lr_ratio = float(state_dict["stop_lr_ratio"])
+        self.decay_phase_ratio = float(state_dict["decay_phase_ratio"])
+        self.decay_type = str(state_dict["decay_type"])
+        self.base_lrs = list(state_dict["base_lrs"])
+        self.last_epoch = int(state_dict["last_epoch"])
+        self.step(epoch=self.last_epoch)
+
+
 class LRScheduler:
-    def __init__(self, optimizer, args) -> None:
+    def __init__(self, optimizer, args, steps_per_epoch: int | None = None) -> None:
         self.scheduler = args.scheduler
+        requested_interval = getattr(args, "lr_scheduler_interval", "auto")
+        if requested_interval == "auto":
+            self.interval = "step" if args.scheduler == "WSD" else "epoch"
+        else:
+            self.interval = requested_interval
+        if self.interval == "step" and args.scheduler != "WSD":
+            raise ValueError("per-step LR scheduling is currently supported only for WSD")
+        self.steps_per_epoch = None if steps_per_epoch is None else max(1, int(steps_per_epoch))
         self._optimizer_type = (
             args.optimizer
         )  # Schedulefree does not need an optimizer but checkpoint handler does.
@@ -1029,18 +1172,50 @@ class LRScheduler:
                 factor=args.lr_factor,
                 patience=args.scheduler_patience,
             )
+        elif args.scheduler == "WSD":
+            num_steps = max(1, int(args.max_num_epochs))
+            if self.interval == "step":
+                if self.steps_per_epoch is None:
+                    raise ValueError("WSD per-step scheduling requires steps_per_epoch")
+                num_steps *= self.steps_per_epoch
+            self.lr_scheduler = _WarmupStableDecayLR(
+                optimizer=optimizer,
+                num_steps=num_steps,
+                warmup_steps=int(getattr(args, "lr_wsd_warmup_steps", 0)),
+                warmup_ratio=float(getattr(args, "lr_wsd_warmup_ratio", 0.03)),
+                warmup_start_factor=float(
+                    getattr(args, "lr_wsd_warmup_start_factor", 0.1)
+                ),
+                stop_lr_ratio=float(getattr(args, "lr_wsd_stop_lr_ratio", 1.0e-3)),
+                decay_phase_ratio=float(getattr(args, "lr_wsd_decay_phase_ratio", 0.1)),
+                decay_type=str(getattr(args, "lr_wsd_decay_type", "inverse_linear")),
+            )
         else:
             raise RuntimeError(f"Unknown scheduler: '{args.scheduler}'")
+
+    @property
+    def step_on_batch(self) -> bool:
+        return self.scheduler == "WSD" and self.interval == "step"
+
+    def step_batch(self, global_step: int | None = None) -> None:
+        if self._optimizer_type == "schedulefree" or not self.step_on_batch:
+            return
+        step = None if global_step is None else int(global_step)
+        self.lr_scheduler.step(epoch=step)
 
     def step(self, metrics=None, epoch=None):  # pylint: disable=E1123
         if self._optimizer_type == "schedulefree":
             return  # In principle, schedulefree optimizer can be used with a scheduler but the paper suggests it's not necessary
+        if self.step_on_batch:
+            return
         if self.scheduler == "ExponentialLR":
             self.lr_scheduler.step(epoch=epoch)
         elif self.scheduler == "ReduceLROnPlateau":
             self.lr_scheduler.step(  # pylint: disable=E1123
                 metrics=metrics, epoch=epoch
             )
+        elif self.scheduler == "WSD":
+            self.lr_scheduler.step(epoch=epoch)
 
     def __getattr__(self, name):
         if name == "step":

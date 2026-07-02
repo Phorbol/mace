@@ -151,6 +151,8 @@ def _build_optimizer(
     lr: float,
     weight_decay: float,
     muon_lr_factor: float,
+    muon_mode: str,
+    muon_routing: str,
 ) -> OptimizerSpec:
     if optimizer_name == "adam":
         optimizer = torch.optim.Adam(
@@ -168,6 +170,9 @@ def _build_optimizer(
             adam_betas=(0.9, 0.999),
             eps=1.0e-8,
             amsgrad=False,
+            muon_mode=muon_mode,
+            routing=muon_routing,
+            module_map=dict(model.named_modules()),
         )
         optimizer = HybridMuon(groups, lr=lr, weight_decay=weight_decay)
         return OptimizerSpec(name=optimizer_name, optimizer=optimizer, route_summary=summary)
@@ -220,6 +225,8 @@ def profile_optimizer(
         lr=args.lr,
         weight_decay=args.weight_decay,
         muon_lr_factor=args.hybrid_muon_lr_factor,
+        muon_mode=args.hybrid_muon_mode,
+        muon_routing=args.hybrid_muon_routing,
     )
     optimizer = optimizer_spec.optimizer
     timings = _empty_timing()
@@ -315,6 +322,8 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=0.04)
     parser.add_argument("--weight-decay", type=float, default=5.0e-7)
     parser.add_argument("--hybrid-muon-lr-factor", type=float, default=0.1)
+    parser.add_argument("--hybrid-muon-mode", choices=("2d", "slice"), default="2d")
+    parser.add_argument("--hybrid-muon-routing", choices=("mace", "tace"), default="mace")
     parser.add_argument("--energy-weight", type=float, default=40.0)
     parser.add_argument("--forces-weight", type=float, default=1000.0)
     parser.add_argument("--max-grad-norm", type=float, default=10.0)

@@ -9,6 +9,7 @@ import glob
 import json
 import logging
 import os
+from contextlib import nullcontext
 from copy import deepcopy
 from pathlib import Path
 from typing import List, Optional
@@ -77,6 +78,17 @@ from mace.tools.scripts_utils import (
 )
 from mace.tools.tables_utils import create_error_table
 from mace.tools.utils import AtomicNumberTable
+
+
+def _model_build_context_from_args(args):
+    if (
+        getattr(args, "edge_force_compile", False)
+        and getattr(args, "edge_force_compile_tracing_mode", "real") == "symbolic"
+    ):
+        from mace.tools.compile import disable_e3nn_codegen
+
+        return disable_e3nn_codegen()
+    return nullcontext()
 
 
 def _training_guard_config_from_args(args) -> TrainingGuardConfig:
@@ -768,7 +780,15 @@ def run(args) -> None:
     args.avg_num_neighbors = get_avg_num_neighbors(head_configs, args, train_loader, device)
 
     # Model
-    model, output_args = configure_model(args, train_loader, atomic_energies, model_foundation, heads, z_table, head_configs)
+    if args.edge_force_compile and args.edge_force_compile_tracing_mode == "symbolic":
+        logging.info(
+            "Disabling e3nn TorchScript FX codegen during model construction "
+            "for symbolic edge-force compile"
+        )
+    with _model_build_context_from_args(args):
+        model, output_args = configure_model(
+            args, train_loader, atomic_energies, model_foundation, heads, z_table, head_configs
+        )
     model.to(device)
 
     if args.lora:
@@ -831,17 +851,18 @@ def run(args) -> None:
             args.cueq_optimize_fctp,
             args.cueq_conv_fusion,
         )
-        model = run_e3nn_to_cueq(
-            deepcopy(model),
-            device=device,
-            layout=args.cueq_layout,
-            optimize_all=args.cueq_optimize_all,
-            optimize_linear=args.cueq_optimize_linear,
-            optimize_channelwise=args.cueq_optimize_channelwise,
-            optimize_symmetric=args.cueq_optimize_symmetric,
-            optimize_fctp=args.cueq_optimize_fctp,
-            conv_fusion=args.cueq_conv_fusion,
-        )
+        with _model_build_context_from_args(args):
+            model = run_e3nn_to_cueq(
+                deepcopy(model),
+                device=device,
+                layout=args.cueq_layout,
+                optimize_all=args.cueq_optimize_all,
+                optimize_linear=args.cueq_optimize_linear,
+                optimize_channelwise=args.cueq_optimize_channelwise,
+                optimize_symmetric=args.cueq_optimize_symmetric,
+                optimize_fctp=args.cueq_optimize_fctp,
+                conv_fusion=args.cueq_conv_fusion,
+            )
     if args.enable_oeq:
         logging.info("Converting model to OEQ for accelerated training")
         assert model.__class__.__name__ in [
@@ -850,7 +871,8 @@ def run(args) -> None:
             "MACELES",
             "PolarMACE",
         ]
-        model = run_e3nn_to_oeq(deepcopy(model), device=device)
+        with _model_build_context_from_args(args):
+            model = run_e3nn_to_oeq(deepcopy(model), device=device)
 
     training_model = None
     if args.train_compile:
@@ -878,8 +900,15 @@ def run(args) -> None:
                 compile_graph=args.edge_force_compile_graph,
                 compile_mode=args.edge_force_compile_mode,
                 compile_dynamic=args.edge_force_compile_dynamic,
+                compile_shape_padding=args.edge_force_compile_shape_padding,
+                compile_max_fusion_size=args.edge_force_compile_max_fusion_size,
+                use_e3nn_spherical_harmonics=(
+                    args.edge_force_compile_spherical_harmonics == "e3nn"
+                ),
+                force_gradient_mode=args.edge_force_compile_force_gradient_mode,
                 allow_fallback=args.edge_force_compile_allow_fallback,
                 cache_hit_gate=args.edge_force_compile_cache_hit_gate,
+                setup_gate=args.edge_force_compile_setup_gate,
                 atol=args.edge_force_compile_atol,
                 rtol=args.edge_force_compile_rtol,
                 cache_policy=args.edge_force_compile_cache_policy,
@@ -892,6 +921,12 @@ def run(args) -> None:
                     args.edge_force_compile_bucket_edges
                 ),
                 bucket_margin=args.edge_force_compile_bucket_margin,
+                parity_check_interval=args.edge_force_compile_parity_check_interval,
+                parity_check_gradients=args.edge_force_compile_parity_check_gradients,
+                parity_check_strict=args.edge_force_compile_parity_check_strict,
+                fixed_probe_interval=args.edge_force_compile_fixed_probe_interval,
+                fixed_probe_gradients=args.edge_force_compile_fixed_probe_gradients,
+                fixed_probe_strict=args.edge_force_compile_fixed_probe_strict,
             ),
         )
 
@@ -900,7 +935,10 @@ def run(args) -> None:
 
     optimizer: torch.optim.Optimizer
     optimizer = get_optimizer(
-        args, param_options, named_parameters=model.named_parameters()
+        args,
+        param_options,
+        named_parameters=model.named_parameters(),
+        named_modules=model.named_modules(),
     )
     logging.info("=== Layer's learning rates ===")
     for name, p in model.named_parameters():
@@ -918,7 +956,13 @@ def run(args) -> None:
         directory=args.results_dir, tag=tag + "_train"
     )  # pylint: disable=E1123
 
-    lr_scheduler = LRScheduler(optimizer, args)
+    try:
+        lr_steps_per_epoch = len(train_loader)
+    except TypeError:
+        lr_steps_per_epoch = None
+    lr_scheduler = LRScheduler(
+        optimizer, args, steps_per_epoch=lr_steps_per_epoch
+    )
 
     swa: Optional[tools.SWAContainer] = None
     swas = [False]
@@ -1022,9 +1066,16 @@ def run(args) -> None:
                 "Please install it to use XPU device."
             )
 
-    precision_config = TrainingPrecisionConfig.from_name(args.train_amp_dtype, device)
+    precision_config = TrainingPrecisionConfig.from_name(
+        args.train_amp_dtype, device, tf32=args.train_tf32
+    )
     if precision_config.enabled:
         logging.info("Using training AMP dtype: %s", precision_config.dtype)
+    if precision_config.float32_matmul_precision is not None:
+        logging.info(
+            "Using training float32 matmul precision: %s",
+            precision_config.float32_matmul_precision,
+        )
 
     tools.train(
         model=model,

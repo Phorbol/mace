@@ -44,6 +44,8 @@ def summarize_payload(payload: dict) -> dict:
         gate_accepted, fallback_reason = _gate_status(result)
         if gate_accepted is not None:
             required_gate_statuses.append(gate_accepted)
+        gate_result = result.get("gate_result") or {}
+        graph_stats = gate_result.get("graph_stats") or {}
         rows[key] = {
             "optimizer": optimizer,
             "mode": mode,
@@ -55,11 +57,24 @@ def summarize_payload(payload: dict) -> dict:
             ),
             "gate_accepted": gate_accepted,
             "fallback_reason": fallback_reason,
+            "compiled_grad_count": gate_result.get("compiled_grad_count"),
+            "compiled_grad_filter": gate_result.get("compiled_grad_filter"),
+            "compiled_grad_filter_sequence": gate_result.get(
+                "compiled_grad_filter_sequence"
+            ),
+            "graph_node_count": graph_stats.get("node_count"),
+            "graph_output_tensor_count": graph_stats.get("output_tensor_count"),
             "loss_first": result.get("loss_first"),
             "loss_last": result.get("loss_last"),
         }
 
     compile_rows = [row for row in rows.values() if row["mode"] == "edge_compile"]
+    compile_grads_rows = [
+        row for row in rows.values() if row["mode"] == "edge_compile_grads"
+    ]
+    compile_grads_sequence_rows = [
+        row for row in rows.values() if row["mode"] == "edge_compile_grads_sequence"
+    ]
     position_rows = [row for row in rows.values() if row["mode"] == "position_eager"]
     return {
         "source": payload.get("source"),
@@ -80,6 +95,16 @@ def summarize_payload(payload: dict) -> dict:
         else None,
         "mean_edge_compile_total_ms": mean(row["mean_total_ms"] for row in compile_rows)
         if compile_rows
+        else None,
+        "mean_edge_compile_grads_total_ms": mean(
+            row["mean_total_ms"] for row in compile_grads_rows
+        )
+        if compile_grads_rows
+        else None,
+        "mean_edge_compile_grads_sequence_total_ms": mean(
+            row["mean_total_ms"] for row in compile_grads_sequence_rows
+        )
+        if compile_grads_sequence_rows
         else None,
     }
 

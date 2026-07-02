@@ -26,7 +26,11 @@ from mace.cli.visualise_train import TrainingPlotter
 
 from . import torch_geometric
 from .checkpoint import CheckpointHandler, CheckpointState
-from .precision import TrainingPrecisionConfig, get_autocast_context
+from .precision import (
+    TrainingPrecisionConfig,
+    get_autocast_context,
+    get_float32_matmul_precision_context,
+)
 from .torch_tools import to_numpy
 from .training_guards import (
     LossSkipController,
@@ -42,6 +46,16 @@ from .utils import (
     compute_rel_rmse,
     compute_rmse,
     filter_nonzero_weight,
+)
+
+
+_EDGE_FORCE_COMPILE_SETUP_PHASES = (
+    "input_prep",
+    "trace",
+    "gate_compile",
+    "gate_reference",
+    "gate_candidate",
+    "training_compile",
 )
 
 
@@ -269,7 +283,7 @@ def train(
                 keep_last = True
             loss_fn = swa.loss_fn
             swa.model.update_parameters(model)
-            if epoch > start_epoch:
+            if epoch > start_epoch and not getattr(lr_scheduler, "step_on_batch", False):
                 swa.scheduler.step()
 
         # Train
@@ -302,6 +316,7 @@ def train(
             loss_skip_controller=loss_skip_controller,
             nonfinite_grad_guard=nonfinite_grad_guard,
             global_step_start=global_step_start,
+            lr_scheduler=lr_scheduler,
         )
         if distributed:
             torch.distributed.barrier()
@@ -434,6 +449,7 @@ def train_one_epoch(
     loss_skip_controller: Optional[LossSkipController] = None,
     nonfinite_grad_guard: Optional[NonFiniteGradGuard] = None,
     global_step_start: int = 0,
+    lr_scheduler: Optional[Any] = None,
 ) -> None:
     if distributed_model is not None:
         model_to_train = distributed_model
@@ -442,6 +458,183 @@ def train_one_epoch(
 
     if guard_config is None:
         guard_config = TrainingGuardConfig()
+
+    edge_force_summary = defaultdict(int)
+    edge_force_reasons = defaultdict(int)
+    edge_force_buckets = defaultdict(int)
+    edge_force_compile_setup_seconds = 0.0
+    edge_force_compile_phase_seconds = defaultdict(float)
+    edge_force_step_seconds = 0.0
+    edge_force_parity_max = defaultdict(float)
+    edge_force_parity_worst_grad = "none"
+    edge_force_parity_failed_names = set()
+    edge_force_fixed_probe_max = defaultdict(float)
+    edge_force_fixed_probe_worst_grad = "none"
+    edge_force_fixed_probe_failed_names = set()
+    edge_force_fixed_probe_shape = "none"
+
+    def update_edge_force_summary(opt_metrics: Dict[str, Any]) -> None:
+        nonlocal edge_force_compile_setup_seconds, edge_force_step_seconds
+        nonlocal edge_force_parity_worst_grad, edge_force_fixed_probe_worst_grad
+        nonlocal edge_force_fixed_probe_shape
+        if "edge_force_compile" not in opt_metrics:
+            return
+        edge_force_summary["steps"] += 1
+        edge_force_step_seconds += float(opt_metrics.get("time", 0.0) or 0.0)
+        bucket_atoms = opt_metrics.get("edge_force_bucket_atoms")
+        bucket_edges = opt_metrics.get("edge_force_bucket_edges")
+        if bucket_atoms is not None and bucket_edges is not None:
+            edge_force_buckets[f"{int(bucket_atoms)}x{int(bucket_edges)}"] += 1
+        if bool(opt_metrics.get("edge_force_compile")):
+            edge_force_summary["compiled_steps"] += 1
+            if bool(opt_metrics.get("edge_force_cache_hit")):
+                edge_force_summary["cache_hits"] += 1
+            else:
+                edge_force_summary["new_compiles"] += 1
+                edge_force_compile_setup_seconds += float(
+                    opt_metrics.get("edge_force_compile_setup_seconds", 0.0) or 0.0
+                )
+                for phase_name in _EDGE_FORCE_COMPILE_SETUP_PHASES:
+                    metric_name = f"edge_force_compile_{phase_name}_seconds"
+                    edge_force_compile_phase_seconds[phase_name] += float(
+                        opt_metrics.get(metric_name, 0.0) or 0.0
+                    )
+            if bool(opt_metrics.get("edge_force_runtime_recompile")):
+                edge_force_summary["runtime_recompiles"] += 1
+        else:
+            edge_force_summary["fallback_steps"] += 1
+            reason = opt_metrics.get("edge_force_compile_disabled_reason")
+            if reason:
+                edge_force_reasons[str(reason)] += 1
+
+        if bool(opt_metrics.get("edge_force_parity_check")):
+            edge_force_summary["parity_checks"] += 1
+            if bool(opt_metrics.get("edge_force_parity_accepted")):
+                edge_force_summary["parity_accepted"] += 1
+            else:
+                edge_force_summary["parity_failed"] += 1
+            for key, metric_name in (
+                ("energy", "edge_force_parity_energy_max_abs_diff"),
+                ("forces", "edge_force_parity_forces_max_abs_diff"),
+                ("loss", "edge_force_parity_loss_abs_diff"),
+                ("grad", "edge_force_parity_param_grad_max_abs_diff"),
+            ):
+                edge_force_parity_max[key] = max(
+                    edge_force_parity_max[key],
+                    float(opt_metrics.get(metric_name, 0.0) or 0.0),
+                )
+            worst_grad = str(opt_metrics.get("edge_force_parity_param_grad_worst") or "none")
+            if worst_grad != "none" and edge_force_parity_max["grad"] == float(
+                opt_metrics.get("edge_force_parity_param_grad_max_abs_diff", 0.0) or 0.0
+            ):
+                edge_force_parity_worst_grad = worst_grad
+            failed_names = str(opt_metrics.get("edge_force_parity_failed_check_names") or "")
+            for failed_name in failed_names.split(","):
+                failed_name = failed_name.strip()
+                if failed_name:
+                    edge_force_parity_failed_names.add(failed_name)
+
+        if bool(opt_metrics.get("edge_force_fixed_probe_check")):
+            edge_force_summary["fixed_probe_checks"] += 1
+            if bool(opt_metrics.get("edge_force_fixed_probe_accepted")):
+                edge_force_summary["fixed_probe_accepted"] += 1
+            else:
+                edge_force_summary["fixed_probe_failed"] += 1
+            probe_atoms = opt_metrics.get("edge_force_fixed_probe_num_atoms")
+            probe_edges = opt_metrics.get("edge_force_fixed_probe_num_edges")
+            if probe_atoms is not None and probe_edges is not None:
+                edge_force_fixed_probe_shape = f"{int(probe_atoms)}x{int(probe_edges)}"
+            for key, metric_name in (
+                ("energy", "edge_force_fixed_probe_energy_max_abs_diff"),
+                ("forces", "edge_force_fixed_probe_forces_max_abs_diff"),
+                ("loss", "edge_force_fixed_probe_loss_abs_diff"),
+                ("grad", "edge_force_fixed_probe_param_grad_max_abs_diff"),
+            ):
+                edge_force_fixed_probe_max[key] = max(
+                    edge_force_fixed_probe_max[key],
+                    float(opt_metrics.get(metric_name, 0.0) or 0.0),
+                )
+            worst_grad = str(
+                opt_metrics.get("edge_force_fixed_probe_param_grad_worst") or "none"
+            )
+            if worst_grad != "none" and edge_force_fixed_probe_max["grad"] == float(
+                opt_metrics.get("edge_force_fixed_probe_param_grad_max_abs_diff", 0.0)
+                or 0.0
+            ):
+                edge_force_fixed_probe_worst_grad = worst_grad
+            failed_names = str(
+                opt_metrics.get("edge_force_fixed_probe_failed_check_names") or ""
+            )
+            for failed_name in failed_names.split(","):
+                failed_name = failed_name.strip()
+                if failed_name:
+                    edge_force_fixed_probe_failed_names.add(failed_name)
+
+    def log_edge_force_summary() -> None:
+        if rank != 0 or edge_force_summary["steps"] == 0:
+            return
+        reason_text = ", ".join(
+            f"{reason}:{count}" for reason, count in sorted(edge_force_reasons.items())
+        ) or "none"
+        bucket_text = ", ".join(
+            f"{bucket}:{count}" for bucket, count in sorted(edge_force_buckets.items())
+        ) or "none"
+        phase_text = ", ".join(
+            f"{phase}:{edge_force_compile_phase_seconds[phase]:.3f}"
+            for phase in _EDGE_FORCE_COMPILE_SETUP_PHASES
+            if edge_force_compile_phase_seconds[phase] > 0.0
+        ) or "none"
+        parity_text = "none"
+        if edge_force_summary["parity_checks"] > 0:
+            failed_names = ",".join(sorted(edge_force_parity_failed_names)[:8]) or "none"
+            parity_text = (
+                f"checks={edge_force_summary['parity_checks']} "
+                f"accepted={edge_force_summary['parity_accepted']} "
+                f"failed={edge_force_summary['parity_failed']} "
+                f"max_energy={edge_force_parity_max['energy']:.3e} "
+                f"max_forces={edge_force_parity_max['forces']:.3e} "
+                f"max_loss={edge_force_parity_max['loss']:.3e} "
+                f"max_grad={edge_force_parity_max['grad']:.3e} "
+                f"worst_grad={edge_force_parity_worst_grad} "
+                f"failed_names={failed_names}"
+            )
+        fixed_probe_text = "none"
+        if edge_force_summary["fixed_probe_checks"] > 0:
+            failed_names = (
+                ",".join(sorted(edge_force_fixed_probe_failed_names)[:8]) or "none"
+            )
+            fixed_probe_text = (
+                f"checks={edge_force_summary['fixed_probe_checks']} "
+                f"accepted={edge_force_summary['fixed_probe_accepted']} "
+                f"failed={edge_force_summary['fixed_probe_failed']} "
+                f"shape={edge_force_fixed_probe_shape} "
+                f"max_energy={edge_force_fixed_probe_max['energy']:.3e} "
+                f"max_forces={edge_force_fixed_probe_max['forces']:.3e} "
+                f"max_loss={edge_force_fixed_probe_max['loss']:.3e} "
+                f"max_grad={edge_force_fixed_probe_max['grad']:.3e} "
+                f"worst_grad={edge_force_fixed_probe_worst_grad} "
+                f"failed_names={failed_names}"
+            )
+        logging.info(
+            "Edge-force compile epoch %s summary: steps=%d, compiled=%d, "
+            "cache_hits=%d, new_compiles=%d, fallbacks=%d, runtime_recompiles=%d, "
+            "compile_setup_seconds=%.3f, opt_step_seconds=%.3f, fallback_reasons=%s, "
+            "buckets=%s, setup_phases=%s, parity=%s, fixed_probe=%s",
+            epoch,
+            edge_force_summary["steps"],
+            edge_force_summary["compiled_steps"],
+            edge_force_summary["cache_hits"],
+            edge_force_summary["new_compiles"],
+            edge_force_summary["fallback_steps"],
+            edge_force_summary["runtime_recompiles"],
+            edge_force_compile_setup_seconds,
+            edge_force_step_seconds,
+            reason_text,
+            bucket_text,
+            phase_text,
+            parity_text,
+            fixed_probe_text,
+        )
 
     if isinstance(optimizer, LBFGS):
         _, opt_metrics = take_step_lbfgs(
@@ -459,8 +652,10 @@ def train_one_epoch(
         )
         opt_metrics["mode"] = "opt"
         opt_metrics["epoch"] = epoch
+        update_edge_force_summary(opt_metrics)
         if rank == 0:
             logger.log(opt_metrics)
+        log_edge_force_summary()
     else:
         for step_index, batch in enumerate(data_loader):
             _, opt_metrics = take_step(
@@ -481,8 +676,18 @@ def train_one_epoch(
             )
             opt_metrics["mode"] = "opt"
             opt_metrics["epoch"] = epoch
+            if (
+                lr_scheduler is not None
+                and getattr(lr_scheduler, "step_on_batch", False)
+                and not bool(opt_metrics.get("loss_skipped", False))
+            ):
+                lr_scheduler.step_batch(global_step=global_step_start + step_index + 1)
+                if hasattr(lr_scheduler, "get_last_lr"):
+                    opt_metrics["lr"] = lr_scheduler.get_last_lr()[0]
+            update_edge_force_summary(opt_metrics)
             if rank == 0:
                 logger.log(opt_metrics)
+        log_edge_force_summary()
 
 
 def take_step(
@@ -521,7 +726,7 @@ def take_step(
             and not output_args["virials"]
             and not output_args["stress"]
         )
-        with get_autocast_context(precision_config):
+        with get_float32_matmul_precision_context(precision_config):
             if can_use_compiled_force_loss:
                 loss, compile_metrics = compiled_force_loss(
                     batch=batch,
@@ -529,14 +734,15 @@ def take_step(
                     output_args=output_args,
                 )
             else:
-                output = model(
-                    batch_dict,
-                    training=True,
-                    compute_force=output_args["forces"],
-                    compute_virials=output_args["virials"],
-                    compute_stress=output_args["stress"],
-                )
-                loss = loss_fn(pred=output, ref=batch)
+                with get_autocast_context(precision_config):
+                    output = model(
+                        batch_dict,
+                        training=True,
+                        compute_force=output_args["forces"],
+                        compute_virials=output_args["virials"],
+                        compute_stress=output_args["stress"],
+                    )
+                    loss = loss_fn(pred=output, ref=batch)
         skip_result = None
         grad_norm = None
         if guard_config.loss_skip and loss_skip_controller is not None:

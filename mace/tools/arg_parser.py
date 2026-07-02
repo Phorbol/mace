@@ -83,6 +83,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default="none",
     )
     parser.add_argument(
+        "--train_tf32",
+        help="Use torch.set_float32_matmul_precision('high') during CUDA training",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
         "--train_compile",
         help="Enable torch.compile for the training model after cueq/OEQ conversion",
         action="store_true",
@@ -140,6 +146,47 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=True,
     )
     parser.add_argument(
+        "--edge_force_compile_shape_padding",
+        help="Allow Inductor shape_padding for the edge-force FX graph compile",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
+        "--edge_force_compile_max_fusion_size",
+        help="Inductor max_fusion_size for the edge-force FX graph compile",
+        type=int,
+        default=8,
+    )
+    parser.add_argument(
+        "--edge_force_compile_spherical_harmonics",
+        help="Spherical harmonics implementation inside edge-force compile",
+        type=str,
+        choices=["polynomial", "e3nn"],
+        default="polynomial",
+    )
+    parser.add_argument(
+        "--edge_force_compile_force_gradient_mode",
+        help=(
+            "Force-gradient construction used by edge-force compile: edge keeps "
+            "the stable edge-vector leaf path; positions compiles the fuller "
+            "positions-to-force derivative path"
+        ),
+        type=str,
+        choices=["edge", "positions"],
+        default="edge",
+    )
+    parser.add_argument(
+        "--edge_force_compile_setup_gate",
+        help=(
+            "Initial setup equivalence gate for edge-force compile. "
+            "Use 'strict' for the safe default, or 'none' only in guarded "
+            "benchmarks that rely on cache-hit or periodic parity checks."
+        ),
+        type=str,
+        choices=["strict", "none"],
+        default="strict",
+    )
+    parser.add_argument(
         "--edge_force_compile_cache_hit_gate",
         help="Gate shape-cache hits against the position-gradient baseline",
         action=argparse.BooleanOptionalAction,
@@ -161,7 +208,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         "--edge_force_compile_cache_policy",
         help="Cache policy for edge-force compile",
         type=str,
-        choices=["shape", "repeat_only", "bucket"],
+        choices=["shape", "repeat_only", "bucket", "dynamic"],
         default="repeat_only",
     )
     parser.add_argument(
@@ -190,9 +237,55 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--edge_force_compile_bucket_margin",
-        help="Maximum bucket/input size ratio allowed for bucket mode",
+        help=(
+            "Maximum bucket/input size ratio allowed for bucket mode; set to 0 "
+            "to disable this lower-fill guard and always choose the nearest "
+            "bucket that can hold the input"
+        ),
         type=float,
         default=1.0,
+    )
+    parser.add_argument(
+        "--edge_force_compile_parity_check_interval",
+        help=(
+            "Run an eager-vs-compiled edge-force parity diagnostic every N "
+            "compiled training steps; 0 disables the diagnostic"
+        ),
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--edge_force_compile_parity_check_gradients",
+        help="Include parameter-gradient comparisons in periodic edge-force parity diagnostics",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
+        "--edge_force_compile_parity_check_strict",
+        help="Raise on failed periodic edge-force parity diagnostics",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
+        "--edge_force_compile_fixed_probe_interval",
+        help=(
+            "Run eager-vs-compiled diagnostics on the first captured compiled "
+            "batch every N compiled training steps; 0 disables the diagnostic"
+        ),
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--edge_force_compile_fixed_probe_gradients",
+        help="Include parameter-gradient comparisons in fixed edge-force probe diagnostics",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--edge_force_compile_fixed_probe_strict",
+        help="Raise on failed fixed edge-force probe diagnostics",
+        action=argparse.BooleanOptionalAction,
+        default=False,
     )
     parser.add_argument(
         "--edge_force_compile_allow_fallback",
@@ -1052,6 +1145,38 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=0.1,
     )
     parser.add_argument(
+        "--hybrid_muon_mode",
+        help=(
+            "HybridMuon matrix routing mode. '2d' preserves the conservative "
+            "MACE default; 'slice' applies Muon independently to trailing "
+            "matrices of selected equivariant/path tensors."
+        ),
+        type=str,
+        default="2d",
+        choices=["2d", "slice"],
+    )
+    parser.add_argument(
+        "--hybrid_muon_routing",
+        help=(
+            "HybridMuon parameter coverage policy. 'mace' keeps conservative "
+            "MACE-safe routing; 'tace' follows TACE/DPA4-style broad matrix "
+            "routing with MACE hard exclusions for embeddings, atomic heads, "
+            "biases, norms, and scales."
+        ),
+        type=str,
+        default="mace",
+        choices=["mace", "tace"],
+    )
+    parser.add_argument(
+        "--hybrid_muon_magma_lite",
+        help=(
+            "Enable DPA4/TACE-style Magma-lite damping for Muon-routed matrix "
+            "updates based on momentum-gradient alignment."
+        ),
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
         "--lr_params_factors",
         help="Learning rate factors to multiply on the original lr",
         type=str,
@@ -1070,7 +1195,11 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=True,
     )
     parser.add_argument(
-        "--scheduler", help="Type of scheduler", type=str, default="ReduceLROnPlateau"
+        "--scheduler",
+        help="Type of scheduler",
+        type=str,
+        default="ReduceLROnPlateau",
+        choices=["ReduceLROnPlateau", "ExponentialLR", "WSD"],
     )
     parser.add_argument(
         "--lr_factor", help="Learning rate factor", type=float, default=0.8
@@ -1083,6 +1212,53 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         help="Gamma of learning rate scheduler",
         type=float,
         default=0.9993,
+    )
+    parser.add_argument(
+        "--lr_scheduler_interval",
+        help=(
+            "When to step the selected LR scheduler. 'auto' uses per-step "
+            "updates for WSD and per-epoch updates for legacy schedulers."
+        ),
+        type=str,
+        default="auto",
+        choices=["auto", "epoch", "step"],
+    )
+    parser.add_argument(
+        "--lr_wsd_warmup_steps",
+        help="Warmup steps for WSD when per-step, or epochs when per-epoch; if >0, overrides --lr_wsd_warmup_ratio",
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--lr_wsd_warmup_ratio",
+        help="Warmup fraction for WSD scheduler when --lr_wsd_warmup_steps is 0",
+        type=float,
+        default=0.03,
+    )
+    parser.add_argument(
+        "--lr_wsd_warmup_start_factor",
+        help="Initial WSD warmup LR as a factor of the base LR",
+        type=float,
+        default=0.1,
+    )
+    parser.add_argument(
+        "--lr_wsd_stop_lr_ratio",
+        help="Final WSD LR as a factor of the base LR",
+        type=float,
+        default=1.0e-3,
+    )
+    parser.add_argument(
+        "--lr_wsd_decay_phase_ratio",
+        help="Final training fraction used for WSD decay",
+        type=float,
+        default=0.1,
+    )
+    parser.add_argument(
+        "--lr_wsd_decay_type",
+        help="Decay rule for WSD scheduler",
+        type=str,
+        default="inverse_linear",
+        choices=["inverse_linear", "cosine", "linear"],
     )
     parser.add_argument(
         "--swa",

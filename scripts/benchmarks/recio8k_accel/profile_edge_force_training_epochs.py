@@ -291,6 +291,9 @@ def _build_optimizer(args: argparse.Namespace, optimizer_name: str, model):
             adam_betas=(0.9, 0.999),
             eps=1.0e-8,
             amsgrad=False,
+            muon_mode=args.hybrid_muon_mode,
+            routing=args.hybrid_muon_routing,
+            module_map=dict(model.named_modules()),
         )
         return HybridMuon(groups, lr=args.lr, weight_decay=args.weight_decay), summary
     raise ValueError(f"unknown optimizer {optimizer_name!r}")
@@ -674,6 +677,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lr", type=float, default=0.01)
     parser.add_argument("--weight-decay", type=float, default=0.0)
     parser.add_argument("--hybrid-muon-lr-factor", type=float, default=0.1)
+    parser.add_argument("--hybrid-muon-mode", choices=("2d", "slice"), default="2d")
+    parser.add_argument("--hybrid-muon-routing", choices=("mace", "tace"), default="mace")
     parser.add_argument("--energy-weight", type=float, default=1.0)
     parser.add_argument("--forces-weight", type=float, default=1000.0)
     parser.add_argument("--max-grad-norm", type=float, default=10.0)

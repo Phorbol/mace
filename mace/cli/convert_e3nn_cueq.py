@@ -121,7 +121,14 @@ def transfer_symmetric_contractions(
             )
             proj = torch.tensor(proj, dtype=wm.dtype, device=wm.device)
             wm = torch.einsum("zau,ab->zbu", wm, proj)
-        target_dict[f"products.{i}.symmetric_contractions.weight"] = wm
+        target_key = f"products.{i}.symmetric_contractions.weight"
+        if target_key in target_dict:
+            target_dict[target_key] = wm
+        else:
+            logging.debug(
+                "Skipping symmetric contraction transfer for missing target key: %s",
+                target_key,
+            )
 
 
 def transfer_weights(
@@ -155,7 +162,6 @@ def transfer_weights(
     remaining_keys = (
         set(source_dict.keys()) & set(target_dict.keys()) - transferred_keys
     )
-    remaining_keys = {k for k in remaining_keys if "symmetric_contraction" not in k}
     if remaining_keys:
         for key in remaining_keys:
             src = source_dict[key]

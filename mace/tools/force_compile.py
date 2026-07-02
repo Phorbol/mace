@@ -35,13 +35,15 @@ def apply_force_compile_global_patches() -> None:
     patch_inductor_force_int64_indexing()
 
 
-def build_force_compile_inductor_options() -> dict[str, Any]:
+def build_force_compile_inductor_options(
+    *, shape_padding: bool = True, max_fusion_size: int = 8
+) -> dict[str, Any]:
     compile_options: dict[str, Any] = {
         "max_autotune": False,
-        "shape_padding": True,
+        "shape_padding": bool(shape_padding),
         "epilogue_fusion": False,
         "triton.cudagraphs": False,
-        "max_fusion_size": 8,
+        "max_fusion_size": int(max_fusion_size),
         "triton.persistent_reductions": False,
         "triton.mix_order_reduction": False,
         "triton.max_tiles": 1,
@@ -96,10 +98,15 @@ def count_fx_detach_nodes(gm: torch.fx.GraphModule) -> int:
     return sum(1 for node in gm.graph.nodes if _is_detach_node(node))
 
 
-def strip_fx_saved_tensor_detach(gm: torch.fx.GraphModule) -> None:
+def strip_fx_saved_tensor_detach(
+    gm: torch.fx.GraphModule, *, remove_all: bool = False
+) -> None:
     to_remove: list[torch.fx.Node] = []
     for node in gm.graph.nodes:
         if not _is_detach_node(node):
+            continue
+        if remove_all:
+            to_remove.append(node)
             continue
         input_node = node.args[0]
         users = list(node.users.keys())
@@ -130,6 +137,7 @@ def trace_force_closure(
     *,
     tracing_mode: str,
     strip_detach: bool,
+    strip_all_detach: bool = False,
 ) -> ForceClosureTraceResult:
     from torch.fx.experimental.proxy_tensor import make_fx
 
@@ -142,7 +150,7 @@ def trace_force_closure(
     traced = make_fx(fn, **make_fx_kwargs)(*example_inputs)
     detach_nodes_before = count_fx_detach_nodes(traced)
     if strip_detach:
-        strip_fx_saved_tensor_detach(traced)
+        strip_fx_saved_tensor_detach(traced, remove_all=strip_all_detach)
         traced = rebuild_fx_graph_module(traced)
     detach_nodes_after = count_fx_detach_nodes(traced)
     return ForceClosureTraceResult(
@@ -158,6 +166,8 @@ def compile_fx_graph_module(
     compile_graph: bool,
     compile_mode: str,
     compile_dynamic: bool,
+    shape_padding: bool = True,
+    max_fusion_size: int = 8,
 ) -> tuple[Callable[..., Any], dict[str, Any] | None]:
     if not compile_graph:
         return graph_module, None
@@ -165,7 +175,9 @@ def compile_fx_graph_module(
     compile_kwargs: dict[str, Any] = {
         "backend": "inductor",
         "dynamic": compile_dynamic,
-        "options": build_force_compile_inductor_options(),
+        "options": build_force_compile_inductor_options(
+            shape_padding=shape_padding, max_fusion_size=max_fusion_size
+        ),
     }
     if compile_mode != "default":
         compile_kwargs["mode"] = compile_mode

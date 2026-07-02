@@ -9,7 +9,7 @@
 
 set -euo pipefail
 source /opt/envs/anaconda3.env
-conda activate mace_env
+conda activate "${MACE_EDGE_STEP_CONDA_ENV:-mace_develop}"
 export PYTHONPATH=/home/sjtu-caoxiaoming/gengjianrui/trae-research-code/mace:${PYTHONPATH:-}
 
 cueq_profile="${MACE_EDGE_STEP_CUEQ_PROFILE:-minus_linear}"

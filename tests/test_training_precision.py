@@ -1,7 +1,11 @@
 import pytest
 import torch
 
-from mace.tools.precision import TrainingPrecisionConfig, get_autocast_context
+from mace.tools.precision import (
+    TrainingPrecisionConfig,
+    get_autocast_context,
+    get_training_precision_context,
+)
 
 
 def test_precision_none_returns_disabled_config():
@@ -9,6 +13,22 @@ def test_precision_none_returns_disabled_config():
 
     assert config.enabled is False
     assert config.dtype is None
+    assert config.float32_matmul_precision is None
+
+
+def test_precision_tf32_sets_high_matmul_precision_for_cuda():
+    config = TrainingPrecisionConfig.from_name(
+        "none", torch.device("cuda"), tf32=True
+    )
+
+    assert config.enabled is False
+    assert config.dtype is None
+    assert config.float32_matmul_precision == "high"
+
+
+def test_precision_rejects_tf32_on_cpu():
+    with pytest.raises(ValueError, match="TF32 training matmul precision requires a CUDA device"):
+        TrainingPrecisionConfig.from_name("none", torch.device("cpu"), tf32=True)
 
 
 def test_precision_rejects_bf16_on_cpu():
@@ -81,3 +101,28 @@ def test_autocast_context_uses_cuda_dtype(monkeypatch):
         calls.append("body")
 
     assert calls == [("cuda", torch.bfloat16), "enter", "body", "exit"]
+
+
+def test_training_precision_context_sets_and_restores_tf32_matmul_precision(monkeypatch):
+    calls = []
+    current = {"precision": "highest"}
+
+    def fake_get_precision():
+        calls.append(("get", current["precision"]))
+        return current["precision"]
+
+    def fake_set_precision(value):
+        calls.append(("set", value))
+        current["precision"] = value
+
+    monkeypatch.setattr(torch, "get_float32_matmul_precision", fake_get_precision)
+    monkeypatch.setattr(torch, "set_float32_matmul_precision", fake_set_precision)
+    config = TrainingPrecisionConfig(
+        enabled=False, dtype=None, float32_matmul_precision="high"
+    )
+
+    with get_training_precision_context(config):
+        calls.append(("body", current["precision"]))
+
+    assert calls == [("get", "highest"), ("set", "high"), ("body", "high"), ("set", "highest")]
+    assert current["precision"] == "highest"

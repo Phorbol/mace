@@ -38,6 +38,22 @@ from .radial import (
 )
 
 
+def _interaction_reshape_cueq_config(
+    cueq_config: Optional[CuEquivarianceConfig],
+) -> Optional[CuEquivarianceConfig]:
+    if cueq_config is None or not cueq_config.enabled:
+        return None
+    if (
+        cueq_config.optimize_all
+        or cueq_config.optimize_linear
+        or cueq_config.optimize_channelwise
+        or cueq_config.optimize_fctp
+        or cueq_config.conv_fusion
+    ):
+        return cueq_config
+    return None
+
+
 @compile_mode("script")
 class LinearNodeEmbeddingBlock(torch.nn.Module):
     def __init__(
@@ -540,9 +556,9 @@ class InteractionBlock(torch.nn.Module):
         self.edge_irreps = edge_irreps
         self.cueq_config = cueq_config
         self.oeq_config = oeq_config
-        if self.oeq_config and self.oeq_config.conv_fusion:
+        if self.oeq_config and self.oeq_config.enabled and self.oeq_config.conv_fusion:
             self.conv_fusion = self.oeq_config.conv_fusion
-        if self.cueq_config and self.cueq_config.conv_fusion:
+        if self.cueq_config and self.cueq_config.enabled and self.cueq_config.conv_fusion:
             self.conv_fusion = self.cueq_config.conv_fusion
         self._setup()
 
@@ -655,7 +671,7 @@ class RealAgnosticInteractionBlock(InteractionBlock):
             self.irreps_out,
             cueq_config=self.cueq_config,
         )
-        self.reshape = reshape_irreps(self.irreps_out, cueq_config=self.cueq_config)
+        self.reshape = reshape_irreps(self.irreps_out, cueq_config=_interaction_reshape_cueq_config(self.cueq_config))
 
     def forward(
         self,
@@ -758,7 +774,7 @@ class RealAgnosticResidualInteractionBlock(InteractionBlock):
             self.hidden_irreps,
             cueq_config=self.cueq_config,
         )
-        self.reshape = reshape_irreps(self.irreps_out, cueq_config=self.cueq_config)
+        self.reshape = reshape_irreps(self.irreps_out, cueq_config=_interaction_reshape_cueq_config(self.cueq_config))
 
     def forward(
         self,
@@ -871,7 +887,7 @@ class RealAgnosticDensityInteractionBlock(InteractionBlock):
             torch.nn.functional.silu,
         )
         # Reshape
-        self.reshape = reshape_irreps(self.irreps_out, cueq_config=self.cueq_config)
+        self.reshape = reshape_irreps(self.irreps_out, cueq_config=_interaction_reshape_cueq_config(self.cueq_config))
 
     def forward(
         self,
@@ -993,7 +1009,7 @@ class RealAgnosticDensityResidualInteractionBlock(InteractionBlock):
         )
 
         # Reshape
-        self.reshape = reshape_irreps(self.irreps_out, cueq_config=self.cueq_config)
+        self.reshape = reshape_irreps(self.irreps_out, cueq_config=_interaction_reshape_cueq_config(self.cueq_config))
 
     def forward(
         self,
@@ -1110,7 +1126,7 @@ class RealAgnosticAttResidualInteractionBlock(InteractionBlock):
             cueq_config=self.cueq_config,
         )
 
-        self.reshape = reshape_irreps(self.irreps_out, cueq_config=self.cueq_config)
+        self.reshape = reshape_irreps(self.irreps_out, cueq_config=_interaction_reshape_cueq_config(self.cueq_config))
 
         # Skip connection.
         self.skip_linear = Linear(
@@ -1240,7 +1256,7 @@ class RealAgnosticResidualNonLinearInteractionBlock(InteractionBlock):
             self.hidden_irreps,
             cueq_config=self.cueq_config,
         )
-        self.reshape = reshape_irreps(self.irreps_out, cueq_config=self.cueq_config)
+        self.reshape = reshape_irreps(self.irreps_out, cueq_config=_interaction_reshape_cueq_config(self.cueq_config))
 
         # Non-linearity
         irreps_scalars = o3.Irreps(

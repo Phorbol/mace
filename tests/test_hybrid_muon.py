@@ -118,6 +118,207 @@ def test_hybrid_muon_routes_radial_tp_weight_mlps_to_muon():
     )
 
 
+def test_hybrid_muon_tace_routing_recovers_flattened_e3nn_linear_blocks(monkeypatch):
+    from e3nn import o3
+
+    linear = o3.Linear(
+        o3.Irreps("4x0e + 4x1o"),
+        o3.Irreps("4x0e + 4x1o"),
+        internal_weights=True,
+        shared_weights=True,
+    )
+    linear.weight.grad = torch.randn_like(linear.weight)
+
+    groups, summary = build_hybrid_muon_param_groups(
+        [("interactions.0.linear.weight", linear.weight)],
+        lr=1.0e-3,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        muon_mode="slice",
+        routing="tace",
+        module_map={"interactions.0.linear": linear},
+    )
+
+    assert summary[0]["route"] == "muon"
+    assert summary[0]["reason"] == "tace-e3nn-linear-muon"
+    assert summary[0]["matrix_batch"] == 2
+    assert summary[0]["matrix_shape"] == (4, 4)
+
+    optimizer = HybridMuon(groups, lr=1.0e-3)
+    calls = []
+
+    def fake_batched(updates, steps=None):
+        calls.append(tuple(updates.shape))
+        return torch.zeros_like(updates)
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon._orthogonalize_newton_schulz_batched",
+        fake_batched,
+    )
+
+    optimizer.step()
+
+    assert calls == [(2, 4, 4)]
+
+
+def test_hybrid_muon_tace_routing_recovers_skip_tp_species_blocks(monkeypatch):
+    from e3nn import o3
+
+    skip_tp = o3.FullyConnectedTensorProduct(
+        o3.Irreps("4x0e"),
+        o3.Irreps("3x0e"),
+        o3.Irreps("4x0e"),
+        internal_weights=True,
+        shared_weights=True,
+    )
+    skip_tp.weight.grad = torch.randn_like(skip_tp.weight)
+
+    groups, summary = build_hybrid_muon_param_groups(
+        [("interactions.0.skip_tp.weight", skip_tp.weight)],
+        lr=1.0e-3,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        muon_mode="slice",
+        routing="tace",
+        module_map={"interactions.0.skip_tp": skip_tp},
+    )
+
+    assert summary[0]["route"] == "muon"
+    assert summary[0]["reason"] == "tace-e3nn-skip-tp-species-muon"
+    assert summary[0]["matrix_batch"] == 3
+    assert summary[0]["matrix_shape"] == (4, 4)
+
+    optimizer = HybridMuon(groups, lr=1.0e-3)
+    calls = []
+
+    def fake_batched(updates, steps=None):
+        calls.append(tuple(updates.shape))
+        return torch.zeros_like(updates)
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon._orthogonalize_newton_schulz_batched",
+        fake_batched,
+    )
+
+    optimizer.step()
+
+    assert calls == [(3, 4, 4)]
+
+
+def test_hybrid_muon_tace_routing_routes_eligible_mace_matrices_broadly():
+    ambiguous_matrix = torch.nn.Parameter(torch.ones(32, 64))
+    equivariant_tensor = torch.nn.Parameter(torch.ones(3, 16, 64))
+    embedding_matrix = torch.nn.Parameter(torch.ones(5, 64))
+    atomic_head = torch.nn.Parameter(torch.ones(5, 1))
+    affine_matrix = torch.nn.Parameter(torch.ones(64, 64))
+
+    _, summary = build_hybrid_muon_param_groups(
+        [
+            ("interactions.0.linear_up.weight", ambiguous_matrix),
+            ("interactions.0.skip_tp.weight", equivariant_tensor),
+            ("node_embedding.linear.weight", embedding_matrix),
+            ("atomic_energies_fn.weight", atomic_head),
+            ("interactions.0.affine.weight", affine_matrix),
+        ],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        muon_mode="slice",
+        routing="tace",
+    )
+
+    by_name = {entry["name"]: entry for entry in summary}
+    assert by_name["interactions.0.linear_up.weight"]["route"] == "muon"
+    assert by_name["interactions.0.linear_up.weight"]["reason"] == "tace-matrix-muon"
+    assert by_name["interactions.0.linear_up.weight"]["matrix_shape"] == (32, 64)
+    assert by_name["interactions.0.skip_tp.weight"]["route"] == "muon"
+    assert by_name["interactions.0.skip_tp.weight"]["reason"] == "tace-matrix-muon"
+    assert by_name["interactions.0.skip_tp.weight"]["matrix_batch"] == 3
+    assert by_name["interactions.0.skip_tp.weight"]["matrix_shape"] == (16, 64)
+    assert by_name["node_embedding.linear.weight"]["route"] == "adam"
+    assert by_name["node_embedding.linear.weight"]["reason"] == "mace-sensitive-name"
+    assert by_name["atomic_energies_fn.weight"]["route"] == "adam"
+    assert by_name["atomic_energies_fn.weight"]["reason"] == "mace-sensitive-name"
+    assert by_name["interactions.0.affine.weight"]["route"] == "adam"
+    assert by_name["interactions.0.affine.weight"]["reason"] == "mace-sensitive-name"
+
+
+def test_hybrid_muon_mace_slice_keeps_symmetric_contractions_on_adam():
+    contraction_weight = torch.nn.Parameter(torch.ones(2, 4, 128))
+
+    groups, summary = build_hybrid_muon_param_groups(
+        [
+            (
+                "products.0.symmetric_contractions.contractions.0.weights.0",
+                contraction_weight,
+            ),
+        ],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        muon_mode="slice",
+        routing="mace",
+    )
+
+    assert summary == [
+        {
+            "name": "products.0.symmetric_contractions.contractions.0.weights.0",
+            "shape": (2, 4, 128),
+            "numel": 1024,
+            "route": "adam",
+            "reason": "sensitive-name",
+        }
+    ]
+    assert len(groups) == 1
+    assert groups[0]["route"] == "adam"
+
+
+def test_hybrid_muon_tace_slice_step_updates_rank3_slices_without_flattening(monkeypatch):
+    param = torch.nn.Parameter(torch.randn(2, 3, 4))
+    param.grad = torch.randn_like(param)
+    groups, _ = build_hybrid_muon_param_groups(
+        [("products.0.symmetric_contractions.contractions.0.weights.0", param)],
+        lr=1.0e-3,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        muon_mode="slice",
+        routing="tace",
+    )
+    optimizer = HybridMuon(groups, lr=1.0e-3)
+    calls = []
+
+    def fake_batched(updates, steps=5):
+        calls.append(tuple(updates.shape))
+        return torch.zeros_like(updates)
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon._orthogonalize_newton_schulz_batched",
+        fake_batched,
+    )
+
+    optimizer.step()
+
+    assert calls == [(2, 3, 4)]
+
+
+def test_newton_schulz_two_stage_produces_tight_polar_factor():
+    torch.manual_seed(71)
+    update = torch.randn(16, 16)
+
+    orthogonalized = _orthogonalize_newton_schulz(update)
+
+    singular_values = torch.linalg.svdvals(orthogonalized.float())
+    assert torch.allclose(
+        singular_values, torch.ones_like(singular_values), atol=2.0e-3, rtol=0.0
+    )
+    assert orthogonalized.dtype == update.dtype
+
+
 def test_batched_newton_schulz_matches_per_tensor_helper():
     torch.manual_seed(37)
     for shape in ((4, 64, 64), (3, 8, 64), (2, 80, 8)):
@@ -161,6 +362,65 @@ def test_hybrid_muon_batches_same_shape_muon_updates(monkeypatch):
 
     assert calls == [(3, 4, 8)]
 
+
+
+def test_hybrid_muon_keeps_momentum_buffer_separate_from_nesterov_update(monkeypatch):
+    param = torch.nn.Parameter(torch.zeros(4, 4))
+    param.grad = torch.ones_like(param)
+    groups, _ = build_hybrid_muon_param_groups(
+        [("interactions.0.conv_tp_weights.layer0.weight", param)],
+        lr=1.0,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=1.0,
+        beta=0.9,
+    )
+    optimizer = HybridMuon(groups, lr=1.0)
+
+    def fake_orthogonalize(update, steps=None):
+        return torch.zeros_like(update)
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon._orthogonalize_newton_schulz",
+        fake_orthogonalize,
+    )
+
+    optimizer.step()
+
+    momentum = optimizer.state[param]["momentum"]
+    assert torch.allclose(momentum, torch.full_like(param, 0.1))
+
+
+def test_hybrid_muon_magma_lite_damps_misaligned_muon_update(monkeypatch):
+    param = torch.nn.Parameter(torch.zeros(2, 2))
+    param.grad = torch.ones_like(param)
+    groups, _ = build_hybrid_muon_param_groups(
+        [("interactions.0.conv_tp_weights.layer0.weight", param)],
+        lr=1.0,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=1.0,
+        beta=0.9,
+        magma_lite=True,
+    )
+    optimizer = HybridMuon(groups, lr=1.0)
+    optimizer.state[param]["momentum"] = -torch.ones_like(param)
+
+    def fake_orthogonalize(update, steps=None):
+        return torch.ones_like(update)
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon._orthogonalize_newton_schulz",
+        fake_orthogonalize,
+    )
+
+    optimizer.step()
+
+    magma_score = optimizer.state[param]["magma_score"]
+    assert magma_score.shape == (1,)
+    assert magma_score.item() < 0.5
+    expected_scale = 0.1 + 0.9 * magma_score.item()
+    assert torch.allclose(param, torch.full_like(param, -expected_scale))
 
 def test_hybrid_muon_adam_route_uses_torch_functional_adam(monkeypatch):
     param = torch.nn.Parameter(torch.ones(1, 8))
@@ -339,6 +599,23 @@ def test_hybrid_muon_rejects_nonpositive_lr_factor():
     else:
         raise AssertionError("expected ValueError")
 
+def test_arg_parser_accepts_hybrid_muon_magma_lite_flag():
+    from mace.tools import build_default_arg_parser
+
+    args = build_default_arg_parser().parse_args(
+        [
+            "--name",
+            "muon_magma_parser_test",
+            "--optimizer",
+            "hybrid_muon",
+            "--hybrid_muon_magma_lite",
+        ]
+    )
+
+    assert args.optimizer == "hybrid_muon"
+    assert args.hybrid_muon_magma_lite is True
+
+
 def test_get_optimizer_builds_hybrid_muon():
     model = TinyMaceLike()
     args = argparse.Namespace(
@@ -347,6 +624,9 @@ def test_get_optimizer_builds_hybrid_muon():
         weight_decay=1.0e-4,
         hybrid_muon_weight_decay=0.0,
         hybrid_muon_lr_factor=0.1,
+        hybrid_muon_mode="slice",
+        hybrid_muon_routing="mace",
+        hybrid_muon_magma_lite=True,
         beta=0.9,
         amsgrad=False,
     )
@@ -363,5 +643,8 @@ def test_get_optimizer_builds_hybrid_muon():
 
     assert optimizer.__class__.__name__ == "HybridMuon"
     assert {group["route"] for group in optimizer.param_groups} == {"muon", "adam"}
-    assert next(group for group in optimizer.param_groups if group["route"] == "muon")["lr"] == 1.0e-4
+    muon_group = next(group for group in optimizer.param_groups if group["route"] == "muon")
+    assert muon_group["lr"] == 1.0e-4
+    assert muon_group["muon_mode"] == "slice"
+    assert muon_group["magma_lite"] is True
     assert next(group for group in optimizer.param_groups if group["route"] == "adam")["lr"] == 1.0e-3

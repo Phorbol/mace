@@ -32,8 +32,28 @@ def setup_cueq(enable: bool, device: str):
     )
 
 
+def test_disabled_cueq_config_does_not_enable_conv_fusion():
+    disabled_cueq = CuEquivarianceConfig(
+        enabled=False,
+        layout="ir_mul",
+        group="O3_e3nn",
+        optimize_channelwise=True,
+        conv_fusion=True,
+    )
+
+    model = create_tiny_mace("cpu", cueq_config=disabled_cueq)
+
+    assert disabled_cueq.enabled is False
+    assert all(not hasattr(interaction, "conv_fusion") for interaction in model.interactions)
+
+
 def create_tiny_mace(
-    device: str, seed: int = 1702, scale: float = 1.0, shift: float = 0.0
+    device: str,
+    seed: int = 1702,
+    scale: float = 1.0,
+    shift: float = 0.0,
+    cueq_config=None,
+    correlation: int = 1,
 ):
     torch_geometric.seed_everything(seed)
     model_config = {
@@ -55,11 +75,11 @@ def create_tiny_mace(
         "atomic_energies": atomic_energies,
         "avg_num_neighbors": 8,
         "atomic_numbers": table.zs,
-        "correlation": 1,
+        "correlation": correlation,
         "radial_type": "bessel",
         "atomic_inter_scale": scale,
         "atomic_inter_shift": shift,
-        "cueq_config": None,
+        "cueq_config": cueq_config,
     }
     model = modules.ScaleShiftMACE(**model_config)
     return model.to(device)
@@ -116,6 +136,9 @@ class _BatchDictAdapter:
             return self.data_dict[name]
         except KeyError as exc:
             raise AttributeError(name) from exc
+
+    def __getitem__(self, name):
+        return self.data_dict[name]
 
 
 class _EnergyForcesMiniLoss(torch.nn.Module):
@@ -325,6 +348,24 @@ def test_compile_fx_graph_module_disables_donated_buffer_during_compile(monkeypa
     assert functorch_config.donated_buffer is True
 
 
+def test_build_force_compile_inductor_options_can_disable_shape_padding():
+    from mace.tools.force_compile import build_force_compile_inductor_options
+
+    options = build_force_compile_inductor_options(shape_padding=False)
+
+    if "shape_padding" in options:
+        assert options["shape_padding"] is False
+
+
+def test_build_force_compile_inductor_options_can_set_max_fusion_size():
+    from mace.tools.force_compile import build_force_compile_inductor_options
+
+    options = build_force_compile_inductor_options(max_fusion_size=1)
+
+    if "max_fusion_size" in options:
+        assert options["max_fusion_size"] == 1
+
+
 def test_edge_force_compile_config_defaults_to_disabled():
     from mace.tools.training_compile import EdgeForceCompileConfig
 
@@ -336,9 +377,21 @@ def test_edge_force_compile_config_defaults_to_disabled():
     assert config.compile_graph is True
     assert config.compile_mode == "default"
     assert config.compile_dynamic is True
+    assert config.compile_shape_padding is True
+    assert config.compile_max_fusion_size == 8
+    assert config.use_e3nn_spherical_harmonics is False
     assert config.allow_fallback is True
     assert config.atol == 1.0e-5
     assert config.rtol == 1.0e-4
+    assert config.refresh_executable_each_step is True
+
+
+def test_edge_force_symbolic_config_reuses_cached_executable_by_default():
+    from mace.tools.training_compile import EdgeForceCompileConfig
+
+    config = EdgeForceCompileConfig(tracing_mode="symbolic")
+
+    assert config.refresh_executable_each_step is False
 
 
 def test_edge_force_compile_gate_rejects_disabled_config():
@@ -412,6 +465,42 @@ def test_edge_force_compile_result_from_trace_records_gate_metadata():
     assert result.compile_kwargs == {"backend": "inductor", "dynamic": True}
 
 
+def test_aten_spherical_harmonics_matches_e3nn_component_lmax3():
+    from mace.tools.training_compile import _edge_force_spherical_harmonics
+
+    reference = o3.SphericalHarmonics(
+        o3.Irreps.spherical_harmonics(3), normalize=True, normalization="component"
+    )
+    vectors = torch.randn(17, 3)
+
+    actual = _edge_force_spherical_harmonics(reference, vectors)
+    expected = reference(vectors)
+
+    assert_close(actual, expected, atol=1.0e-6, rtol=1.0e-6)
+
+
+def test_aten_spherical_harmonics_symbolic_trace_lmax3():
+    from mace.tools.force_compile import trace_force_closure
+    from mace.tools.training_compile import _edge_force_spherical_harmonics
+
+    reference = o3.SphericalHarmonics(
+        o3.Irreps.spherical_harmonics(3), normalize=True, normalization="component"
+    )
+    vectors = torch.randn(17, 3)
+
+    result = trace_force_closure(
+        lambda x: _edge_force_spherical_harmonics(reference, x),
+        (vectors,),
+        tracing_mode="symbolic",
+        strip_detach=False,
+    )
+
+    assert len(list(result.graph_module.graph.nodes)) > 0
+    assert_close(
+        result.graph_module(vectors), reference(vectors), atol=1.0e-6, rtol=1.0e-6
+    )
+
+
 def test_edge_force_compile_input_names_exclude_labels_and_geometry():
     from mace.tools.training_compile import edge_force_compile_input_names
 
@@ -432,6 +521,35 @@ def test_edge_force_compile_input_names_exclude_labels_and_geometry():
     )
 
     assert names == ("positions", "edge_index", "node_attrs", "batch", "ptr", "head")
+
+
+def test_position_force_compile_input_names_include_shifts():
+    from mace.tools.training_compile import edge_force_compile_input_names
+
+    names = edge_force_compile_input_names(
+        {
+            "positions",
+            "edge_index",
+            "node_attrs",
+            "batch",
+            "ptr",
+            "head",
+            "shifts",
+            "energy",
+            "forces",
+        },
+        force_gradient_mode="positions",
+    )
+
+    assert names == (
+        "positions",
+        "edge_index",
+        "shifts",
+        "node_attrs",
+        "batch",
+        "ptr",
+        "head",
+    )
 
 
 def test_select_by_node_heads_matches_advanced_indexing():
@@ -554,6 +672,305 @@ def test_parse_edge_force_bucket_sizes_sorts_and_validates_values():
         parse_edge_force_bucket_sizes("128,0")
 
 
+def test_pad_edge_force_data_to_bucket_adds_masks_and_fixed_shapes():
+    from mace.tools.training_compile import _pad_edge_force_data_to_bucket
+
+    batch = create_batch("cpu")
+    num_atoms = batch["positions"].shape[0]
+    num_edges = batch["edge_index"].shape[1]
+
+    padded = _pad_edge_force_data_to_bucket(
+        batch,
+        atom_bucket=num_atoms + 3,
+        edge_bucket=num_edges + 5,
+        r_max=5.0,
+    )
+
+    assert padded["positions"].shape == (num_atoms + 3, 3)
+    assert padded["node_attrs"].shape == (num_atoms + 3, batch["node_attrs"].shape[1])
+    assert padded["batch"].shape == (num_atoms + 3,)
+    assert padded["edge_index"].shape == (2, num_edges + 5)
+    assert padded["shifts"].shape == (num_edges + 5, 3)
+    assert padded["_node_mask"].shape == (num_atoms + 3,)
+    assert padded["_edge_mask"].shape == (num_edges + 5,)
+    assert padded["_real_num_atoms"].item() == num_atoms
+    assert torch.all(padded["_node_mask"][:num_atoms] == 1)
+    assert torch.all(padded["_node_mask"][num_atoms:] == 0)
+    assert torch.all(padded["_edge_mask"][:num_edges] == 1)
+    assert torch.all(padded["_edge_mask"][num_edges:] == 0)
+    assert torch.all(padded["edge_index"][:, num_edges:] == num_atoms + 2)
+    assert torch.all(padded["shifts"][num_edges:, 0] == 10.0)
+
+
+def test_padded_edge_force_outputs_match_unpadded_real_atoms():
+    from mace.modules.utils import get_edge_vectors_and_lengths
+    from mace.tools.training_compile import (
+        _edge_force_outputs,
+        _edge_vector_inputs,
+        _pad_edge_force_data_to_bucket,
+    )
+
+    model = create_tiny_mace("cpu")
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    data_dict, positions, edge_index, vectors = _edge_vector_inputs(batch)
+    ref_energy, ref_forces = _edge_force_outputs(
+        model, data_dict, positions, edge_index, vectors
+    )
+
+    padded_data = _pad_edge_force_data_to_bucket(
+        data_dict,
+        atom_bucket=positions.shape[0] + 2,
+        edge_bucket=edge_index.shape[1] + 4,
+        r_max=5.0,
+    )
+    padded_vectors, _ = get_edge_vectors_and_lengths(
+        positions=padded_data["positions"],
+        edge_index=padded_data["edge_index"],
+        shifts=padded_data["shifts"],
+    )
+    padded_vectors = padded_vectors.detach().clone().requires_grad_(True)
+    padded_energy, padded_forces = _edge_force_outputs(
+        model,
+        padded_data,
+        padded_data["positions"],
+        padded_data["edge_index"],
+        padded_vectors,
+    )
+
+    assert_close(padded_energy, ref_energy, atol=1e-6, rtol=1e-6)
+    assert_close(padded_forces[: positions.shape[0]], ref_forces, atol=1e-6, rtol=1e-6)
+
+
+def test_loss_from_energy_forces_slices_padded_forces_to_reference_atoms():
+    from mace.tools.training_compile import _loss_from_energy_forces
+
+    batch = _BatchDictAdapter(create_batch("cpu"))
+
+    class ShapeCheckingLoss(torch.nn.Module):
+        def forward(self, pred, ref):
+            assert pred["forces"].shape == ref.forces.shape
+            return pred["forces"].sum() + pred["energy"].sum()
+
+    padded_forces = torch.cat((batch.forces, torch.ones(2, 3)), dim=0)
+    loss = _loss_from_energy_forces(
+        batch=batch,
+        loss_fn=ShapeCheckingLoss(),
+        energy=batch.energy,
+        forces=padded_forces,
+    )
+
+    assert torch.isfinite(loss)
+
+
+
+def test_edge_force_weighted_energy_forces_tensor_loss_matches_loss_module():
+    from mace.modules import WeightedEnergyForcesLoss
+    from mace.tools.training_compile import (
+        _atomic_forces_from_edge_grad,
+        _edge_force_energy_and_edge_grad,
+        _edge_force_weighted_energy_forces_loss,
+        _edge_vector_inputs,
+        _loss_from_energy_forces,
+    )
+
+    model = create_tiny_mace("cpu")
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    loss_fn = WeightedEnergyForcesLoss(energy_weight=1.3, forces_weight=7.0)
+    data_dict, _, _, vectors = _edge_vector_inputs(batch)
+    energy, edge_grad = _edge_force_energy_and_edge_grad(model, data_dict, vectors)
+    forces = _atomic_forces_from_edge_grad(data_dict, edge_grad)
+
+    reference = _loss_from_energy_forces(
+        batch=batch,
+        loss_fn=loss_fn,
+        energy=energy,
+        forces=forces,
+    )
+    actual = _edge_force_weighted_energy_forces_loss(
+        data_dict=data_dict,
+        energy=energy,
+        forces=forces,
+        energy_loss_weight=loss_fn.energy_weight,
+        forces_loss_weight=loss_fn.forces_weight,
+    )
+
+    assert_close(actual, reference)
+
+
+def test_position_force_weighted_energy_forces_tensor_loss_matches_loss_module():
+    from mace.modules import WeightedEnergyForcesLoss
+    from mace.tools.training_compile import (
+        _edge_vector_inputs,
+        _loss_from_energy_forces,
+        _position_force_energy_and_forces,
+        _position_force_weighted_energy_forces_loss,
+    )
+
+    model = create_tiny_mace("cpu")
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    loss_fn = WeightedEnergyForcesLoss(energy_weight=1.3, forces_weight=7.0)
+    data_dict, positions, _, _ = _edge_vector_inputs(batch)
+    energy, forces = _position_force_energy_and_forces(model, data_dict, positions)
+
+    reference = _loss_from_energy_forces(
+        batch=batch,
+        loss_fn=loss_fn,
+        energy=energy,
+        forces=forces,
+    )
+    actual = _position_force_weighted_energy_forces_loss(
+        data_dict=data_dict,
+        energy=energy,
+        forces=forces,
+        energy_loss_weight=loss_fn.energy_weight,
+        forces_loss_weight=loss_fn.forces_weight,
+    )
+
+    assert_close(forces, model(batch.to_dict(), training=True)["forces"])
+    assert_close(actual, reference)
+
+
+def test_edge_force_snapshot_scatters_compiled_edge_grad_outside_executable(monkeypatch):
+    from mace.tools import training_compile
+    from mace.tools.training_compile import (
+        _edge_force_value_snapshot_from_executable,
+        _edge_vector_inputs,
+        edge_force_compile_input_names,
+    )
+
+    model = create_tiny_mace("cpu")
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    data_dict, _, _, _ = _edge_vector_inputs(batch)
+    input_names = edge_force_compile_input_names(data_dict.keys())
+    expected_forces = torch.full_like(batch.forces, 2.0)
+    calls = []
+
+    def executable(vectors, *input_tensors):
+        del input_tensors
+        edge_grad = torch.ones_like(vectors)
+        return torch.zeros_like(batch.energy), edge_grad
+
+    def fake_edge_gradient_to_atomic_forces(edge_grad, *, edge_index, num_atoms):
+        calls.append((edge_grad.shape, edge_index.shape, num_atoms))
+        return expected_forces.clone()
+
+    class ForceShapeLoss(torch.nn.Module):
+        def forward(self, pred, ref):
+            assert pred["forces"].shape == ref.forces.shape
+            return pred["forces"].sum() + pred["energy"].sum()
+
+    monkeypatch.setattr(
+        training_compile,
+        "edge_gradient_to_atomic_forces",
+        fake_edge_gradient_to_atomic_forces,
+    )
+
+    snapshot = _edge_force_value_snapshot_from_executable(
+        model=model,
+        batch=batch,
+        loss_fn=ForceShapeLoss(),
+        executable=executable,
+        input_names=input_names,
+    )
+
+    assert calls == [
+        (torch.Size((batch.edge_index.shape[1], 3)), batch.edge_index.shape, batch.positions.shape[0])
+    ]
+    assert_close(snapshot["forces"], expected_forces)
+
+
+def test_edge_vector_inputs_leave_vectors_non_differentiable_for_core_leaf():
+    from mace.tools.training_compile import _edge_vector_inputs
+
+    data_dict, _, _, vectors = _edge_vector_inputs(_BatchDictAdapter(create_batch("cpu")))
+
+    assert vectors.requires_grad is False
+    assert data_dict["positions"].requires_grad is False
+
+
+def test_edge_force_trace_strips_boundary_detach_for_training_backward():
+    from mace.tools.force_compile import count_fx_detach_nodes, trace_force_closure
+    from mace.tools.training_compile import (
+        _edge_force_energy_and_edge_grad,
+        _edge_vector_inputs,
+        edge_force_compile_input_names,
+    )
+
+    model = create_tiny_mace("cpu")
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    data_dict, _, _, vectors = _edge_vector_inputs(batch)
+    input_names = edge_force_compile_input_names(data_dict.keys())
+    example_inputs = tuple(data_dict[name] for name in input_names)
+
+    def closure(vectors_arg, *data_tensors):
+        current_data = dict(data_dict)
+        current_data.update(zip(input_names, data_tensors, strict=True))
+        return _edge_force_energy_and_edge_grad(model, current_data, vectors_arg)
+
+    trace_result = trace_force_closure(
+        closure,
+        (vectors, *example_inputs),
+        tracing_mode="real",
+        strip_detach=True,
+        strip_all_detach=True,
+    )
+
+    assert trace_result.detach_nodes_before > 0
+    assert trace_result.detach_nodes_after == 0
+    assert count_fx_detach_nodes(trace_result.graph_module) == 0
+
+
+def test_edge_vector_inputs_can_pad_to_bucket_shape():
+    from mace.tools.training_compile import _edge_vector_inputs
+
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    atom_bucket = batch.positions.shape[0] + 2
+    edge_bucket = batch.edge_index.shape[1] + 4
+
+    data_dict, positions, edge_index, vectors = _edge_vector_inputs(
+        batch, atom_bucket=atom_bucket, edge_bucket=edge_bucket, r_max=5.0
+    )
+
+    assert data_dict["positions"].shape[0] == atom_bucket
+    assert data_dict["edge_index"].shape[1] == edge_bucket
+    assert positions.shape[0] == atom_bucket
+    assert edge_index.shape[1] == edge_bucket
+    assert vectors.shape[0] == edge_bucket
+    assert data_dict["_node_mask"].shape[0] == atom_bucket
+    assert data_dict["_edge_mask"].shape[0] == edge_bucket
+
+
+def test_edge_force_compile_dynamic_cache_key_groups_different_atom_edge_shapes():
+    from mace.tools.training_compile import edge_force_compile_dynamic_cache_key
+
+    left = edge_force_compile_dynamic_cache_key(
+        input_shapes={
+            "positions": (286, 3),
+            "edge_index": (2, 4632),
+            "shifts": (4632, 3),
+            "node_attrs": (286, 4),
+            "batch": (286,),
+            "ptr": (33,),
+        }
+    )
+    right = edge_force_compile_dynamic_cache_key(
+        input_shapes={
+            "positions": (441, 3),
+            "edge_index": (2, 10274),
+            "shifts": (10274, 3),
+            "node_attrs": (441, 4),
+            "batch": (441,),
+            "ptr": (33,),
+        }
+    )
+
+    assert left == right
+    assert ("positions", (-1, 3)) in left[-1]
+    assert ("edge_index", (2, -1)) in left[-1]
+    assert ("shifts", (-1, 3)) in left[-1]
+    assert ("ptr", (33,)) in left[-1]
+
+
 def test_edge_force_compile_bucket_cache_key_groups_nearby_shapes():
     from mace.tools.training_compile import edge_force_compile_bucket_cache_key
 
@@ -609,6 +1026,27 @@ def test_edge_force_compile_bucket_cache_key_rejects_oversized_bucket():
     )
 
     assert cache_key is None
+
+
+def test_edge_force_compile_bucket_cache_key_zero_margin_accepts_small_inputs():
+    from mace.tools.training_compile import edge_force_compile_bucket_cache_key
+
+    cache_key = edge_force_compile_bucket_cache_key(
+        num_atoms=286,
+        num_edges=4632,
+        input_shapes={
+            "positions": (286, 3),
+            "edge_index": (2, 4632),
+        },
+        bucket_atoms=(768,),
+        bucket_edges=(32768,),
+        bucket_margin=0.0,
+    )
+
+    assert cache_key is not None
+    assert cache_key[1:3] == (768, 32768)
+    assert ("positions", (768, 3)) in cache_key[-1]
+    assert ("edge_index", (2, 32768)) in cache_key[-1]
 
 
 def test_edge_force_compile_cache_hit_gate_result_records_failure():
@@ -741,6 +1179,199 @@ def test_edge_force_compiled_loss_repeat_only_uses_eager_before_threshold(monkey
     assert metrics["edge_force_num_edges"] == batch.edge_index.shape[1]
 
 
+
+def test_edge_force_compiled_loss_returns_tensor_loss_for_weighted_energy_forces():
+    from mace.modules import WeightedEnergyForcesLoss
+    from mace.tools.training_compile import (
+        EdgeForceCompileConfig,
+        prepare_edge_force_compiled_loss,
+    )
+
+    model = create_tiny_mace("cpu")
+    prepared = prepare_edge_force_compiled_loss(
+        model,
+        config=EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_policy="dynamic",
+            setup_gate="none",
+            cache_hit_gate=False,
+            allow_fallback=False,
+        ),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    loss, metrics = prepared.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=WeightedEnergyForcesLoss(energy_weight=1.0, forces_weight=100.0),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert metrics["edge_force_compile"] is True
+    assert metrics["edge_force_compile_loss"] is True
+    loss.backward()
+    assert any(param.grad is not None for param in model.parameters())
+
+
+def test_edge_force_compiled_loss_can_use_position_gradient_mode():
+    from mace.modules import WeightedEnergyForcesLoss
+    from mace.tools.training_compile import (
+        EdgeForceCompileConfig,
+        prepare_edge_force_compiled_loss,
+    )
+
+    model = create_tiny_mace("cpu")
+    prepared = prepare_edge_force_compiled_loss(
+        model,
+        config=EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_policy="dynamic",
+            setup_gate="none",
+            cache_hit_gate=False,
+            force_gradient_mode="positions",
+            allow_fallback=False,
+        ),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    loss, metrics = prepared.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=WeightedEnergyForcesLoss(energy_weight=1.0, forces_weight=100.0),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert metrics["edge_force_compile"] is True
+    assert metrics["edge_force_compile_loss"] is True
+    assert metrics["edge_force_gradient_mode"] == "positions"
+    loss.backward()
+    assert any(param.grad is not None for param in model.parameters())
+
+
+def test_edge_force_compiled_loss_bucket_policy_compiles_padded_inputs():
+    from mace.tools.train import take_step
+    from mace.tools.training_compile import (
+        EdgeForceCompileConfig,
+        prepare_edge_force_compiled_loss,
+    )
+
+    model = create_tiny_mace("cpu")
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    atom_bucket = batch.positions.shape[0] + 2
+    edge_bucket = batch.edge_index.shape[1] + 4
+    prepared = prepare_edge_force_compiled_loss(
+        model,
+        config=EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_hit_gate=True,
+            cache_policy="bucket",
+            bucket_atoms=(atom_bucket,),
+            bucket_edges=(edge_bucket,),
+            bucket_margin=2.0,
+            allow_fallback=False,
+        ),
+    )
+    optimizer = torch.optim.SGD(model.parameters(), lr=1.0e-4)
+
+    _, metrics = take_step(
+        model=prepared,
+        loss_fn=_EnergyForcesMiniLoss(),
+        batch=batch,
+        optimizer=optimizer,
+        ema=None,
+        output_args={"forces": True, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+
+    assert metrics["edge_force_compile"] is True
+    assert metrics["edge_force_cache_hit"] is False
+    compiled = next(iter(prepared.cache.values()))
+    assert "_node_mask" in compiled.input_names
+    assert "_edge_mask" in compiled.input_names
+    assert ("positions", (atom_bucket, 3)) in compiled.cache_key[-1]
+    assert ("edge_index", (2, edge_bucket)) in compiled.cache_key[-1]
+    assert ("_node_mask", (atom_bucket,)) in compiled.cache_key[-1]
+    assert ("_edge_mask", (edge_bucket,)) in compiled.cache_key[-1]
+
+    _, hit_metrics = take_step(
+        model=prepared,
+        loss_fn=_EnergyForcesMiniLoss(),
+        batch=batch,
+        optimizer=optimizer,
+        ema=None,
+        output_args={"forces": True, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+    assert hit_metrics["edge_force_cache_hit"] is True
+    assert hit_metrics["edge_force_cache_hit_gate_accepted"] is True
+
+
+def test_edge_force_compiled_loss_bucket_cache_hit_across_smaller_shape():
+    from mace.tools.train import take_step
+    from mace.tools.training_compile import (
+        EdgeForceCompileConfig,
+        prepare_edge_force_compiled_loss,
+    )
+
+    def truncate_batch(batch_dict, keep_atoms):
+        keep_edges = (batch_dict["edge_index"] < keep_atoms).all(dim=0)
+        out = dict(batch_dict)
+        for key in ("positions", "node_attrs", "forces", "batch", "charges", "density_coefficients"):
+            if key in out and torch.is_tensor(out[key]) and out[key].shape[0] == batch_dict["positions"].shape[0]:
+                out[key] = out[key][:keep_atoms].clone()
+        out["edge_index"] = out["edge_index"][:, keep_edges].clone()
+        for key in ("shifts", "unit_shifts"):
+            if key in out and torch.is_tensor(out[key]) and out[key].shape[0] == keep_edges.shape[0]:
+                out[key] = out[key][keep_edges].clone()
+        out["ptr"] = torch.tensor([0, keep_atoms], dtype=batch_dict["ptr"].dtype)
+        return out
+
+    model = create_tiny_mace("cpu")
+    first = _BatchDictAdapter(create_batch("cpu"))
+    second = _BatchDictAdapter(truncate_batch(first.to_dict(), first.positions.shape[0] - 4))
+    atom_bucket = first.positions.shape[0] + 2
+    edge_bucket = first.edge_index.shape[1] + 4
+    prepared = prepare_edge_force_compiled_loss(
+        model,
+        config=EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_hit_gate=True,
+            cache_policy="bucket",
+            bucket_atoms=(atom_bucket,),
+            bucket_edges=(edge_bucket,),
+            bucket_margin=2.0,
+            allow_fallback=False,
+        ),
+    )
+    optimizer = torch.optim.SGD(model.parameters(), lr=1.0e-4)
+
+    take_step(
+        model=prepared,
+        loss_fn=_EnergyForcesMiniLoss(),
+        batch=first,
+        optimizer=optimizer,
+        ema=None,
+        output_args={"forces": True, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+    _, metrics = take_step(
+        model=prepared,
+        loss_fn=_EnergyForcesMiniLoss(),
+        batch=second,
+        optimizer=optimizer,
+        ema=None,
+        output_args={"forces": True, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+
+    assert metrics["edge_force_cache_hit"] is True
+    assert metrics["edge_force_cache_hit_gate_accepted"] is True
+
+
 def test_edge_force_compiled_loss_gates_shape_cache_hits():
     from mace.tools.train import take_step
     from mace.tools.training_compile import (
@@ -856,6 +1487,37 @@ def test_prepare_edge_force_compiled_loss_wraps_scaleshiftmace_for_take_step():
     assert metrics["edge_force_gate_accepted"] is True
 
 
+def test_edge_force_compile_step_promotes_trainable_parameters_as_inputs():
+    from mace.tools import training_compile
+
+    model = create_tiny_mace("cpu")
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        model,
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_hit_gate=False,
+            allow_fallback=False,
+        ),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    data_dict, _, _, _ = training_compile._edge_vector_inputs(batch)
+    input_names = training_compile.edge_force_compile_input_names(data_dict.keys())
+    cache_key = wrapper._cache_key(batch=batch, input_names=input_names, data_dict=data_dict)
+
+    compiled = wrapper._compile_step(
+        batch=batch,
+        loss_fn=_EnergyForcesMiniLoss(),
+        cache_key=cache_key,
+    )
+
+    expected = tuple(
+        name for name, param in model.named_parameters() if param.requires_grad
+    )
+    assert compiled.param_names == expected
+    assert compiled.param_names
+
+
 def test_edge_force_compile_step_uses_fresh_executable_after_gate(monkeypatch):
     import types
 
@@ -895,6 +1557,9 @@ def test_edge_force_compile_step_uses_fresh_executable_after_gate(monkeypatch):
     )
     monkeypatch.setattr(
         training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "rebuild_fx_graph_module", lambda graph_module: graph_module
     )
     monkeypatch.setattr(
         training_compile,
@@ -943,6 +1608,598 @@ def test_edge_force_compile_step_uses_fresh_executable_after_gate(monkeypatch):
     assert compiled.executable is compiled_executables[1]
 
 
+def test_edge_force_compile_metrics_report_setup_phase_breakdown(monkeypatch, caplog):
+    import types
+
+    from mace.tools import training_compile
+
+    caplog.set_level("INFO")
+
+    def fake_trace_force_closure(*args, **kwargs):
+        return types.SimpleNamespace(
+            graph_module=types.SimpleNamespace(
+                graph=types.SimpleNamespace(nodes=[object()])
+            ),
+            detach_nodes_before=0,
+            detach_nodes_after=0,
+        )
+
+    def fake_compile_fx_graph_module(*args, **kwargs):
+        def executable(vectors, *input_tensors):
+            del input_tensors
+            energy = torch.ones(
+                1, dtype=vectors.dtype, device=vectors.device, requires_grad=True
+            )
+            edge_grad = torch.zeros_like(vectors)
+            return energy, edge_grad
+
+        return executable, {"compile_graph": kwargs["compile_graph"]}
+
+    def snapshot_payload():
+        return {
+            "energy": torch.zeros(1),
+            "forces": torch.zeros(1, 3),
+            "loss": torch.zeros(()),
+            "grads": {},
+        }
+
+    class EnergyOnlyLoss(torch.nn.Module):
+        def forward(self, pred, ref):
+            del ref
+            return pred["energy"].sum()
+
+    monkeypatch.setattr(
+        training_compile, "trace_force_closure", fake_trace_force_closure
+    )
+    monkeypatch.setattr(
+        training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "rebuild_fx_graph_module", lambda graph_module: graph_module
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_position_force_value_snapshot",
+        lambda **kwargs: snapshot_payload(),
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_edge_force_value_snapshot_from_executable",
+        lambda **kwargs: snapshot_payload(),
+    )
+
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        create_tiny_mace("cpu"),
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=True,
+            cache_hit_gate=False,
+            cache_policy="shape",
+            allow_fallback=False,
+        ),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+
+    _, metrics = wrapper.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=EnergyOnlyLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    expected_phase_keys = {
+        "edge_force_compile_trace_seconds",
+        "edge_force_compile_gate_compile_seconds",
+        "edge_force_compile_gate_reference_seconds",
+        "edge_force_compile_gate_candidate_seconds",
+        "edge_force_compile_training_compile_seconds",
+    }
+    assert expected_phase_keys <= set(metrics)
+    assert all(metrics[key] >= 0.0 for key in expected_phase_keys)
+    phase_total = sum(metrics[key] for key in expected_phase_keys)
+    assert metrics["edge_force_compile_setup_seconds"] >= phase_total
+    setup_messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Edge-force compile setup phase input_prep" in setup_messages
+    assert "Edge-force compile setup phase trace" in setup_messages
+    assert "Edge-force compile setup phase gate_compile" in setup_messages
+
+
+
+def test_edge_force_compile_setup_gate_none_skips_expensive_setup_snapshots(monkeypatch):
+    import types
+
+    from mace.tools import training_compile
+
+    snapshot_calls = []
+
+    def fake_trace_force_closure(*args, **kwargs):
+        return types.SimpleNamespace(
+            graph_module=types.SimpleNamespace(
+                graph=types.SimpleNamespace(nodes=[object()])
+            ),
+            detach_nodes_before=0,
+            detach_nodes_after=0,
+        )
+
+    def fake_compile_fx_graph_module(*args, **kwargs):
+        def executable(vectors, *input_tensors):
+            del input_tensors
+            energy = torch.ones(
+                1, dtype=vectors.dtype, device=vectors.device, requires_grad=True
+            )
+            edge_grad = torch.zeros_like(vectors)
+            return energy, edge_grad
+
+        return executable, {"compile_graph": kwargs["compile_graph"]}
+
+    def fail_snapshot(**kwargs):
+        del kwargs
+        snapshot_calls.append("called")
+        raise AssertionError("setup gate snapshots should be skipped")
+
+    class EnergyOnlyLoss(torch.nn.Module):
+        def forward(self, pred, ref):
+            del ref
+            return pred["energy"].sum()
+
+    monkeypatch.setattr(
+        training_compile, "trace_force_closure", fake_trace_force_closure
+    )
+    monkeypatch.setattr(
+        training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "rebuild_fx_graph_module", lambda graph_module: graph_module
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_position_force_value_snapshot",
+        fail_snapshot,
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_edge_force_value_snapshot_from_executable",
+        fail_snapshot,
+    )
+
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        create_tiny_mace("cpu"),
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=True,
+            cache_hit_gate=False,
+            cache_policy="shape",
+            allow_fallback=False,
+            setup_gate="none",
+        ),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+
+    _, metrics = wrapper.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=EnergyOnlyLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert snapshot_calls == []
+    assert metrics["edge_force_setup_gate"] == "none"
+    assert metrics["edge_force_gate_accepted"] is None
+    assert metrics["edge_force_compile_gate_reference_seconds"] == 0.0
+    assert metrics["edge_force_compile_gate_candidate_seconds"] == 0.0
+
+
+def test_edge_force_cache_hit_refreshes_runtime_executable(monkeypatch):
+    import types
+
+    from mace.tools import training_compile
+
+    compiled_labels = []
+    used_labels = []
+    compile_graph_modules = []
+    traced_graph_module = types.SimpleNamespace(
+        graph=types.SimpleNamespace(nodes=[object()])
+    )
+    rebuilt_graph_modules = []
+
+    def fake_rebuild_fx_graph_module(graph_module):
+        rebuilt = types.SimpleNamespace(
+            graph=types.SimpleNamespace(nodes=[object()]),
+            original=graph_module,
+            label=f"rebuilt{len(rebuilt_graph_modules)}",
+        )
+        rebuilt_graph_modules.append(rebuilt)
+        return rebuilt
+
+    def fake_trace_force_closure(*args, **kwargs):
+        return types.SimpleNamespace(
+            graph_module=traced_graph_module,
+            detach_nodes_before=0,
+            detach_nodes_after=0,
+        )
+
+    def fake_compile_fx_graph_module(graph_module, *args, **kwargs):
+        label = f"exec{len(compiled_labels)}"
+        compiled_labels.append(label)
+        compile_graph_modules.append(graph_module)
+
+        def executable(vectors, *input_tensors):
+            del input_tensors
+            used_labels.append(label)
+            energy = torch.ones(1, dtype=vectors.dtype, device=vectors.device, requires_grad=True)
+            edge_grad = torch.zeros_like(vectors)
+            return energy, edge_grad
+
+        return executable, {"compile_graph": kwargs["compile_graph"]}
+
+    def snapshot_payload():
+        return {
+            "energy": torch.zeros(1),
+            "forces": torch.zeros(1, 3),
+            "loss": torch.zeros(()),
+            "grads": {},
+        }
+
+    class EnergyOnlyLoss(torch.nn.Module):
+        def forward(self, pred, ref):
+            del ref
+            return pred["energy"].sum()
+
+    monkeypatch.setattr(
+        training_compile, "trace_force_closure", fake_trace_force_closure
+    )
+    monkeypatch.setattr(
+        training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_position_force_value_snapshot",
+        lambda **kwargs: snapshot_payload(),
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_edge_force_value_snapshot_from_executable",
+        lambda **kwargs: snapshot_payload(),
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "rebuild_fx_graph_module",
+        fake_rebuild_fx_graph_module,
+    )
+
+    model = create_tiny_mace("cpu")
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        model,
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=True,
+            cache_hit_gate=False,
+            cache_policy="shape",
+            allow_fallback=False,
+        ),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+
+    wrapper.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=EnergyOnlyLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+    used_labels.clear()
+
+    loss, metrics = wrapper.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=EnergyOnlyLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert loss.requires_grad is True
+    assert metrics["edge_force_cache_hit"] is True
+    assert len(compiled_labels) == 3
+    assert used_labels == ["exec2"]
+    assert all(module is not traced_graph_module for module in compile_graph_modules)
+    assert len({id(module) for module in compile_graph_modules}) == len(compile_graph_modules)
+    assert compile_graph_modules[2] is rebuilt_graph_modules[-1]
+    assert metrics["edge_force_runtime_recompile"] is True
+    assert next(iter(wrapper.cache.values())).executable is None
+
+
+def test_edge_force_cache_hit_does_not_request_outer_retain_graph(monkeypatch):
+    import types
+
+    from mace.tools import training_compile
+
+    def fake_trace_force_closure(*args, **kwargs):
+        return types.SimpleNamespace(
+            graph_module=types.SimpleNamespace(
+                graph=types.SimpleNamespace(nodes=[object()])
+            ),
+            detach_nodes_before=0,
+            detach_nodes_after=0,
+        )
+
+    def fake_compile_fx_graph_module(*args, **kwargs):
+        def executable(vectors, *input_tensors):
+            del input_tensors
+            energy = torch.ones(1, dtype=vectors.dtype, device=vectors.device, requires_grad=True)
+            edge_grad = torch.zeros_like(vectors)
+            return energy, edge_grad
+
+        return executable, {"compile_graph": kwargs["compile_graph"]}
+
+    def snapshot_payload():
+        return {
+            "energy": torch.zeros(1),
+            "forces": torch.zeros(1, 3),
+            "loss": torch.zeros(()),
+            "grads": {},
+        }
+
+    class EnergyOnlyLoss(torch.nn.Module):
+        def forward(self, pred, ref):
+            del ref
+            return pred["energy"].sum()
+
+    monkeypatch.setattr(
+        training_compile, "trace_force_closure", fake_trace_force_closure
+    )
+    monkeypatch.setattr(
+        training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "rebuild_fx_graph_module", lambda graph_module: graph_module
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_position_force_value_snapshot",
+        lambda **kwargs: snapshot_payload(),
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_edge_force_value_snapshot_from_executable",
+        lambda **kwargs: snapshot_payload(),
+    )
+
+    model = create_tiny_mace("cpu")
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        model,
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=True,
+            cache_hit_gate=False,
+            cache_policy="shape",
+            allow_fallback=False,
+            refresh_executable_each_step=False,
+        ),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+
+    _, first_metrics = wrapper.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=EnergyOnlyLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+    _, hit_metrics = wrapper.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=EnergyOnlyLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert "_retain_graph_for_backward" not in first_metrics
+    assert hit_metrics["edge_force_cache_hit"] is True
+    assert "_retain_graph_for_backward" not in hit_metrics
+
+
+def test_edge_force_compile_periodic_parity_check_records_gradient_diffs(monkeypatch):
+    import types
+
+    from mace.tools import training_compile
+
+    def fake_trace_force_closure(*args, **kwargs):
+        return types.SimpleNamespace(
+            graph_module=types.SimpleNamespace(
+                graph=types.SimpleNamespace(nodes=[object()])
+            ),
+            detach_nodes_before=0,
+            detach_nodes_after=0,
+        )
+
+    def fake_compile_fx_graph_module(*args, **kwargs):
+        def executable(vectors, *input_tensors):
+            first_param = input_tensors[0]
+            energy = first_param.reshape(-1)[:1] * 0.0 + torch.ones(
+                1, dtype=vectors.dtype, device=vectors.device
+            )
+            edge_grad = torch.zeros_like(vectors)
+            return energy, edge_grad
+
+        return executable, {"compile_graph": kwargs["compile_graph"]}
+
+    class EnergyOnlyLoss(torch.nn.Module):
+        def forward(self, pred, ref):
+            del ref
+            return pred["energy"].sum()
+
+    model = create_tiny_mace("cpu")
+    snapshot_calls = []
+
+    def snapshot_payload(label):
+        snapshot_calls.append(label)
+        first_param = next(model.parameters())
+        first_param.grad = torch.ones_like(first_param)
+        return {
+            "energy": torch.zeros(1),
+            "forces": torch.zeros(1, 3),
+            "loss": torch.zeros(()),
+            "grads": {"checked.weight": torch.zeros(1)},
+        }
+
+    monkeypatch.setattr(
+        training_compile, "trace_force_closure", fake_trace_force_closure
+    )
+    monkeypatch.setattr(
+        training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "rebuild_fx_graph_module", lambda graph_module: graph_module
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_position_force_snapshot",
+        lambda **kwargs: snapshot_payload("reference"),
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_edge_force_snapshot_from_executable",
+        lambda **kwargs: snapshot_payload("candidate"),
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_position_force_value_snapshot",
+        lambda **kwargs: snapshot_payload("compile_reference"),
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_edge_force_value_snapshot_from_executable",
+        lambda **kwargs: snapshot_payload("compile_candidate"),
+    )
+
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        model,
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=True,
+            cache_hit_gate=False,
+            cache_policy="shape",
+            allow_fallback=False,
+            refresh_executable_each_step=False,
+            parity_check_interval=1,
+        ),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+
+    wrapper.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=EnergyOnlyLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+    snapshot_calls.clear()
+    loss, metrics = wrapper.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=EnergyOnlyLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert loss.requires_grad is True
+    assert snapshot_calls == ["reference", "candidate"]
+    assert metrics["edge_force_parity_check"] is True
+    assert metrics["edge_force_parity_accepted"] is True
+    assert metrics["edge_force_parity_failed_checks"] == 0
+    assert metrics["edge_force_parity_loss_abs_diff"] == 0.0
+    assert metrics["edge_force_parity_forces_max_abs_diff"] == 0.0
+    assert metrics["edge_force_parity_param_grad_max_abs_diff"] == 0.0
+    assert all(param.grad is None for param in model.parameters())
+
+
+
+def test_edge_force_compile_fixed_probe_reuses_first_batch(monkeypatch):
+    import types
+
+    from mace.tools import training_compile
+
+    def fake_trace_force_closure(*args, **kwargs):
+        return types.SimpleNamespace(
+            graph_module=types.SimpleNamespace(
+                graph=types.SimpleNamespace(nodes=[object()])
+            ),
+            detach_nodes_before=0,
+            detach_nodes_after=0,
+        )
+
+    def fake_compile_fx_graph_module(*args, **kwargs):
+        def executable(vectors, *input_tensors):
+            first_param = input_tensors[0]
+            energy = first_param.reshape(-1)[:1] * 0.0 + torch.ones(
+                1, dtype=vectors.dtype, device=vectors.device
+            )
+            edge_grad = torch.zeros_like(vectors)
+            return energy, edge_grad
+
+        return executable, {"compile_graph": kwargs["compile_graph"]}
+
+    class EnergyOnlyLoss(torch.nn.Module):
+        def forward(self, pred, ref):
+            del ref
+            return pred["energy"].sum()
+
+    model = create_tiny_mace("cpu")
+    snapshot_batches = []
+
+    def snapshot_payload(label, batch, **kwargs):
+        del kwargs
+        snapshot_batches.append((label, int(batch._probe_marker.item())))
+        return {
+            "energy": torch.zeros(1),
+            "forces": torch.zeros(1, 3),
+            "loss": torch.zeros(()),
+            "grads": {},
+        }
+
+    monkeypatch.setattr(
+        training_compile, "trace_force_closure", fake_trace_force_closure
+    )
+    monkeypatch.setattr(
+        training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "rebuild_fx_graph_module", lambda graph_module: graph_module
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_position_force_value_snapshot",
+        lambda **kwargs: snapshot_payload("reference", **kwargs),
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_edge_force_value_snapshot_from_executable",
+        lambda **kwargs: snapshot_payload("candidate", **kwargs),
+    )
+
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        model,
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=True,
+            cache_hit_gate=False,
+            cache_policy="shape",
+            allow_fallback=False,
+            refresh_executable_each_step=False,
+            fixed_probe_interval=1,
+        ),
+    )
+    first_data = create_batch("cpu")
+    first_data["_probe_marker"] = torch.tensor(1)
+    second_data = create_batch("cpu")
+    second_data["_probe_marker"] = torch.tensor(2)
+    first_batch = _BatchDictAdapter(first_data)
+    second_batch = _BatchDictAdapter(second_data)
+
+    wrapper.compiled_force_training_loss(
+        batch=first_batch,
+        loss_fn=EnergyOnlyLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+    snapshot_batches.clear()
+    _, metrics = wrapper.compiled_force_training_loss(
+        batch=second_batch,
+        loss_fn=EnergyOnlyLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert snapshot_batches == [("reference", 1), ("candidate", 1)]
+    assert metrics["edge_force_fixed_probe_check"] is True
+    assert metrics["edge_force_fixed_probe_num_atoms"] == first_batch.positions.shape[0]
+    assert metrics["edge_force_fixed_probe_forces_max_abs_diff"] == 0.0
+
+
 def test_prepare_edge_force_compiled_loss_falls_back_for_unsupported_model():
     from mace.tools.training_compile import (
         EdgeForceCompileConfig,
@@ -959,6 +2216,24 @@ def test_prepare_edge_force_compiled_loss_falls_back_for_unsupported_model():
     assert prepared is model
 
 
+def test_edge_force_symbolic_model_build_context_disables_e3nn_jit_fx():
+    import argparse
+    import e3nn
+
+    from mace.cli.run_train import _model_build_context_from_args
+
+    args = argparse.Namespace(
+        edge_force_compile=True,
+        edge_force_compile_tracing_mode="symbolic",
+    )
+    e3nn.set_optimization_defaults(jit_script_fx=True)
+
+    with _model_build_context_from_args(args):
+        assert e3nn.get_optimization_defaults()["jit_script_fx"] is False
+
+    assert e3nn.get_optimization_defaults()["jit_script_fx"] is True
+
+
 def test_arg_parser_accepts_edge_force_compile_flags():
     from mace.tools import build_default_arg_parser
 
@@ -971,15 +2246,25 @@ def test_arg_parser_accepts_edge_force_compile_flags():
             "reduce-overhead",
             "--edge_force_compile_tracing_mode",
             "symbolic",
+            "--train_tf32",
             "--no-edge_force_compile_graph",
             "--no-edge_force_compile_dynamic",
+            "--no-edge_force_compile_shape_padding",
+            "--edge_force_compile_max_fusion_size",
+            "1",
+            "--edge_force_compile_spherical_harmonics",
+            "e3nn",
+            "--edge_force_compile_force_gradient_mode",
+            "positions",
+            "--edge_force_compile_setup_gate",
+            "none",
             "--no-edge_force_compile_cache_hit_gate",
             "--edge_force_compile_atol",
             "5e-5",
             "--edge_force_compile_rtol",
             "2e-4",
             "--edge_force_compile_cache_policy",
-            "repeat_only",
+            "dynamic",
             "--edge_force_compile_min_repeats",
             "3",
             "--edge_force_compile_bucket_atoms",
@@ -988,6 +2273,14 @@ def test_arg_parser_accepts_edge_force_compile_flags():
             "2048,4096",
             "--edge_force_compile_bucket_margin",
             "1.15",
+            "--edge_force_compile_parity_check_interval",
+            "17",
+            "--no-edge_force_compile_parity_check_gradients",
+            "--no-edge_force_compile_parity_check_strict",
+            "--edge_force_compile_fixed_probe_interval",
+            "19",
+            "--edge_force_compile_fixed_probe_gradients",
+            "--edge_force_compile_fixed_probe_strict",
             "--no-edge_force_compile_disable_negative_speedup",
             "--no-edge_force_compile_allow_fallback",
         ]
@@ -996,16 +2289,28 @@ def test_arg_parser_accepts_edge_force_compile_flags():
     assert args.edge_force_compile is True
     assert args.edge_force_compile_mode == "reduce-overhead"
     assert args.edge_force_compile_tracing_mode == "symbolic"
+    assert args.train_tf32 is True
     assert args.edge_force_compile_graph is False
     assert args.edge_force_compile_dynamic is False
+    assert args.edge_force_compile_shape_padding is False
+    assert args.edge_force_compile_max_fusion_size == 1
+    assert args.edge_force_compile_spherical_harmonics == "e3nn"
+    assert args.edge_force_compile_force_gradient_mode == "positions"
+    assert args.edge_force_compile_setup_gate == "none"
     assert args.edge_force_compile_cache_hit_gate is False
     assert args.edge_force_compile_atol == 5e-5
     assert args.edge_force_compile_rtol == 2e-4
-    assert args.edge_force_compile_cache_policy == "repeat_only"
+    assert args.edge_force_compile_cache_policy == "dynamic"
     assert args.edge_force_compile_min_repeats == 3
     assert args.edge_force_compile_bucket_atoms == "256,512"
     assert args.edge_force_compile_bucket_edges == "2048,4096"
     assert args.edge_force_compile_bucket_margin == 1.15
+    assert args.edge_force_compile_parity_check_interval == 17
+    assert args.edge_force_compile_parity_check_gradients is False
+    assert args.edge_force_compile_parity_check_strict is False
+    assert args.edge_force_compile_fixed_probe_interval == 19
+    assert args.edge_force_compile_fixed_probe_gradients is True
+    assert args.edge_force_compile_fixed_probe_strict is True
     assert args.edge_force_compile_disable_negative_speedup is False
     assert args.edge_force_compile_allow_fallback is False
 
@@ -1103,6 +2408,79 @@ def test_e3nn_to_cueq_run_uses_granular_config(monkeypatch):
     assert cueq_config.optimize_symmetric is True
     assert cueq_config.optimize_fctp is True
     assert cueq_config.conv_fusion is False
+
+
+def test_e3nn_to_cueq_skips_missing_symmetric_contraction_target_key():
+    import torch
+    from e3nn import o3
+
+    from mace.cli.convert_e3nn_cueq import transfer_symmetric_contractions
+
+    class SymmetricContractions:
+        irreps_in = o3.Irreps("1x0e")
+        irreps_out = o3.Irreps("1x0e")
+
+    class Product:
+        symmetric_contractions = SymmetricContractions()
+
+    source_dict = {
+        "products.0.symmetric_contractions.contractions.0.weights_max": torch.ones(2, 1, 4),
+        "products.0.symmetric_contractions.contractions.0.weights.0": torch.ones(2, 1, 4),
+        "products.0.symmetric_contractions.contractions.0.weights.1": torch.ones(2, 1, 4),
+    }
+    target_dict = {}
+
+    transfer_symmetric_contractions(
+        source_dict=source_dict,
+        target_dict=target_dict,
+        num_product_irreps=1,
+        products=[Product()],
+        correlation=3,
+        num_layers=1,
+        use_reduced_cg=False,
+        keep_last_layer_irreps=False,
+    )
+
+    assert "products.0.symmetric_contractions.weight" not in target_dict
+
+
+
+def test_e3nn_to_cueq_no_optimized_preserves_e3nn_layout_and_weights():
+    from copy import deepcopy
+
+    from mace.cli.convert_e3nn_cueq import run as run_e3nn_to_cueq
+    from mace.modules import wrapper_ops
+
+    if not wrapper_ops.CUET_AVAILABLE:
+        pytest.skip("cuequivariance_torch is not available")
+
+    source = create_tiny_mace("cpu", seed=2027, correlation=3)
+    target = run_e3nn_to_cueq(
+        deepcopy(source),
+        device="cpu",
+        layout="ir_mul",
+        optimize_all=False,
+        optimize_linear=False,
+        optimize_channelwise=False,
+        optimize_symmetric=False,
+        optimize_fctp=False,
+        conv_fusion=False,
+    )
+
+    source_state = source.state_dict()
+    target_state = target.state_dict()
+    symmetric_keys = [
+        key for key in source_state if "symmetric_contractions" in key and key in target_state
+    ]
+    assert symmetric_keys
+    for key in symmetric_keys:
+        assert_close(target_state[key], source_state[key])
+
+    batch = create_batch("cpu")
+    source_out = source(batch, training=False, compute_force=False)
+    target_out = target(batch, training=False, compute_force=False)
+
+    assert_close(target_out["energy"], source_out["energy"], atol=1.0e-6, rtol=1.0e-6)
 
 
 def test_training_compile_allow_fallback_suppresses_dynamo_errors():
@@ -1339,6 +2717,78 @@ class _BackwardFallbackModel(torch.nn.Module):
         return True
 
 
+def test_take_step_keeps_compiled_force_loss_outside_autocast(monkeypatch):
+    from mace.tools.precision import TrainingPrecisionConfig
+    from mace.tools.train import take_step
+
+    autocast_state = {"enabled": False}
+
+    class FakeAutocast:
+        def __enter__(self):
+            autocast_state["enabled"] = True
+
+        def __exit__(self, exc_type, exc, tb):
+            autocast_state["enabled"] = False
+
+    def fake_autocast(*, device_type, dtype):
+        assert device_type == "cuda"
+        assert dtype is torch.bfloat16
+        return FakeAutocast()
+
+    class RecordingCompiledModel(_CompiledForceLossModel):
+        def __init__(self):
+            super().__init__()
+            self.compiled_autocast_states = []
+
+        def compiled_force_training_loss(self, *, batch, loss_fn, output_args):
+            self.compiled_autocast_states.append(autocast_state["enabled"])
+            return super().compiled_force_training_loss(
+                batch=batch, loss_fn=loss_fn, output_args=output_args
+            )
+
+    class RecordingEagerModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(()))
+            self.forward_autocast_states = []
+
+        def forward(self, batch, **kwargs):
+            self.forward_autocast_states.append(autocast_state["enabled"])
+            return {"value": batch["x"].sum() * self.weight}
+
+    monkeypatch.setattr(torch, "autocast", fake_autocast)
+    precision_config = TrainingPrecisionConfig(enabled=True, dtype=torch.bfloat16)
+
+    compiled_model = RecordingCompiledModel()
+    take_step(
+        model=compiled_model,
+        loss_fn=_MiniLoss(),
+        batch=_MiniBatch(),
+        optimizer=torch.optim.SGD(compiled_model.parameters(), lr=0.1),
+        ema=None,
+        output_args={"forces": True, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+        precision_config=precision_config,
+    )
+
+    eager_model = RecordingEagerModel()
+    take_step(
+        model=eager_model,
+        loss_fn=_MiniLoss(),
+        batch=_MiniBatch(),
+        optimizer=torch.optim.SGD(eager_model.parameters(), lr=0.1),
+        ema=None,
+        output_args={"forces": False, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+        precision_config=precision_config,
+    )
+
+    assert compiled_model.compiled_autocast_states == [False]
+    assert eager_model.forward_autocast_states == [True]
+
+
 def test_take_step_uses_compiled_force_training_loss_hook():
     from mace.tools.train import take_step
 
@@ -1366,15 +2816,14 @@ def test_take_step_uses_compiled_force_training_loss_hook():
     assert metrics["edge_force_cache_hit"] is False
 
 
-def test_take_step_honors_compiled_force_retain_graph_marker(monkeypatch):
+def test_take_step_does_not_retain_outer_graph_for_compiled_force_loss(monkeypatch):
     from mace.tools.train import take_step
 
-    class RetainGraphCompiledForceLossModel(_CompiledForceLossModel):
+    class CompiledForceLossModel(_CompiledForceLossModel):
         def compiled_force_training_loss(self, *, batch, loss_fn, output_args):
             loss, metrics = super().compiled_force_training_loss(
                 batch=batch, loss_fn=loss_fn, output_args=output_args
             )
-            metrics["_retain_graph_for_backward"] = True
             return loss, metrics
 
     backward_retain_graph_values = []
@@ -1386,7 +2835,7 @@ def test_take_step_honors_compiled_force_retain_graph_marker(monkeypatch):
 
     monkeypatch.setattr(torch.Tensor, "backward", recording_backward)
 
-    model = RetainGraphCompiledForceLossModel()
+    model = CompiledForceLossModel()
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
 
     _, metrics = take_step(
@@ -1400,7 +2849,7 @@ def test_take_step_honors_compiled_force_retain_graph_marker(monkeypatch):
         device=torch.device("cpu"),
     )
 
-    assert backward_retain_graph_values == [True]
+    assert backward_retain_graph_values == [False]
     assert "_retain_graph_for_backward" not in metrics
     assert metrics["edge_force_compile"] is True
 
@@ -1584,6 +3033,130 @@ def test_save_checkpoint_after_guard_saves_when_guard_is_clear():
     assert handler.calls == [
         {"state": state, "epochs": 4, "keep_last": False}
     ]
+
+
+def test_train_one_epoch_logs_edge_force_parity_summary(monkeypatch, caplog):
+    import importlib
+    import logging
+
+    train_module = importlib.import_module("mace.tools.train")
+
+    def fake_take_step(**kwargs):
+        return torch.tensor(0.0), {
+            "loss": 0.0,
+            "time": 0.25,
+            "edge_force_compile": True,
+            "edge_force_cache_hit": True,
+            "edge_force_parity_check": True,
+            "edge_force_parity_accepted": False,
+            "edge_force_parity_energy_max_abs_diff": 1.0e-6,
+            "edge_force_parity_forces_max_abs_diff": 2.0e-5,
+            "edge_force_parity_loss_abs_diff": 3.0e-4,
+            "edge_force_parity_param_grad_max_abs_diff": 4.0e-4,
+            "edge_force_parity_param_grad_worst": "layer.weight",
+            "edge_force_parity_failed_check_names": "forces,param_grad:layer.weight",
+            "edge_force_fixed_probe_check": True,
+            "edge_force_fixed_probe_accepted": False,
+            "edge_force_fixed_probe_num_atoms": 321,
+            "edge_force_fixed_probe_num_edges": 6543,
+            "edge_force_fixed_probe_energy_max_abs_diff": 5.0e-6,
+            "edge_force_fixed_probe_forces_max_abs_diff": 6.0e-5,
+            "edge_force_fixed_probe_loss_abs_diff": 7.0e-4,
+            "edge_force_fixed_probe_param_grad_max_abs_diff": 8.0e-4,
+            "edge_force_fixed_probe_param_grad_worst": "fixed.weight",
+            "edge_force_fixed_probe_failed_check_names": "loss,param_grad:fixed.weight",
+        }
+
+    class FakeLogger:
+        def log(self, metrics):
+            pass
+
+    monkeypatch.setattr(train_module, "take_step", fake_take_step)
+    caplog.set_level(logging.INFO)
+
+    train_module.train_one_epoch(
+        model=torch.nn.Linear(1, 1),
+        loss_fn=_MiniLoss(),
+        data_loader=[object()],
+        optimizer=torch.optim.SGD([torch.nn.Parameter(torch.tensor([1.0]))], lr=0.1),
+        epoch=7,
+        output_args={"forces": False, "virials": False, "stress": False},
+        max_grad_norm=None,
+        ema=None,
+        logger=FakeLogger(),
+        device=torch.device("cpu"),
+        distributed=False,
+    )
+
+    summary = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Edge-force compile epoch 7 summary" in summary
+    assert "parity=checks=1 accepted=0 failed=1" in summary
+    assert "max_forces=2.000e-05" in summary
+    assert "max_grad=4.000e-04" in summary
+    assert "worst_grad=layer.weight" in summary
+    assert "fixed_probe=checks=1 accepted=0 failed=1" in summary
+    assert "max_forces=6.000e-05" in summary
+    assert "max_grad=8.000e-04" in summary
+    assert "worst_grad=fixed.weight" in summary
+    assert "shape=321x6543" in summary
+
+
+def test_train_one_epoch_steps_batch_scheduler_only_after_successful_step(monkeypatch):
+    import importlib
+
+    train_module = importlib.import_module("mace.tools.train")
+    calls = []
+
+    def fake_take_step(**kwargs):
+        calls.append(("take_step", kwargs["global_step"]))
+        return torch.tensor(0.0), {
+            "loss": 0.0,
+            "loss_skipped": kwargs["global_step"] == 11,
+        }
+
+    class FakeScheduler:
+        step_on_batch = True
+
+        def __init__(self):
+            self.steps = []
+
+        def step_batch(self, global_step=None):
+            self.steps.append(global_step)
+
+        def get_last_lr(self):
+            return [0.123]
+
+    class FakeLogger:
+        def __init__(self):
+            self.records = []
+
+        def log(self, metrics):
+            self.records.append(metrics)
+
+    scheduler = FakeScheduler()
+    logger = FakeLogger()
+    monkeypatch.setattr(train_module, "take_step", fake_take_step)
+
+    train_module.train_one_epoch(
+        model=torch.nn.Linear(1, 1),
+        loss_fn=_MiniLoss(),
+        data_loader=[object(), object()],
+        optimizer=torch.optim.SGD([torch.nn.Parameter(torch.tensor([1.0]))], lr=0.1),
+        epoch=2,
+        output_args={"forces": False, "virials": False, "stress": False},
+        max_grad_norm=None,
+        ema=None,
+        logger=logger,
+        device=torch.device("cpu"),
+        distributed=False,
+        global_step_start=10,
+        lr_scheduler=scheduler,
+    )
+
+    assert calls == [("take_step", 10), ("take_step", 11)]
+    assert scheduler.steps == [11]
+    assert logger.records[0]["lr"] == pytest.approx(0.123)
+    assert "lr" not in logger.records[1]
 
 
 def test_train_one_epoch_passes_non_blocking_transfer_to_take_step(monkeypatch):
