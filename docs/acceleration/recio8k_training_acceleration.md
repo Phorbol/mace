@@ -1185,3 +1185,16 @@ The optimizer review also needs an updated interpretation. Current `mace.tools.h
 
 The next benchmark design should therefore separate two axes. For throughput, continue with Adam or conservative radial-only HybridMuon and profile the real training-step phase breakdown under CUEQ eager versus CUEQ+edge compile, especially outside the compiled closure. For optimizer quality, run a smaller controlled RECIO/8k comparison of `hybrid_muon_routing=mace, hybrid_muon_mode=2d` against `hybrid_muon_routing=tace, hybrid_muon_mode=slice`, ideally with single-stage per-step WSD and the same compile setting. Mixing both investigations in one first run would make a speed or accuracy change hard to attribute.
 
+### 2026-07-03 Fixed-Batch Phase Breakdown: CUEQ Eager vs Edge Compile
+
+SAI job `619891` ran a focused phase profiler after the branch push, using `mace_develop`, one `Tesla V100-SXM2-32GB`, RECIO `8k/train.xyz` indices `0:32` (`286` atoms), Adam, CUEQ enabled with `optimize_all=True`, `C=64`, `L=1`, `num_interactions=2`, `correlation=3`, warmup `5`, repeats `30`, and modes `position_eager,edge_compile`. This is a fixed-batch profiler, not a full multi-batch training benchmark.
+
+| Mode | Setup | Total mean | Forward/loss mean | Backward+clip mean | Optimizer mean | Interpretation |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `position_eager` | `0 ms` | `12.309 ms` | `6.350 ms` (`51.6%`) | `5.743 ms` (`46.7%`) | `0.214 ms` (`1.7%`) | ordinary conservative force training |
+| `edge_compile` | `26735 ms` | `4.392 ms` | `1.883 ms` (`42.9%`) | `2.295 ms` (`52.3%`) | `0.211 ms` (`4.8%`) | compiled edge-force closure, gate accepted |
+
+The fixed-batch hot-step speedup is about `2.8x` (`12.309 -> 4.392 ms`). This confirms that the compiled edge-force subpath is not inherently weak: it materially reduces both the forward/loss phase and the later backward/clip phase. The remaining hotspot inside the compiled case is still backward/clip, which accounts for about half the step even after compile. Optimizer time stays around `0.21 ms`, so optimizer implementation micro-optimizations cannot explain end-to-end training speed.
+
+The setup cost was `26.7 s`, which explains why short or heavily validated training runs show much smaller wall-clock gains. Real RECIO training also adds dataloader transfer, Python logging, validation, checkpoint/export, and changing batch shapes. Therefore the next optimization target is not cache-key correctness, which is already stable for dynamic cache, but reducing the work outside the compiled closure and validating whether the Inductor graph path can keep this fixed-batch hot-step advantage across real multi-batch epochs without accuracy drift.
+
