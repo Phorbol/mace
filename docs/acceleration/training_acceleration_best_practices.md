@@ -64,12 +64,12 @@ Use `--train_tf32` on CUDA unless you have a reason to debug strict FP32. It wra
 Allowed values:
 
 - `none`: default and recommended on V100.
-- `bf16`: use only on native-bf16 GPUs after parity and validation checks.
+- `bf16`: experimental on this branch. It can run on the current V100 stack, but the RECIO/8k 20k-step check showed only a small speed gain and a measurable energy-accuracy regression, so keep it seed-gated rather than default.
 - `fp16`: diagnostic only for this branch; not recommended for conservative force training unless separately validated.
 
 Important boundary: the compiled force-loss path runs outside autocast. This is intentional. Geometry-sensitive operations, coordinate/edge derivatives, force construction, and the conservative force-loss graph stay FP32 unless a future segmented AMP path explicitly proves safety. Ordinary eager model forward can use autocast when AMP is enabled.
 
-On V100, `bf16` is expected to fail closed through `torch.cuda.is_bf16_supported()`. Do not interpret that as a MACE bug.
+V100 bf16 note: job `620592` proved that bf16 autocast can execute in `mace_develop`, but job `620602` showed this is not a free default: elapsed improved only from `09:25` to `09:06` versus fp32 full Inductor, while final test energy MAE regressed from `30.6` to `37.8` meV/atom and force MAE moved from `202.6` to `204.7` meV/A.
 
 ## Conservative Force Backward Compile
 
@@ -320,7 +320,9 @@ Current RECIO/8k evidence supports these cautious claims:
 - Dynamic edge-force compile can cache across real RECIO batches.
 - SAI job `620035` showed that repeated live full-gradient setup gates can fail on the second real batch even with `state_dict`, module training flags, CPU RNG, and CUDA RNG unchanged; treat this as a gate-harness non-reentrancy diagnostic, not as the production hot training path.
 - SAI job `620059` completed a real RECIO/8k one-epoch smoke with HybridMuon, full CUEQ, dynamic FX edge-force compile, and cache-hit gate disabled: `compiled=475`, `cache_hits=474`, `new_compiles=1`, `fallbacks=0`, MaxRSS `3620308K`.
-- SAI jobs `620074`-`620081` completed the real RECIO/8k 20k-update ablation at batch size 16. End-to-end elapsed times were Adam/no-CUEQ eager `13:35`, Adam/no-CUEQ compile `14:16`, Adam/CUEQ eager `15:19`, Adam/CUEQ compile `11:39`, Muon/no-CUEQ eager `14:42`, Muon/no-CUEQ compile `13:56`, Muon/CUEQ eager `11:57`, and Muon/CUEQ compile `11:46`. Treat this as evidence that the FX-only compile path is production-runnable, but not yet DPA4-level 3x faster; full Inductor lowering and mixed precision remain the main next optimization targets.
+- SAI jobs `620074`-`620081` completed the real RECIO/8k 20k-update ablation at batch size 16. End-to-end elapsed times were Adam/no-CUEQ eager `13:35`, Adam/no-CUEQ compile `14:16`, Adam/CUEQ eager `15:19`, Adam/CUEQ compile `11:39`, Muon/no-CUEQ eager `14:42`, Muon/no-CUEQ compile `13:56`, Muon/CUEQ eager `11:57`, and Muon/CUEQ compile `11:46`. Treat this as evidence that the FX-only compile path is production-runnable, but not yet DPA4-level 3x faster.
+- Full Inductor graph lowering is now the stronger CUEQ performance candidate: SAI jobs `620575` and `620576` completed the same 20k RECIO/8k CUEQ runs with full Inductor. Adam/CUEQ full Inductor finished in `09:25` with test `30.6` meV/atom and `202.6` meV/A, versus FX-only `11:39` and eager `15:19`; Muon/CUEQ full Inductor finished in `11:17` with test `36.1` meV/atom and `223.2` meV/A, versus FX-only `11:46` and eager `11:57`.
+- BF16 remains experimental on V100: SAI job `620602` completed Adam/CUEQ full Inductor bf16 in `09:06`, but test energy MAE regressed to `37.8` meV/atom and force MAE to `204.7` meV/A.
 - Full positions-gradient compile now works as a diagnostic but is slower.
 - Inductor edge-force compile can accelerate hot training steps, especially when the graph lowering path is accepted.
 - Compile plus CUEQ does not automatically give DPA4-level 3x end-to-end speedup because MACE still has more work outside the compiled closure and CUEQ custom kernels hide tensor-product internals from Inductor.
