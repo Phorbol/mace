@@ -4,7 +4,6 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=1
-#SBATCH --ntasks-per-node=1
 #SBATCH --qos=rush-1o2gpu
 
 set -euo pipefail
