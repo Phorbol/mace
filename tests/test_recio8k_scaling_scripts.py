@@ -340,6 +340,8 @@ def test_summary_reports_completed_metrics_memory_and_hot_step_time(tmp_path):
     assert result["status"] == "completed"
     assert result["max_fb_memory_mb"] == 4201
     assert result["first_compile_setup_seconds"] == pytest.approx(67.733)
+    assert result["mean_hot_epoch_opt_seconds"] == pytest.approx(9.419)
+    assert result["mean_hot_batch_step_seconds"] == pytest.approx(9.419 / 475)
     assert result["mean_hot_opt_step_seconds"] == pytest.approx(9.419)
     assert result["last_valid_mae_e_mev_atom"] == pytest.approx(80.91)
     assert result["final_valid_mae_f_mev_a"] == pytest.approx(294.0)
