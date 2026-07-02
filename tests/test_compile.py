@@ -383,6 +383,7 @@ def test_edge_force_compile_config_defaults_to_disabled():
     assert config.allow_fallback is True
     assert config.atol == 1.0e-5
     assert config.rtol == 1.0e-4
+    assert config.cache_hit_gate is False
     assert config.refresh_executable_each_step is True
 
 
@@ -2313,6 +2314,18 @@ def test_arg_parser_accepts_edge_force_compile_flags():
     assert args.edge_force_compile_fixed_probe_strict is True
     assert args.edge_force_compile_disable_negative_speedup is False
     assert args.edge_force_compile_allow_fallback is False
+
+
+def test_arg_parser_edge_force_cache_hit_gate_defaults_to_diagnostic_off():
+    from mace.tools import build_default_arg_parser
+
+    default_args = build_default_arg_parser().parse_args(["--name", "edge-force-default"])
+    enabled_args = build_default_arg_parser().parse_args(
+        ["--name", "edge-force-diagnostic", "--edge_force_compile_cache_hit_gate"]
+    )
+
+    assert default_args.edge_force_compile_cache_hit_gate is False
+    assert enabled_args.edge_force_compile_cache_hit_gate is True
 
 
 def test_arg_parser_accepts_training_shuffle_flag():

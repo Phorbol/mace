@@ -27,6 +27,9 @@ fi
 if [[ "${MACE_EDGE_EPOCH_SKIP_TRAINING_STEP:-False}" == "True" ]]; then
   extra_args+=(--skip-training-step)
 fi
+if [[ "${MACE_EDGE_EPOCH_DIAGNOSE_GATE_STATE:-False}" == "True" ]]; then
+  extra_args+=(--edge-diagnose-gate-state)
+fi
 case "${cueq_profile}" in
   full)
     cueq_args+=(--enable-cueq --cueq-optimize-all)

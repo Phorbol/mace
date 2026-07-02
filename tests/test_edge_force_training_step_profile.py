@@ -436,12 +436,58 @@ def test_epoch_profile_gates_shape_cache_hits_by_default():
     assert profile.should_gate_cache_hit(cache_hit=True, scope="batch", enabled=True) is False
     assert profile.should_gate_cache_hit(cache_hit=True, scope="shape", enabled=False) is False
 
-def test_epoch_profile_parser_accepts_skip_training_step():
+def test_epoch_profile_parser_accepts_diagnostic_flags():
     profile = load_epoch_profile()
 
-    args = profile.build_parser().parse_args(["--skip-training-step"])
+    args = profile.build_parser().parse_args([
+        "--skip-training-step",
+        "--edge-diagnose-gate-state",
+    ])
 
     assert args.skip_training_step is True
+    assert args.edge_diagnose_gate_state is True
+
+
+def test_epoch_profile_gate_state_snapshot_reports_mutations():
+    profile = load_epoch_profile()
+    model = torch.nn.Linear(2, 2)
+    device = torch.device("cpu")
+    torch.manual_seed(123)
+
+    before = profile._gate_state_snapshot(model, device)
+    with torch.no_grad():
+        model.weight.add_(1.0)
+    model.eval()
+    _ = torch.rand(1)
+    after = profile._gate_state_snapshot(model, device)
+
+    comparison = profile._compare_gate_state_snapshots(before, after)
+
+    assert comparison["model_state"]["changed_count"] == 1
+    assert comparison["model_state"]["changed_names"] == ["weight"]
+    assert comparison["model_state"]["max_abs_diff"] == pytest.approx(1.0)
+    assert comparison["training_flags"]["changed_count"] == 1
+    assert comparison["rng_state"]["changed_names"] == ["cpu"]
+
+
+def test_epoch_profile_gate_state_snapshot_handles_bool_buffers():
+    profile = load_epoch_profile()
+
+    class BoolBufferModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.register_buffer("mask", torch.tensor([True, False]))
+
+    model = BoolBufferModule()
+    before = profile._gate_state_snapshot(model, torch.device("cpu"))
+    model.mask.logical_not_()
+    after = profile._gate_state_snapshot(model, torch.device("cpu"))
+
+    comparison = profile._compare_gate_state_snapshots(before, after)
+
+    assert comparison["model_state"]["changed_count"] == 1
+    assert comparison["model_state"]["changed_names"] == ["mask"]
+    assert comparison["model_state"]["max_abs_diff"] == 1.0
 
 
 def test_epoch_profile_resets_compile_state_only_when_requested(monkeypatch):

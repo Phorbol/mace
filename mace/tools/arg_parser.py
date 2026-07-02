@@ -188,9 +188,14 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--edge_force_compile_cache_hit_gate",
-        help="Gate shape-cache hits against the position-gradient baseline",
+        help=(
+            "Gate cache hits against the position-gradient baseline. This is a "
+            "diagnostic option and is disabled by default because the full "
+            "gradient gate is expensive and can perturb higher-order autograd "
+            "state when repeated in the same live training process."
+        ),
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
     )
     parser.add_argument(
         "--edge_force_compile_atol",

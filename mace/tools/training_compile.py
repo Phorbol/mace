@@ -35,7 +35,7 @@ class EdgeForceCompileConfig:
     allow_fallback: bool = True
     atol: float = 1.0e-5
     rtol: float = 1.0e-4
-    cache_hit_gate: bool = True
+    cache_hit_gate: bool = False
     setup_gate: str = "strict"
     cache_policy: str = "repeat_only"
     min_repeats: int = 2

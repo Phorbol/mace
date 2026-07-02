@@ -98,6 +98,7 @@ Use this when moving to a new machine, new CUDA/PyTorch version, or new CUEQ ver
   --edge_force_compile_dynamic \
   --edge_force_compile_shape_padding \
   --edge_force_compile_cache_policy=dynamic \
+  --no-edge_force_compile_cache_hit_gate \
   --edge_force_compile_min_repeats=2 \
   --edge_force_compile_spherical_harmonics=polynomial \
   --edge_force_compile_force_gradient_mode=edge \
@@ -122,6 +123,7 @@ After the smoke passes on the target machine, enable Inductor graph lowering:
   --edge_force_compile_dynamic \
   --edge_force_compile_shape_padding \
   --edge_force_compile_cache_policy=dynamic \
+  --no-edge_force_compile_cache_hit_gate \
   --edge_force_compile_min_repeats=2 \
   --edge_force_compile_spherical_harmonics=polynomial \
   --edge_force_compile_force_gradient_mode=edge \
@@ -136,7 +138,7 @@ After the smoke passes on the target machine, enable Inductor graph lowering:
   --no-edge_force_compile_allow_fallback
 ```
 
-This is the configuration that should be benchmarked against eager for wall-clock speed and validation accuracy. Keep `--edge_force_compile_setup_gate=strict` for any run used to make an accuracy claim. If setup cost dominates a very short smoke, that is expected. Compile speedup should be judged on a long enough run for the cache to amortize setup.
+This is the configuration that should be benchmarked against eager for wall-clock speed and validation accuracy. Keep `--edge_force_compile_setup_gate=strict` for any run used to make an accuracy claim, but keep cache-hit gate disabled for production timing. If setup cost dominates a very short smoke, that is expected. Compile speedup should be judged on a long enough run for the cache to amortize setup.
 
 ### Diagnostic-Only Compile Options
 
@@ -144,7 +146,7 @@ Use these only to isolate problems:
 
 - `--edge_force_compile_force_gradient_mode=positions`: fuller positions-to-force graph. It currently works but is slower on RECIO/8k.
 - `--edge_force_compile_setup_gate=none`: skips the expensive first-compile reference/candidate gate. Use only after strict evidence exists for the same machine and config.
-- `--edge_force_compile_cache_hit_gate`: checks every cache hit. Good for debugging, too expensive for production.
+- `--edge_force_compile_cache_hit_gate`: checks every cache hit. Good for one-off debugging, too expensive for production, and should not be used as a long-run benchmark hot path because repeated full-gradient gates can perturb higher-order autograd/compiler state in a live process.
 - `--edge_force_compile_fixed_probe_gradients`: compares fixed-batch parameter gradients. Good for trajectory drift diagnosis, expensive.
 - lower `--edge_force_compile_max_fusion_size` such as `4` or `2`: useful when investigating Inductor over-fusion or trajectory drift.
 
@@ -316,6 +318,8 @@ Red flags:
 Current RECIO/8k evidence supports these cautious claims:
 
 - Dynamic edge-force compile can cache across real RECIO batches.
+- SAI job `620035` showed that repeated live full-gradient setup gates can fail on the second real batch even with `state_dict`, module training flags, CPU RNG, and CUDA RNG unchanged; treat this as a gate-harness non-reentrancy diagnostic, not as the production hot training path.
+- SAI job `620059` completed a real RECIO/8k one-epoch smoke with HybridMuon, full CUEQ, dynamic FX edge-force compile, and cache-hit gate disabled: `compiled=475`, `cache_hits=474`, `new_compiles=1`, `fallbacks=0`, MaxRSS `3620308K`.
 - Full positions-gradient compile now works as a diagnostic but is slower.
 - Inductor edge-force compile can accelerate hot training steps, especially when the graph lowering path is accepted.
 - Compile plus CUEQ does not automatically give DPA4-level 3x end-to-end speedup because MACE still has more work outside the compiled closure and CUEQ custom kernels hide tensor-product internals from Inductor.

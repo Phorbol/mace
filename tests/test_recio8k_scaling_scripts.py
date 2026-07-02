@@ -253,6 +253,8 @@ def test_edge_force_epoch_profile_sbatch_uses_sai_safe_defaults():
     assert "--edge-clear-cache-on-miss" in sbatch
     assert "MACE_EDGE_EPOCH_SKIP_TRAINING_STEP" in sbatch
     assert "--skip-training-step" in sbatch
+    assert "MACE_EDGE_EPOCH_DIAGNOSE_GATE_STATE" in sbatch
+    assert "--edge-diagnose-gate-state" in sbatch
 
 
 def test_generator_writes_wsd_scheduler_cases(tmp_path):

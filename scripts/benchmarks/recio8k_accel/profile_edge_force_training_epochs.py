@@ -120,6 +120,120 @@ def clear_compile_cache_on_miss_if_requested(cache: dict, args: argparse.Namespa
         cache.clear()
 
 
+def _clone_model_state(model: torch.nn.Module) -> dict[str, torch.Tensor]:
+    return {
+        name: value.detach().clone()
+        for name, value in model.state_dict().items()
+        if torch.is_tensor(value)
+    }
+
+
+def _module_training_flags(model: torch.nn.Module) -> dict[str, bool]:
+    return {name: bool(module.training) for name, module in model.named_modules()}
+
+
+def _rng_state(device: torch.device) -> dict[str, torch.Tensor]:
+    state = {"cpu": torch.get_rng_state().clone()}
+    if device.type == "cuda":
+        state["cuda"] = torch.cuda.get_rng_state(device).clone()
+    return state
+
+
+def _max_abs_tensor_diff(left: torch.Tensor, right: torch.Tensor) -> float:
+    if left.shape != right.shape:
+        return float("inf")
+    if left.numel() == 0:
+        return 0.0
+    left_cpu = left.detach().cpu()
+    right_cpu = right.detach().cpu()
+    if left_cpu.dtype == torch.bool or right_cpu.dtype == torch.bool:
+        return float(torch.logical_xor(left_cpu.bool(), right_cpu.bool()).any().item())
+    diff = (left_cpu.to(torch.float64) - right_cpu.to(torch.float64)).abs()
+    return float(diff.max().item())
+
+
+def _compare_model_states(
+    before: dict[str, torch.Tensor], after: dict[str, torch.Tensor]
+) -> dict:
+    changed: list[str] = []
+    max_diff = 0.0
+    before_names = set(before)
+    after_names = set(after)
+    for name in sorted(before_names ^ after_names):
+        changed.append(name)
+        max_diff = float("inf")
+    for name in sorted(before_names & after_names):
+        diff = _max_abs_tensor_diff(before[name], after[name])
+        if diff != 0.0:
+            changed.append(name)
+            max_diff = max(max_diff, diff)
+    return {
+        "changed_count": len(changed),
+        "changed_names": changed[:12],
+        "max_abs_diff": max_diff,
+    }
+
+
+def _compare_training_flags(before: dict[str, bool], after: dict[str, bool]) -> dict:
+    changed = [
+        name
+        for name in sorted(set(before) | set(after))
+        if before.get(name) != after.get(name)
+    ]
+    return {"changed_count": len(changed), "changed_names": changed[:12]}
+
+
+def _compare_rng_states(
+    before: dict[str, torch.Tensor], after: dict[str, torch.Tensor]
+) -> dict:
+    changed = []
+    for name in sorted(set(before) | set(after)):
+        if name not in before or name not in after:
+            changed.append(name)
+            continue
+        if not torch.equal(before[name], after[name]):
+            changed.append(name)
+    return {"changed_count": len(changed), "changed_names": changed}
+
+
+def _gate_state_snapshot(model: torch.nn.Module, device: torch.device) -> dict:
+    return {
+        "model_state": _clone_model_state(model),
+        "training_flags": _module_training_flags(model),
+        "rng_state": _rng_state(device),
+    }
+
+
+def _compare_gate_state_snapshots(before: dict, after: dict) -> dict:
+    return {
+        "model_state": _compare_model_states(
+            before["model_state"], after["model_state"]
+        ),
+        "training_flags": _compare_training_flags(
+            before["training_flags"], after["training_flags"]
+        ),
+        "rng_state": _compare_rng_states(before["rng_state"], after["rng_state"]),
+    }
+
+
+def _record_gate_state(
+    diagnostics: dict | None,
+    *,
+    label: str,
+    baseline: dict | None,
+    model: torch.nn.Module,
+    device: torch.device,
+) -> dict | None:
+    if diagnostics is None:
+        return None
+    snapshot = _gate_state_snapshot(model, device)
+    if baseline is None:
+        diagnostics[label] = {"baseline": True}
+    else:
+        diagnostics[label] = _compare_gate_state_snapshots(baseline, snapshot)
+    return snapshot
+
+
 def build_cache_hit_gate_result(*, comparison: dict, cache_key: tuple) -> dict:
     accepted = bool(comparison["ok"])
     return {
@@ -425,6 +539,15 @@ def _make_edge_compile_step(
 ) -> CachedStep:
     reset_compile_state_if_requested(args)
     setup_start = time.perf_counter()
+    diagnostics = {} if args.edge_diagnose_gate_state else None
+    diagnostic_device = batch.positions.device
+    diagnostic_baseline = _record_gate_state(
+        diagnostics,
+        label="before_setup",
+        baseline=None,
+        model=model,
+        device=diagnostic_device,
+    )
     data_dict, _, _, vectors = _edge_vector_inputs(batch)
     input_names = edge_compile_input_names(data_dict.keys())
     example_inputs = tuple(data_dict[name] for name in input_names)
@@ -454,7 +577,21 @@ def _make_edge_compile_step(
         compile_mode=args.edge_compile_mode,
         compile_dynamic=args.edge_compile_dynamic,
     )
+    _record_gate_state(
+        diagnostics,
+        label="after_trace_compile",
+        baseline=diagnostic_baseline,
+        model=model,
+        device=diagnostic_device,
+    )
     reference = _position_snapshot(model, batch, loss_fn)
+    _record_gate_state(
+        diagnostics,
+        label="after_position_snapshot",
+        baseline=diagnostic_baseline,
+        model=model,
+        device=diagnostic_device,
+    )
     candidate = _edge_snapshot_from_executable(
         model=model,
         batch=batch,
@@ -462,14 +599,29 @@ def _make_edge_compile_step(
         executable=executable,
         input_names=input_names,
     )
+    _record_gate_state(
+        diagnostics,
+        label="after_edge_snapshot",
+        baseline=diagnostic_baseline,
+        model=model,
+        device=diagnostic_device,
+    )
     comparison = compare_snapshots(reference, candidate, atol=args.atol, rtol=args.rtol)
     gate_result = edge_force_compile_result_from_trace(
         trace_result=trace_result,
         comparison=comparison,
         compile_kwargs=compile_kwargs,
     ).__dict__
+    if diagnostics is not None:
+        gate_result["state_diagnostics"] = diagnostics
     if not gate_result["accepted"] and not args.allow_gate_failure:
-        raise RuntimeError(f"edge compile gate failed for batch {batch_indices}: {comparison}")
+        diagnostic_suffix = (
+            f"; state_diagnostics={diagnostics}" if diagnostics is not None else ""
+        )
+        raise RuntimeError(
+            f"edge compile gate failed for batch {batch_indices}: "
+            f"{comparison}{diagnostic_suffix}"
+        )
     return CachedStep(
         executable=executable,
         gate_result=gate_result,
@@ -703,6 +855,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-grad-norm", type=float, default=10.0)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--skip-training-step", action="store_true")
+    parser.add_argument("--edge-diagnose-gate-state", action="store_true")
     parser.add_argument("--case-worker", action="store_true", help=argparse.SUPPRESS)
     _append_bool_flag(parser, "enable-cueq", True)
     parser.add_argument("--cueq-conv-fusion", action="store_true", default=None)
