@@ -209,7 +209,7 @@ TACE-style experimental route:
   --hybrid_muon_lr_factor=0.03
 ```
 
-This lets more rank-3 parameters use per-slice Muon, closer to TACE/DPA4 routing. It may improve optimization but must be treated as an ablation. Check route logs at startup and compare validation/test energy and force metrics against Adam and conservative MACE routing. Do not use it as the first run on a new dataset.
+This lets more rank-3 parameters use per-slice Muon, closer to TACE/DPA4 routing. In the current RECIO/8k full-Inductor test it increased Muon coverage from 8 tensors / 74,752 parameters to 10 tensors / 111,232 parameters by moving the two `symmetric_contractions.weight` tensors onto per-slice Muon. It is compatible with CUEQ and full Inductor, but SAI job `620634` was less accurate than both Adam and conservative MACE routing, so keep it as an ablation rather than a default.
 
 Optional `--hybrid_muon_magma_lite` enables momentum-gradient alignment damping. It is a stability experiment; keep the optimizer, compile, and scheduler fixed when testing it.
 
@@ -327,4 +327,4 @@ Current RECIO/8k evidence supports these cautious claims:
 - Inductor edge-force compile can accelerate hot training steps, especially when the graph lowering path is accepted.
 - Compile plus CUEQ does not automatically give DPA4-level 3x end-to-end speedup because MACE still has more work outside the compiled closure and CUEQ custom kernels hide tensor-product internals from Inductor.
 - Precision preservation is promising but not proven as a universal default; use multi-seed or longer validation before making production claims.
-- HybridMuon is compatible with the compile path, but broader TACE-style routing still needs dataset-level ablation before being considered a default.
+- HybridMuon is compatible with the compile path, but the current RECIO/8k evidence favors Adam for this model size. Conservative MACE-routed HybridMuon is stable but slower and less accurate than Adam in the full-Inductor run. TACE-style slice routing is compatible and faster than conservative Muon in full Inductor, but job `620634` finished in `09:46` with MaxRSS `5152156K` and test `40.4` meV/atom / `261.2` meV/A, worse than Adam full Inductor (`09:25`, `30.6` / `202.6`) and worse in force than conservative MACE-Muon (`11:17`, `36.1` / `223.2`). Keep TACE-style routing as an explicit ablation; do not make it the default without a changed scheduler/lr recipe and multi-seed evidence.
