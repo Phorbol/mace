@@ -102,6 +102,16 @@ if [ "${EDGE_FORCE_COMPILE:-False}" = "True" ]; then
   )
 fi
 
+HYBRID_MUON_ARGS=()
+if [ "${OPTIMIZER:-adam}" = "hybrid_muon" ]; then
+  HYBRID_MUON_ARGS=(
+    --hybrid_muon_mode="${HYBRID_MUON_MODE:-2d}"
+    --hybrid_muon_routing="${HYBRID_MUON_ROUTING:-mace}"
+    --hybrid_muon_lr_factor="${HYBRID_MUON_LR_FACTOR:-0.1}"
+    --hybrid_muon_weight_decay="${HYBRID_MUON_WEIGHT_DECAY:-0.0}"
+  )
+fi
+
 python -m mace.cli.run_train \
   --name="${NAME:-oc20neb_fps_l1c64_adam_cueq}" \
   --train_file="${TRAIN_FILE}" \
@@ -131,6 +141,7 @@ python -m mace.cli.run_train \
   "${CUEQ_ARGS[@]}" \
   "${CUEQ_CONV_FUSION_FLAG[@]}" \
   --optimizer="${OPTIMIZER:-adam}" \
+  "${HYBRID_MUON_ARGS[@]}" \
   --scheduler="${SCHEDULER:-WSD}" \
   --lr_scheduler_interval="${LR_SCHEDULER_INTERVAL:-auto}" \
   --lr="${LR:-0.001}" \
