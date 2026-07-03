@@ -335,3 +335,24 @@ Current RECIO/8k evidence supports these cautious claims:
 - Compile plus CUEQ does not automatically give DPA4-level 3x end-to-end speedup because MACE still has more work outside the compiled closure and CUEQ custom kernels hide tensor-product internals from Inductor.
 - Precision preservation is promising but not proven as a universal default; use multi-seed or longer validation before making production claims.
 - HybridMuon is compatible with the compile path, but the current RECIO/8k evidence favors Adam for this model size. Conservative MACE-routed HybridMuon is stable but slower and less accurate than Adam in the full-Inductor run. TACE-style slice routing is compatible and faster than conservative Muon in full Inductor, but job `620634` finished in `09:46` with MaxRSS `5152156K` and test `40.4` meV/atom / `261.2` meV/A, worse than Adam full Inductor (`09:25`, `30.6` / `202.6`) and worse in force than conservative MACE-Muon (`11:17`, `36.1` / `223.2`). Keep TACE-style routing as an explicit ablation; do not make it the default without a changed scheduler/lr recipe and multi-seed evidence.
+
+### OC20NEB FPS Benchmark Wrapper
+
+For the DeepMD DPA4 OC20NEB FPS split, first convert the DeepMD mixed dataset to MACE extxyz:
+
+```bash
+python scripts/benchmarks/oc20neb_fps/convert_deepmd_mixed_to_extxyz.py \
+  --outdir runs/oc20neb_fps_extxyz \
+  --overwrite
+```
+
+The converter reads `real_atom_types.npy`; do not use `type.raw` for this benchmark because it is only a placeholder. The wrapper `scripts/benchmarks/oc20neb_fps/run_mace_oc20neb_fps_sai.sh` defaults to `L_max=1`, `num_channels=64`, Adam, WSD, full CUEQ, TF32, AMP none, `r_max=6.0`, and separate `train.extxyz`/`valid.extxyz` files. On SAI, prefer environment-prefix submission rather than explicit `sbatch --export=ALL,...`, which cancelled immediately in the observed environment:
+
+```bash
+RUN_ROOT=runs/oc20neb_fps_l1c64_wsd_20k/adam_cueq_compile \
+NAME=oc20neb_fps_l1c64_wsd_adam_cueq_compile \
+EDGE_FORCE_COMPILE=True EDGE_FORCE_GRAPH=True EDGE_FORCE_REQUIRE_INDUCTOR_ACK=True \
+ENABLE_CUEQ=True CUEQ_PROFILE=full TRAIN_TF32=True TRAIN_AMP_DTYPE=none \
+OPTIMIZER=adam SCHEDULER=WSD MAX_NUM_EPOCHS=32 BATCH_SIZE=8 VALID_BATCH_SIZE=8 \
+sbatch scripts/benchmarks/oc20neb_fps/run_mace_oc20neb_fps_sai.sh
+```
