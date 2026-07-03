@@ -929,6 +929,23 @@ def get_optimizer(
             summarize_hybrid_muon_routes,
         )
 
+        adam_param_options_by_id = {}
+        default_betas = param_options.get("betas", (args.beta, 0.999))
+        default_eps = param_options.get("eps", 1.0e-8)
+        default_amsgrad = param_options.get("amsgrad", args.amsgrad)
+        for param_group in param_options.get("params", []):
+            group_options = {
+                "lr": param_group.get("lr", param_options.get("lr", args.lr)),
+                "weight_decay": param_group.get(
+                    "weight_decay", param_options.get("weight_decay", args.weight_decay)
+                ),
+                "betas": param_group.get("betas", default_betas),
+                "eps": param_group.get("eps", default_eps),
+                "amsgrad": param_group.get("amsgrad", default_amsgrad),
+            }
+            for param in param_group.get("params", []):
+                adam_param_options_by_id[id(param)] = group_options
+
         groups, route_summary = build_hybrid_muon_param_groups(
             named_parameters,
             lr=args.lr,
@@ -942,6 +959,7 @@ def get_optimizer(
             routing=getattr(args, "hybrid_muon_routing", "mace"),
             module_map=dict(named_modules) if named_modules is not None else None,
             magma_lite=bool(getattr(args, "hybrid_muon_magma_lite", False)),
+            adam_param_options_by_id=adam_param_options_by_id,
         )
         logging.info(summarize_hybrid_muon_routes(route_summary))
         optimizer = HybridMuon(groups, lr=args.lr, weight_decay=args.weight_decay)

@@ -648,3 +648,74 @@ def test_get_optimizer_builds_hybrid_muon():
     assert muon_group["muon_mode"] == "slice"
     assert muon_group["magma_lite"] is True
     assert next(group for group in optimizer.param_groups if group["route"] == "adam")["lr"] == 1.0e-3
+
+
+def test_get_optimizer_preserves_mace_adam_fallback_weight_decay_groups():
+    model = TinyMaceLike()
+    args = argparse.Namespace(
+        optimizer="hybrid_muon",
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        hybrid_muon_weight_decay=0.0,
+        hybrid_muon_lr_factor=0.1,
+        hybrid_muon_mode="slice",
+        hybrid_muon_routing="mace",
+        hybrid_muon_magma_lite=False,
+        beta=0.9,
+        amsgrad=False,
+    )
+    readout_weight = model.readouts[0].weight
+    product_weight = model.products
+    radial_weight = model.radial_embedding[0].weight
+    param_options = {
+        "params": [
+            {
+                "name": "readouts",
+                "params": [readout_weight],
+                "weight_decay": 0.0,
+                "lr": args.lr,
+            },
+            {
+                "name": "products",
+                "params": [product_weight],
+                "weight_decay": args.weight_decay,
+                "lr": args.lr,
+            },
+            {
+                "name": "radial",
+                "params": [radial_weight],
+                "weight_decay": args.weight_decay,
+                "lr": args.lr,
+            },
+        ],
+        "lr": args.lr,
+        "amsgrad": args.amsgrad,
+        "betas": (args.beta, 0.999),
+    }
+
+    optimizer = get_optimizer(
+        args,
+        param_options,
+        named_parameters=[
+            ("readouts.0.weight", readout_weight),
+            ("products", product_weight),
+            ("radial_embedding.0.weight", radial_weight),
+        ],
+    )
+
+    adam_groups = [group for group in optimizer.param_groups if group["route"] == "adam"]
+    no_decay_group = next(
+        group
+        for group in adam_groups
+        if any(param is readout_weight for param in group["params"])
+    )
+    decay_group = next(
+        group
+        for group in adam_groups
+        if any(param is product_weight for param in group["params"])
+    )
+    muon_group = next(group for group in optimizer.param_groups if group["route"] == "muon")
+
+    assert no_decay_group["weight_decay"] == 0.0
+    assert decay_group["weight_decay"] == args.weight_decay
+    assert any(param is radial_weight for param in muon_group["params"])

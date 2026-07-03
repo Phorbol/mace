@@ -273,6 +273,7 @@ def build_hybrid_muon_param_groups(
     routing: str = "mace",
     module_map: dict[str, torch.nn.Module] | None = None,
     magma_lite: bool = False,
+    adam_param_options_by_id: dict[int, dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     if muon_lr_factor <= 0.0:
         raise ValueError("muon_lr_factor must be positive")
@@ -282,7 +283,7 @@ def build_hybrid_muon_param_groups(
         raise ValueError(f"hybrid_muon_routing must be one of {sorted(_ROUTINGS)}")
 
     muon_params: list[torch.nn.Parameter] = []
-    adam_params: list[torch.nn.Parameter] = []
+    adam_group_buckets: dict[tuple, dict] = {}
     muon_matrix_specs: dict[int, list[dict]] = {}
     summary: list[dict] = []
     for name, param in named_parameters:
@@ -304,8 +305,35 @@ def build_hybrid_muon_param_groups(
             )
         if route == "frozen":
             continue
-        target = muon_params if route == "muon" else adam_params
-        target.append(param)
+        if route == "muon":
+            muon_params.append(param)
+        else:
+            adam_options = (adam_param_options_by_id or {}).get(id(param), {})
+            group_lr = adam_options.get("lr", lr)
+            group_weight_decay = adam_options.get("weight_decay", weight_decay)
+            group_betas = tuple(adam_options.get("betas", adam_betas))
+            group_eps = adam_options.get("eps", eps)
+            group_amsgrad = bool(adam_options.get("amsgrad", amsgrad))
+            key = (
+                float(group_lr),
+                float(group_weight_decay),
+                group_betas,
+                float(group_eps),
+                group_amsgrad,
+            )
+            bucket = adam_group_buckets.setdefault(
+                key,
+                {
+                    "params": [],
+                    "route": "adam",
+                    "lr": group_lr,
+                    "weight_decay": group_weight_decay,
+                    "betas": group_betas,
+                    "eps": group_eps,
+                    "amsgrad": group_amsgrad,
+                },
+            )
+            bucket["params"].append(param)
         matrix_view = _matrix_view_shape(tuple(int(dim) for dim in param.shape), muon_mode)
         matrix_batch = matrix_view[0] if route == "muon" and matrix_view else None
         matrix_shape = matrix_view[-2:] if route == "muon" and matrix_view else None
@@ -339,18 +367,7 @@ def build_hybrid_muon_param_groups(
                 "magma_lite": bool(magma_lite),
             }
         )
-    if adam_params:
-        groups.append(
-            {
-                "params": adam_params,
-                "route": "adam",
-                "lr": lr,
-                "weight_decay": weight_decay,
-                "betas": adam_betas,
-                "eps": eps,
-                "amsgrad": amsgrad,
-            }
-        )
+    groups.extend(adam_group_buckets.values())
     return groups, summary
 
 
