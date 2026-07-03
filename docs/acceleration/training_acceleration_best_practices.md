@@ -336,6 +336,8 @@ Current RECIO/8k evidence supports these cautious claims:
 - Precision preservation is promising but not proven as a universal default; use multi-seed or longer validation before making production claims.
 - HybridMuon is compatible with the compile path, but the current RECIO/8k evidence favors Adam for this model size. Conservative MACE-routed HybridMuon is stable but slower and less accurate than Adam in the full-Inductor run. TACE-style slice routing is compatible and faster than conservative Muon in full Inductor, but job `620634` finished in `09:46` with MaxRSS `5152156K` and test `40.4` meV/atom / `261.2` meV/A, worse than Adam full Inductor (`09:25`, `30.6` / `202.6`) and worse in force than conservative MACE-Muon (`11:17`, `36.1` / `223.2`). Keep TACE-style routing as an explicit ablation; do not make it the default without a changed scheduler/lr recipe and multi-seed evidence.
 
+- Larger-model and cross-dataset gates sharpen the current boundary. RECIO C128/L2 200k WSD showed a clear end-to-end compile gain (`02:25:08` eager -> `01:34:47` compile) with matching or slightly better test E/F (`49.9/114.8` -> `47.7/114.4`), but higher MaxRSS (`3.78 GB` -> `6.39 GB`). OC20NEB FPS L1/C64 showed compatibility and no displayed precision loss (`31.0` meV/atom / `54.1` meV/A for both eager and compile), but only `1.13x` wall-clock speedup and higher memory (`5.80 GB` -> `7.72 GB`).
+
 ### OC20NEB FPS Benchmark Wrapper
 
 For the DeepMD DPA4 OC20NEB FPS split, first convert the DeepMD mixed dataset to MACE extxyz:
