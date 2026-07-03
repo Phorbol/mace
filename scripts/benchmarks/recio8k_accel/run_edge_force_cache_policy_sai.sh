@@ -84,7 +84,7 @@ case "${CUEQ_PROFILE:-safe}" in
 esac
 
 EDGE_FORCE_COMPILE_ARGS=()
-if [ "${EDGE_FORCE_COMPILE:-True}" = "True" ]; then
+if [ "${EDGE_FORCE_COMPILE:-False}" = "True" ]; then
   EDGE_FORCE_DYNAMIC_FLAG=(--edge_force_compile_dynamic)
   if [ "${EDGE_FORCE_DYNAMIC:-True}" != "True" ]; then
     EDGE_FORCE_DYNAMIC_FLAG=(--no-edge_force_compile_dynamic)
@@ -172,14 +172,14 @@ python -m mace.cli.run_train \
   --eval_interval="${EVAL_INTERVAL:-1}" \
   --error_table=PerAtomMAE \
   --default_dtype=float32 \
-  $( [ "${TRAIN_TF32:-False}" = "True" ] && printf %s "--train_tf32" || printf %s "--no-train_tf32" ) \
+  $( [ "${TRAIN_TF32:-True}" = "True" ] && printf %s "--train_tf32" || printf %s "--no-train_tf32" ) \
   --train_amp_dtype="${TRAIN_AMP_DTYPE:-none}" \
   --device=cuda \
   --seed="${SEED:-123}" \
   --shuffle="${SHUFFLE:-False}" \
   "${CUEQ_ARGS[@]}" \
   "${CUEQ_CONV_FUSION_FLAG[@]}" \
-  --optimizer="${OPTIMIZER:-hybrid_muon}" \
+  --optimizer="${OPTIMIZER:-adam}" \
   --scheduler="${SCHEDULER:-ReduceLROnPlateau}" \
   --lr_wsd_warmup_steps="${LR_WSD_WARMUP_STEPS:-0}" \
   --lr_wsd_warmup_ratio="${LR_WSD_WARMUP_RATIO:-0.03}" \

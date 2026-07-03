@@ -298,6 +298,14 @@ Keep one variable changed per run. For speed claims, report hot-step timing and 
 
 ## How To Interpret Logs
 
+A healthy scheduler setup for WSD optimizer comparisons looks like:
+
+```text
+LR scheduler resolved config: {'scheduler': 'WSD', 'interval': 'step', 'step_on_batch': True, ...}
+```
+
+For WSD, `interval='step'` and `step_on_batch=True` mean the schedule is updated every batch/update rather than once per epoch. The same line also prints the resolved `num_steps`, `steps_per_epoch`, warmup, and decay settings, so record it when comparing Adam and HybridMuon.
+
 A healthy compile epoch summary looks like:
 
 ```text

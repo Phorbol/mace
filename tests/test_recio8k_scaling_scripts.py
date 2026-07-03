@@ -225,6 +225,8 @@ def test_ablation_case_sbatch_uses_mace_develop_and_hybrid_muon_flags(tmp_path):
 def test_edge_force_cache_policy_wrapper_defaults_to_safe_fx_dynamic_compile():
     wrapper = RUN_WRAPPER.read_text()
 
+    assert 'EDGE_FORCE_COMPILE:-False' in wrapper
+    assert '--optimizer="${OPTIMIZER:-adam}"' in wrapper
     assert 'EDGE_FORCE_GRAPH:-False' in wrapper
     assert 'EDGE_FORCE_REQUIRE_INDUCTOR_ACK:-False' in wrapper
     assert '--edge_force_compile_cache_policy="${EDGE_FORCE_CACHE_POLICY:-dynamic}"' in wrapper
