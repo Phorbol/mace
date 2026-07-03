@@ -106,6 +106,39 @@ def test_wsd_scheduler_defaults_to_per_step_with_train_loader_length():
     assert optimizer.param_groups[0]["lr"] == pytest.approx(1.0)
 
 
+def test_wsd_scheduler_describes_resolved_per_step_schedule():
+    param = torch.nn.Parameter(torch.tensor([1.0]))
+    optimizer = torch.optim.SGD([param], lr=1.0)
+    scheduler = LRScheduler(
+        optimizer,
+        _args(
+            max_num_epochs=4,
+            lr_wsd_warmup_steps=0,
+            lr_wsd_warmup_ratio=0.25,
+            lr_wsd_warmup_start_factor=0.2,
+            lr_wsd_stop_lr_ratio=0.001,
+            lr_wsd_decay_phase_ratio=0.1,
+            lr_wsd_decay_type="cosine",
+            lr_scheduler_interval="auto",
+        ),
+        steps_per_epoch=5,
+    )
+
+    assert scheduler.summary() == {
+        "scheduler": "WSD",
+        "interval": "step",
+        "step_on_batch": True,
+        "steps_per_epoch": 5,
+        "num_steps": 20,
+        "warmup_steps": 5,
+        "warmup_ratio": 0.25,
+        "warmup_start_factor": 0.2,
+        "stop_lr_ratio": 0.001,
+        "decay_phase_ratio": 0.1,
+        "decay_type": "cosine",
+    }
+
+
 def test_wsd_scheduler_state_dict_reloads_current_lr():
     source_param = torch.nn.Parameter(torch.tensor([1.0]))
     source_optimizer = torch.optim.SGD([source_param], lr=1.0)

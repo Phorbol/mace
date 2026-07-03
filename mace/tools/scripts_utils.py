@@ -1215,6 +1215,33 @@ class LRScheduler:
     def step_on_batch(self) -> bool:
         return self.scheduler == "WSD" and self.interval == "step"
 
+    def summary(self) -> dict[str, object]:
+        info: dict[str, object] = {
+            "scheduler": self.scheduler,
+            "interval": self.interval,
+            "step_on_batch": self.step_on_batch,
+            "steps_per_epoch": self.steps_per_epoch,
+        }
+        if self.scheduler == "WSD":
+            warmup_steps = (
+                int(self.lr_scheduler.warmup_steps)
+                if self.lr_scheduler.warmup_steps > 0
+                else int(self.lr_scheduler.warmup_ratio * self.lr_scheduler.num_steps)
+            )
+            warmup_steps = max(0, min(warmup_steps, self.lr_scheduler.num_steps - 1))
+            info.update(
+                {
+                    "num_steps": self.lr_scheduler.num_steps,
+                    "warmup_steps": warmup_steps,
+                    "warmup_ratio": self.lr_scheduler.warmup_ratio,
+                    "warmup_start_factor": self.lr_scheduler.warmup_start_factor,
+                    "stop_lr_ratio": self.lr_scheduler.stop_lr_ratio,
+                    "decay_phase_ratio": self.lr_scheduler.decay_phase_ratio,
+                    "decay_type": self.lr_scheduler.decay_type,
+                }
+            )
+        return info
+
     def step_batch(self, global_step: int | None = None) -> None:
         if self._optimizer_type == "schedulefree" or not self.step_on_batch:
             return

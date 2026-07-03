@@ -963,6 +963,7 @@ def run(args) -> None:
     lr_scheduler = LRScheduler(
         optimizer, args, steps_per_epoch=lr_steps_per_epoch
     )
+    logging.info("LR scheduler resolved config: %s", lr_scheduler.summary())
 
     swa: Optional[tools.SWAContainer] = None
     swas = [False]
