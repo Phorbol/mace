@@ -37,12 +37,14 @@ This audit records the current evidence for the DPA4-inspired MACE training acce
 
 ### Adam + CUEQ + Full-Inductor Force Compile
 
-Status: proved for the tested L1/C64 RECIO and OC20NEB FPS gates.
+Status: proved for the tested RECIO L1/C64, RECIO L2/C128, and OC20NEB FPS gates.
 
 Evidence:
 
 - RECIO L1/C64 200k WSD Adam full-CUEQ full-Inductor compile completed in `00:53:22`, with `fallbacks=0`, `runtime_recompiles=0`, hot-step mean `12.77 ms/batch`, and test `53.5 meV/atom / 158.8 meV/A`.
 - Matched RECIO eager control completed in `01:40:51`, hot-step mean `26.41 ms/batch`, and test `51.3 meV/atom / 158.9 meV/A`.
+- RECIO L2/C128 200k WSD Adam full-CUEQ full-Inductor compile completed across seeds `123` and `789`, with `fallbacks=0`, `runtime_recompiles=0`, hot-step means `26.28` and `22.86 ms/batch`, and test `50.3 / 118.5` and `49.8 / 115.4` meV/atom / meV/A.
+- Matched RECIO L2/C128 eager controls completed in `02:07:07` and `02:08:12`, with test `50.3 / 117.5` and `47.9 / 114.8` meV/atom / meV/A. The compile runs completed in `01:50:06` and `01:36:06`, so the two-seed mean wall-clock speedup was about `1.24x`.
 - OC20NEB FPS L1/C64 200k WSD Adam full-CUEQ full-Inductor compile completed in `01:08:02`, with `fallbacks=0`, `runtime_recompiles=0`, hot-step mean `14.69 ms/batch`, and valid/test `18.2 meV/atom / 43.3 meV/A`.
 - Matched OC20NEB eager control completed in `01:40:34`, hot-step mean `24.72 ms/batch`, and valid/test `18.7 meV/atom / 42.9 meV/A`.
 
@@ -113,6 +115,7 @@ Status: partially proved for Adam compile on the tested datasets; not universall
 Evidence:
 
 - Adam full-CUEQ full-Inductor compile matched eager force accuracy on RECIO and OC20NEB FPS at displayed precision.
+- The RECIO L2/C128 two-seed gate matched eager test force within about `1 meV/A` on both seeds, while compile test energy was identical for seed `123` and `1.9 meV/atom` higher for seed `789`.
 - OC20NEB FPS provides a second dataset beyond RECIO and used a separate train/valid extxyz split.
 
 Boundary:
@@ -146,6 +149,5 @@ Do not default-enable:
 
 Next evidence needed before claiming full objective completion:
 
-- Multi-seed Adam compile/eager parity on at least one larger MACE size.
 - Native-bf16 GPU run with validation/test parity against FP32.
 - A revised HybridMuon recipe that matches or beats Adam on both speed and validation/test metrics, or a documented decision to keep Muon experimental.
