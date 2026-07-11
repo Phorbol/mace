@@ -11,7 +11,7 @@
 set -euo pipefail
 
 REPO_ROOT=${MACE_DPA4_DEMO_REPO_ROOT:-/home/gengjianrui/workdir_sjtu-caoxiaoming/gengjianrui/Phorbol-mace-dpa4-training-accel}
-PYTHON_BIN=${MACE_DPA4_DEMO_PYTHON:-/home/gengjianrui/workdir_sjtu-caoxiaoming/gengjianrui/conda-envs/mace-dpa4-cu126/bin/python}
+PYTHON_BIN=${MACE_DPA4_DEMO_PYTHON:-/home/sjtu-caoxiaoming/gengjianrui/conda-envs/mace-dpa4-cu126/bin/python}
 DATA_XYZ=${MACE_DPA4_DEMO_XYZ:-/home/gengjianrui/workdir_sjtu-caoxiaoming/gengjianrui/row_000060_34ee2613164a1ac6_Pd-Zn_111_-bulk1127-shift0.xyz}
 RUN_ROOT=${MACE_DPA4_DEMO_RUN_ROOT:-${REPO_ROOT}/runs/dpa4_stress_20k_demo/${SLURM_JOB_ID:-local}}
 TARGET_STEPS=${MACE_DPA4_DEMO_TARGET_STEPS:-20000}

@@ -11,7 +11,7 @@
 set -euo pipefail
 
 REPO_ROOT=${MACE_ABACUS_REPO_ROOT:-/home/gengjianrui/workdir_sjtu-caoxiaoming/gengjianrui/Phorbol-mace-dpa4-training-accel}
-PYTHON_BIN=${MACE_ABACUS_PYTHON:-/home/gengjianrui/workdir_sjtu-caoxiaoming/gengjianrui/conda-envs/mace-dpa4-cu126/bin/python}
+PYTHON_BIN=${MACE_ABACUS_PYTHON:-/home/sjtu-caoxiaoming/gengjianrui/conda-envs/mace-dpa4-cu126/bin/python}
 DATA_REPO=${MACE_ABACUS_DATA_REPO:-/home/gengjianrui/workdir_sjtu-caoxiaoming/gengjianrui/bin/RSQN-sai-experimental-data}
 RUN_ROOT=${MACE_ABACUS_RUN_ROOT:-${REPO_ROOT}/runs/abacus_raw_extrapolation_eval/${SLURM_JOB_ID:-local}}
 LIMIT_STRUCTURES=${MACE_ABACUS_LIMIT_STRUCTURES:-200}

@@ -11,7 +11,7 @@
 set -euo pipefail
 
 REPO_ROOT=${MACE_OC20NEB_REPO_ROOT:-/home/gengjianrui/workdir_sjtu-caoxiaoming/gengjianrui/Phorbol-mace-dpa4-training-accel}
-PYTHON_BIN=${MACE_OC20NEB_PYTHON:-/home/gengjianrui/workdir_sjtu-caoxiaoming/gengjianrui/conda-envs/mace-dpa4-cu126/bin/python}
+PYTHON_BIN=${MACE_OC20NEB_PYTHON:-/home/sjtu-caoxiaoming/gengjianrui/conda-envs/mace-dpa4-cu126/bin/python}
 DATA_ROOT=${MACE_OC20NEB_DATA_ROOT:-${REPO_ROOT}/runs/oc20neb_fullcase200_fps_extxyz}
 TRAIN_FILE=${MACE_OC20NEB_TRAIN_FILE:-${DATA_ROOT}/train.extxyz}
 VALID_FILE=${MACE_OC20NEB_VALID_FILE:-${DATA_ROOT}/valid.extxyz}

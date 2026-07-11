@@ -606,6 +606,16 @@ def test_edge_force_compile_loss_input_names_are_loss_specific():
         "stress_weight",
     )
     assert edge_force_compile_loss_input_names(
+        data_keys, loss_fn=modules.UniversalLoss()
+    ) == (
+        "energy",
+        "forces",
+        "stress",
+        "energy_weight",
+        "forces_weight",
+        "stress_weight",
+    )
+    assert edge_force_compile_loss_input_names(
         data_keys, loss_fn=WeightedEnergyForcesVirialsLoss()
     ) == (
         "energy",
@@ -1372,6 +1382,47 @@ def test_position_force_weighted_huber_energy_forces_stress_tensor_loss_matches_
     assert_close(actual, reference)
 
 
+def test_position_force_universal_tensor_loss_matches_loss_module():
+    from mace.tools.training_compile import (
+        _edge_force_universal_loss,
+        _edge_vector_inputs,
+    )
+
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    loss_fn = modules.UniversalLoss(
+        energy_weight=1.3,
+        forces_weight=7.0,
+        stress_weight=2.5,
+        huber_delta=0.2,
+    )
+    data_dict, _, _, _ = _edge_vector_inputs(batch)
+    energy = data_dict["energy"] + 0.2
+    forces = data_dict["forces"] + 0.3
+    stress = data_dict["stress"] + 0.4
+
+    reference = loss_fn(
+        pred={
+            "energy": energy,
+            "forces": forces,
+            "stress": stress,
+            "virials": None,
+        },
+        ref=batch,
+    )
+    actual = _edge_force_universal_loss(
+        data_dict=data_dict,
+        energy=energy,
+        forces=forces,
+        stress=stress,
+        energy_loss_weight=loss_fn.energy_weight,
+        forces_loss_weight=loss_fn.forces_weight,
+        stress_loss_weight=loss_fn.stress_weight,
+        huber_delta=torch.as_tensor(loss_fn.huber_delta, dtype=energy.dtype),
+    )
+
+    assert_close(actual, reference)
+
+
 def test_position_force_weighted_energy_forces_virials_tensor_loss_matches_loss_module():
     from mace.modules import WeightedEnergyForcesVirialsLoss
     from mace.tools.training_compile import (
@@ -1816,6 +1867,7 @@ def test_edge_force_energy_force_output_loss_support_matrix():
 def test_edge_force_loss_output_capability_registry():
     from mace.modules import (
         DipolePolarLoss,
+        UniversalLoss,
         WeightedEnergyForcesLoss,
         WeightedEnergyForcesStressLoss,
         WeightedEnergyForcesVirialsLoss,
@@ -1832,9 +1884,15 @@ def test_edge_force_loss_output_capability_registry():
     assert edge_force_loss_output_capability(
         WeightedEnergyForcesStressLoss()
     ).required_outputs == ("energy", "forces", "stress")
-    assert edge_force_loss_output_capability(
+    virials_capability = edge_force_loss_output_capability(
         WeightedEnergyForcesVirialsLoss()
-    ).required_outputs == ("energy", "forces", "virials")
+    )
+    assert virials_capability.required_outputs == ("energy", "forces", "virials")
+    assert virials_capability.compiled_tensor_loss_supported is True
+    universal_capability = edge_force_loss_output_capability(UniversalLoss())
+    assert universal_capability.required_outputs == ("energy", "forces", "stress")
+    assert universal_capability.edge_force_supported is False
+    assert universal_capability.compiled_tensor_loss_supported is True
     assert edge_force_loss_output_capability(
         DipolePolarLoss()
     ).required_outputs == ("dipole", "polarizability")
@@ -2013,6 +2071,15 @@ def test_edge_force_compiled_loss_position_mode_stress_loss_passes_setup_gate():
         ),
         (
             modules.WeightedHuberEnergyForcesStressLoss(
+                energy_weight=1.0,
+                forces_weight=10.0,
+                stress_weight=0.5,
+                huber_delta=0.2,
+            ),
+            {"forces": True, "virials": False, "stress": True},
+        ),
+        (
+            modules.UniversalLoss(
                 energy_weight=1.0,
                 forces_weight=10.0,
                 stress_weight=0.5,
@@ -3972,6 +4039,14 @@ def test_take_step_uses_training_compile_wrapper_for_virial_outputs():
             ),
             {"forces": True, "virials": True, "stress": False},
             "compute_virials",
+        ),
+        (
+            "universal",
+            modules.UniversalLoss(
+                energy_weight=1.0, forces_weight=1.0, stress_weight=1.0
+            ),
+            {"forces": True, "virials": False, "stress": True},
+            "compute_stress",
         ),
     ],
 )
