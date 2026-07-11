@@ -39,6 +39,7 @@ from mace.cli.visualise_train import TrainingPlotter
 from mace.data import KeySpecification, update_keyspec_from_kwargs
 from mace.modules.lora import inject_LoRAs, merge_lora_weights
 from mace.tools import torch_geometric
+from mace.tools.train import train as _train_loop
 from mace.tools.distributed_tools import init_distributed
 from mace.tools.model_script_utils import configure_model
 from mace.tools.precision import TrainingPrecisionConfig
@@ -1123,7 +1124,7 @@ def run(args) -> None:
             precision_config.float32_matmul_precision,
         )
 
-    tools.train(
+    _train_loop(
         model=model,
         loss_fn=loss_fn,
         train_loader=train_loader,

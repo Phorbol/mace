@@ -36,3 +36,14 @@ assert "networkx" not in sys.modules
     result = _run_import_check(code)
 
     assert result.returncode == 0, result.stderr
+
+
+def test_run_train_binds_callable_train_loop_despite_train_submodule_import():
+    code = """
+import mace.cli.run_train as run_train
+assert callable(run_train._train_loop)
+"""
+
+    result = _run_import_check(code)
+
+    assert result.returncode == 0, result.stderr
