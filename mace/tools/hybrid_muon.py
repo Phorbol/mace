@@ -169,14 +169,120 @@ def _normalize_axis(axis: int, ndim: int, *, label: str) -> int:
     return axis
 
 
+def _normalize_optim_spec_slice_specs(
+    name: str, param: torch.nn.Parameter, optim_spec: OptimSpec
+) -> list[dict] | None:
+    if not optim_spec.slice_specs:
+        return None
+    if optim_spec.route != "muon":
+        raise ValueError(
+            f"OptimSpec.slice_specs for {name!r} are only valid for route='muon'"
+        )
+    if optim_spec.matrix_axes is not None or optim_spec.batch_axes:
+        raise ValueError(
+            f"OptimSpec.slice_specs for {name!r} cannot be combined with "
+            "matrix_axes or batch_axes"
+        )
+
+    specs: list[dict] = []
+    for index, raw_spec in enumerate(optim_spec.slice_specs):
+        if not isinstance(raw_spec, dict):
+            raise ValueError(
+                f"OptimSpec.slice_specs[{index}] for {name!r} must be a dict"
+            )
+        try:
+            offset = int(raw_spec["offset"])
+            numel = int(raw_spec["numel"])
+            matrix_view_shape = tuple(
+                int(dim) for dim in raw_spec["matrix_view_shape"]
+            )
+        except KeyError as exc:
+            raise ValueError(
+                f"OptimSpec.slice_specs[{index}] for {name!r} is missing {exc.args[0]!r}"
+            ) from exc
+        if offset < 0 or numel <= 0:
+            raise ValueError(
+                f"OptimSpec.slice_specs[{index}] for {name!r} has invalid "
+                f"offset={offset} or numel={numel}"
+            )
+        if len(matrix_view_shape) != 3 or any(dim <= 0 for dim in matrix_view_shape):
+            raise ValueError(
+                f"OptimSpec.slice_specs[{index}] for {name!r} must declare a "
+                "positive (batch, rows, cols) matrix_view_shape"
+            )
+        if math.prod(matrix_view_shape) != numel:
+            raise ValueError(
+                f"OptimSpec.slice_specs[{index}] for {name!r} has numel={numel} "
+                f"but matrix_view_shape product={math.prod(matrix_view_shape)}"
+            )
+        normalized = {
+            "offset": offset,
+            "numel": numel,
+            "matrix_view_shape": matrix_view_shape,
+        }
+        if "source_shape" in raw_spec:
+            source_shape = tuple(int(dim) for dim in raw_spec["source_shape"])
+            if not source_shape or any(dim <= 0 for dim in source_shape):
+                raise ValueError(
+                    f"OptimSpec.slice_specs[{index}] for {name!r} has invalid source_shape"
+                )
+            if math.prod(source_shape) != numel:
+                raise ValueError(
+                    f"OptimSpec.slice_specs[{index}] for {name!r} has numel={numel} "
+                    f"but source_shape product={math.prod(source_shape)}"
+                )
+            try:
+                permute = tuple(int(dim) for dim in raw_spec["permute"])
+                inverse_permute = tuple(
+                    int(dim) for dim in raw_spec["inverse_permute"]
+                )
+            except KeyError as exc:
+                raise ValueError(
+                    f"OptimSpec.slice_specs[{index}] for {name!r} with source_shape "
+                    f"is missing {exc.args[0]!r}"
+                ) from exc
+            expected_axes = tuple(range(len(source_shape)))
+            if sorted(permute) != list(expected_axes) or sorted(inverse_permute) != list(
+                expected_axes
+            ):
+                raise ValueError(
+                    f"OptimSpec.slice_specs[{index}] for {name!r} has invalid "
+                    "permute/inverse_permute axes"
+                )
+            normalized.update(
+                {
+                    "source_shape": source_shape,
+                    "permute": permute,
+                    "inverse_permute": inverse_permute,
+                }
+            )
+        specs.append(normalized)
+
+    specs.sort(key=lambda spec: int(spec["offset"]))
+    cursor = 0
+    for index, spec in enumerate(specs):
+        offset = int(spec["offset"])
+        numel = int(spec["numel"])
+        if offset != cursor:
+            raise ValueError(
+                f"OptimSpec.slice_specs for {name!r} must cover the flattened "
+                f"parameter exactly once; slice {index} starts at {offset}, "
+                f"expected {cursor}"
+            )
+        cursor = offset + numel
+    if cursor != int(param.numel()):
+        raise ValueError(
+            f"OptimSpec.slice_specs for {name!r} cover {cursor} values, "
+            f"but parameter has {int(param.numel())}"
+        )
+    return specs
+
+
 def _optim_spec_matrix_layout(
     name: str, param: torch.nn.Parameter, optim_spec: OptimSpec
 ) -> dict | None:
     if optim_spec.slice_specs:
-        raise NotImplementedError(
-            "OptimSpec.slice_specs are not implemented yet; use e3nn flat spec "
-            "routing or declare matrix_axes for full tensor parameters"
-        )
+        return None
     if optim_spec.matrix_axes is None:
         if optim_spec.batch_axes:
             raise ValueError(
@@ -527,7 +633,10 @@ def build_hybrid_muon_param_groups(
             else:
                 optim_spec = _module_declared_optim_spec(name, param, module_map)
                 route, reason = optim_spec.route, "module-declared"
+                flat_specs = _normalize_optim_spec_slice_specs(name, param, optim_spec)
                 matrix_layout = _optim_spec_matrix_layout(name, param, optim_spec)
+                if flat_specs is not None:
+                    muon_matrix_specs[name] = flat_specs
                 if optim_spec.route in _ADAM_VARIANTS:
                     adam_variant_override = optim_spec.route
         else:

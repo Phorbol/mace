@@ -7,6 +7,7 @@ from mace.tools.scripts_utils import get_optimizer
 
 from mace.tools.hybrid_muon import (
     HybridMuon,
+    OptimSpec,
     _orthogonalize_newton_schulz,
     _orthogonalize_newton_schulz_batched,
     build_hybrid_muon_param_groups,
@@ -310,6 +311,86 @@ def test_hybrid_muon_state_dict_does_not_remove_runtime_matrix_specs(monkeypatch
     optimizer.step()
 
     assert not torch.allclose(module.weight, before)
+
+
+def test_hybrid_muon_module_routing_uses_declared_slice_specs(monkeypatch):
+    class FlatSlicedModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.arange(10.0))
+            self.hybrid_muon_optim_specs = {
+                "weight": OptimSpec(
+                    route="muon",
+                    slice_specs=(
+                        {
+                            "offset": 0,
+                            "numel": 6,
+                            "matrix_view_shape": (1, 2, 3),
+                        },
+                        {
+                            "offset": 6,
+                            "numel": 4,
+                            "matrix_view_shape": (1, 2, 2),
+                        },
+                    ),
+                )
+            }
+
+    def fake_orthogonalize(update, steps=None):
+        return torch.ones_like(update)
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon._orthogonalize_newton_schulz",
+        fake_orthogonalize,
+    )
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon._orthogonalize_newton_schulz_batched",
+        fake_orthogonalize,
+    )
+
+    module = FlatSlicedModule()
+    groups, summary = build_hybrid_muon_param_groups(
+        [("interactions.0.flat.weight", module.weight)],
+        lr=1.0,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=1.0,
+        routing="module",
+        module_map={"interactions.0.flat": module},
+    )
+    optimizer = HybridMuon(groups, lr=1.0)
+
+    runtime_group = next(
+        group for group in optimizer.param_groups if group["route"] == "muon"
+    )
+    assert runtime_group["matrix_specs"] == {
+        "interactions.0.flat.weight": [
+            {"offset": 0, "numel": 6, "matrix_view_shape": (1, 2, 3)},
+            {"offset": 6, "numel": 4, "matrix_view_shape": (1, 2, 2)},
+        ]
+    }
+    assert "matrix_specs" not in next(
+        group for group in optimizer.state_dict()["param_groups"]
+        if group["route"] == "muon"
+    )
+    assert summary == [
+        {
+            "name": "interactions.0.flat.weight",
+            "shape": (10,),
+            "numel": 10,
+            "route": "muon",
+            "reason": "module-declared",
+            "muon_mode": "2d",
+            "matrix_shape": None,
+            "matrix_batch": 2,
+        }
+    ]
+
+    before = module.weight.detach().clone()
+    module.weight.grad = torch.ones_like(module.weight)
+    optimizer.step()
+
+    assert torch.allclose(module.weight, before - 1.0)
 
 
 def test_hybrid_muon_load_state_ignores_serialized_matrix_specs(monkeypatch):
