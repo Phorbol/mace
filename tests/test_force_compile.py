@@ -47,6 +47,27 @@ def test_strip_fx_saved_tensor_detach_removes_make_fx_detach_chain():
     torch.testing.assert_close(rebuilt(x), expected)
 
 
+def test_rebuild_fx_graph_module_isolates_root_tensor_attributes():
+    class CapturedTensorModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.register_buffer("scale", torch.tensor([2.0]))
+
+        def forward(self, x):
+            return x * self.scale
+
+    traced = torch.fx.symbolic_trace(CapturedTensorModule())
+
+    rebuilt_a = rebuild_fx_graph_module(traced)
+    rebuilt_b = rebuild_fx_graph_module(traced)
+
+    assert rebuilt_a.scale is not traced.scale
+    assert rebuilt_b.scale is not traced.scale
+    assert rebuilt_a.scale is not rebuilt_b.scale
+    torch.testing.assert_close(rebuilt_a(torch.tensor([3.0])), torch.tensor([6.0]))
+    torch.testing.assert_close(rebuilt_b(torch.tensor([4.0])), torch.tensor([8.0]))
+
+
 def test_trace_force_closure_repairs_detach_chain_and_preserves_outputs():
     def fn(x):
         y = x + x.detach().detach() * 2.0

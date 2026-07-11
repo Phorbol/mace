@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import dataclasses
 import os
 from collections.abc import Callable, Sequence
@@ -179,7 +180,7 @@ def rebuild_fx_graph_module(gm: torch.fx.GraphModule) -> torch.fx.GraphModule:
     for node in gm.graph.nodes:
         value_map[node] = new_graph.node_copy(node, lambda old: value_map[old])
     new_graph.lint()
-    return torch.fx.GraphModule(gm, new_graph)
+    return torch.fx.GraphModule(copy.deepcopy(gm), new_graph)
 
 
 def trace_force_closure(

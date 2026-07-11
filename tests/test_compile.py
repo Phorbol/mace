@@ -2868,6 +2868,7 @@ def test_edge_force_compile_step_uses_fresh_executable_after_gate(monkeypatch):
             enabled=True,
             compile_graph=True,
             refresh_executable_each_step=True,
+            parity_check_gradients=False,
         ),
     )
 
@@ -2890,6 +2891,170 @@ def test_edge_force_compile_step_uses_fresh_executable_after_gate(monkeypatch):
     assert gate_executables == [compiled_executables[0]]
     assert compiled.executable is compiled_executables[1]
 
+
+
+def test_edge_force_uncompiled_step_uses_fresh_executable_after_gradient_gate(monkeypatch):
+    import types
+
+    from mace.tools import training_compile
+
+    gate_executables = []
+    compiled_executables = []
+    graph_modules = []
+
+    def fake_trace_force_closure(*args, **kwargs):
+        del args, kwargs
+        graph_module = types.SimpleNamespace(graph=types.SimpleNamespace(nodes=[object()]))
+        graph_modules.append(graph_module)
+        return types.SimpleNamespace(
+            graph_module=graph_module,
+            detach_nodes_before=0,
+            detach_nodes_after=0,
+        )
+
+    def fake_rebuild_fx_graph_module(graph_module):
+        rebuilt = types.SimpleNamespace(
+            graph=types.SimpleNamespace(nodes=[object()]),
+            rebuilt_from=graph_module,
+        )
+        graph_modules.append(rebuilt)
+        return rebuilt
+
+    def fake_compile_fx_graph_module(graph_module, **kwargs):
+        del kwargs
+        compiled_executables.append(graph_module)
+        return graph_module, {"compile_graph": False}
+
+    def snapshot_payload():
+        return {
+            "energy": torch.zeros(1),
+            "forces": torch.zeros(1, 3),
+            "loss": torch.zeros(()),
+            "grads": {},
+        }
+
+    def fake_snapshot(*, executable, **kwargs):
+        del kwargs
+        gate_executables.append(executable)
+        return snapshot_payload()
+
+    monkeypatch.setattr(
+        training_compile, "trace_force_closure", fake_trace_force_closure
+    )
+    monkeypatch.setattr(
+        training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "rebuild_fx_graph_module", fake_rebuild_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "_position_force_snapshot", lambda **kwargs: snapshot_payload()
+    )
+    monkeypatch.setattr(
+        training_compile, "_edge_force_snapshot_from_executable", fake_snapshot
+    )
+
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        create_mace("cpu"),
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_hit_gate=False,
+            cache_policy="shape",
+            allow_fallback=False,
+            force_gradient_mode="positions",
+            setup_gate="strict",
+            parity_check_gradients=True,
+        ),
+    )
+
+    compiled = wrapper._compile_step(
+        batch=_BatchDictAdapter(create_batch("cpu")),
+        loss_fn=_EnergyForcesMiniLoss(),
+        cache_key=("shape",),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert len(compiled_executables) == 2
+    assert gate_executables == [compiled_executables[0]]
+    assert gate_executables[0] is not graph_modules[0]
+    assert compiled.executable is compiled_executables[1]
+    assert compiled.executable is not gate_executables[0]
+
+
+def test_edge_force_periodic_parity_uses_fresh_diagnostic_executable(monkeypatch):
+    import types
+
+    from mace.tools import training_compile
+
+    runtime_executable = object()
+    diagnostic_executable = object()
+    graph_module = types.SimpleNamespace(graph=types.SimpleNamespace(nodes=[object()]))
+    seen_candidate_executables = []
+
+    def fake_compile_fx_graph_module(compiled_graph_module, **kwargs):
+        assert compiled_graph_module is not graph_module
+        assert kwargs["compile_graph"] is False
+        return diagnostic_executable, {"compile_graph": False}
+
+    def fake_candidate_snapshot(*, executable, **kwargs):
+        del kwargs
+        seen_candidate_executables.append(executable)
+        return {
+            "energy": torch.zeros(1),
+            "forces": torch.zeros(1, 3),
+            "loss": torch.zeros(()),
+            "grads": {},
+        }
+
+    monkeypatch.setattr(
+        training_compile, "rebuild_fx_graph_module", lambda gm: object()
+    )
+    monkeypatch.setattr(
+        training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_position_force_snapshot",
+        lambda **kwargs: {
+            "energy": torch.zeros(1),
+            "forces": torch.zeros(1, 3),
+            "loss": torch.zeros(()),
+            "grads": {},
+        },
+    )
+    monkeypatch.setattr(
+        training_compile, "_edge_force_snapshot_from_executable", fake_candidate_snapshot
+    )
+
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        create_mace("cpu"),
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            parity_check_gradients=True,
+        ),
+    )
+    compiled = types.SimpleNamespace(
+        graph_module=graph_module,
+        input_names=(),
+        param_names=(),
+        loss_input_names=(),
+        force_gradient_mode="positions",
+        output_names=("energy", "forces"),
+    )
+
+    comparison = wrapper._run_parity_check(
+        batch=_BatchDictAdapter(create_batch("cpu")),
+        loss_fn=_EnergyForcesMiniLoss(),
+        executable=runtime_executable,
+        compiled=compiled,
+        bucket_sizes=None,
+    )
+
+    assert comparison["ok"] is True
+    assert seen_candidate_executables == [diagnostic_executable]
+    assert runtime_executable is not diagnostic_executable
 
 def test_edge_force_compile_metrics_report_setup_phase_breakdown(monkeypatch, caplog):
     import types
@@ -3411,6 +3576,7 @@ def test_edge_force_compile_graph_refreshes_reused_executable_after_age_limit(
 def test_edge_force_compile_periodic_parity_check_records_gradient_diffs(monkeypatch):
     import types
 
+    from mace.modules import WeightedEnergyForcesLoss
     from mace.tools import training_compile
 
     def fake_trace_force_closure(*args, **kwargs):
@@ -3432,11 +3598,6 @@ def test_edge_force_compile_periodic_parity_check_records_gradient_diffs(monkeyp
             return energy, edge_grad
 
         return executable, {"compile_graph": kwargs["compile_graph"]}
-
-    class EnergyOnlyLoss(torch.nn.Module):
-        def forward(self, pred, ref):
-            del ref
-            return pred["energy"].sum()
 
     model = create_tiny_mace("cpu")
     snapshot_calls = []
@@ -3498,13 +3659,13 @@ def test_edge_force_compile_periodic_parity_check_records_gradient_diffs(monkeyp
 
     wrapper.compiled_force_training_loss(
         batch=batch,
-        loss_fn=EnergyOnlyLoss(),
+        loss_fn=WeightedEnergyForcesLoss(),
         output_args={"forces": True, "virials": False, "stress": False},
     )
     snapshot_calls.clear()
     loss, metrics = wrapper.compiled_force_training_loss(
         batch=batch,
-        loss_fn=EnergyOnlyLoss(),
+        loss_fn=WeightedEnergyForcesLoss(),
         output_args={"forces": True, "virials": False, "stress": False},
     )
 
@@ -3523,6 +3684,7 @@ def test_edge_force_compile_periodic_parity_check_records_gradient_diffs(monkeyp
 def test_edge_force_compile_fixed_probe_reuses_first_batch(monkeypatch):
     import types
 
+    from mace.modules import WeightedEnergyForcesLoss
     from mace.tools import training_compile
 
     def fake_trace_force_closure(*args, **kwargs):
@@ -3544,11 +3706,6 @@ def test_edge_force_compile_fixed_probe_reuses_first_batch(monkeypatch):
             return energy, edge_grad
 
         return executable, {"compile_graph": kwargs["compile_graph"]}
-
-    class EnergyOnlyLoss(torch.nn.Module):
-        def forward(self, pred, ref):
-            del ref
-            return pred["energy"].sum()
 
     model = create_tiny_mace("cpu")
     snapshot_batches = []
@@ -3593,6 +3750,7 @@ def test_edge_force_compile_fixed_probe_reuses_first_batch(monkeypatch):
             allow_fallback=False,
             refresh_executable_each_step=False,
             fixed_probe_interval=1,
+            parity_check_gradients=False,
         ),
     )
     first_data = create_batch("cpu")
@@ -3604,13 +3762,13 @@ def test_edge_force_compile_fixed_probe_reuses_first_batch(monkeypatch):
 
     wrapper.compiled_force_training_loss(
         batch=first_batch,
-        loss_fn=EnergyOnlyLoss(),
+        loss_fn=WeightedEnergyForcesLoss(),
         output_args={"forces": True, "virials": False, "stress": False},
     )
     snapshot_batches.clear()
     _, metrics = wrapper.compiled_force_training_loss(
         batch=second_batch,
-        loss_fn=EnergyOnlyLoss(),
+        loss_fn=WeightedEnergyForcesLoss(),
         output_args={"forces": True, "virials": False, "stress": False},
     )
 

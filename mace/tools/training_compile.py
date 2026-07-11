@@ -2401,6 +2401,18 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         self.fixed_probe_step += 1
         return self.fixed_probe_step % interval == 0
 
+    def _fresh_diagnostic_executable(self, compiled: _CompiledEdgeForceStep):
+        diagnostic_graph_module = rebuild_fx_graph_module(compiled.graph_module)
+        diagnostic_executable, _ = compile_fx_graph_module(
+            diagnostic_graph_module,
+            compile_graph=self.config.compile_graph,
+            compile_mode=self.config.compile_mode,
+            compile_dynamic=self.config.compile_dynamic,
+            shape_padding=self.config.compile_shape_padding,
+            max_fusion_size=self.config.compile_max_fusion_size,
+        )
+        return diagnostic_executable
+
     def _run_parity_check(
         self,
         *,
@@ -2410,6 +2422,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         compiled: _CompiledEdgeForceStep,
         bucket_sizes: tuple[int, int] | None,
     ) -> dict[str, Any]:
+        diagnostic_executable = self._fresh_diagnostic_executable(compiled)
         try:
             if self.config.parity_check_gradients:
                 reference = _position_force_snapshot(
@@ -2421,7 +2434,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     model=self.model,
                     batch=batch,
                     loss_fn=loss_fn,
-                    executable=executable,
+                    executable=diagnostic_executable,
                     input_names=compiled.input_names,
                     bucket_sizes=bucket_sizes,
                     param_names=compiled.param_names,
@@ -2440,7 +2453,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     model=self.model,
                     batch=batch,
                     loss_fn=loss_fn,
-                    executable=executable,
+                    executable=diagnostic_executable,
                     input_names=compiled.input_names,
                     bucket_sizes=bucket_sizes,
                     param_names=compiled.param_names,
@@ -2467,8 +2480,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         compiled = self.cache.get(self.fixed_probe_cache_key)
         if compiled is None:
             return {"skipped": True, "skip_reason": "cache_entry_missing"}
-        if compiled.executable is None:
-            return {"skipped": True, "skip_reason": "executable_released"}
+        diagnostic_executable = self._fresh_diagnostic_executable(compiled)
         device = next(self.model.parameters()).device
         probe_batch = self.fixed_probe_batch.to(device)
         bucket_sizes = _edge_force_bucket_sizes_from_cache_key(compiled.cache_key)
@@ -2483,7 +2495,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     model=self.model,
                     batch=probe_batch,
                     loss_fn=loss_fn,
-                    executable=compiled.executable,
+                    executable=diagnostic_executable,
                     input_names=compiled.input_names,
                     bucket_sizes=bucket_sizes,
                     param_names=compiled.param_names,
@@ -2502,7 +2514,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     model=self.model,
                     batch=probe_batch,
                     loss_fn=loss_fn,
-                    executable=compiled.executable,
+                    executable=diagnostic_executable,
                     input_names=compiled.input_names,
                     bucket_sizes=bucket_sizes,
                     param_names=compiled.param_names,
@@ -2849,11 +2861,10 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         )
         log_phase_done("trace", phase_start)
 
-        gate_graph_module = (
-            rebuild_fx_graph_module(trace_result.graph_module)
-            if self.config.compile_graph
-            else trace_result.graph_module
-        )
+        # The setup gate may run backward through the executable.  Always gate
+        # a copy so the original trace remains a clean source for runtime and
+        # later diagnostics, including the uncompiled GraphModule path.
+        gate_graph_module = rebuild_fx_graph_module(trace_result.graph_module)
         phase_start = log_phase_start("gate_compile")
         executable, compile_kwargs = compile_fx_graph_module(
             gate_graph_module,
@@ -2978,15 +2989,17 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             if not gate_result.accepted:
                 raise RuntimeError(f"edge-force compile gate failed: {comparison}")
 
-        cached_graph_module = trace_result.graph_module
+        # Diagnostics may backward through the gate executable.  Cache a clean
+        # graph source and use a distinct runtime executable for subsequent
+        # parity checks and training steps.
+        cached_graph_module = rebuild_fx_graph_module(trace_result.graph_module)
+        training_graph_module = rebuild_fx_graph_module(trace_result.graph_module)
         training_executable = executable
         phase_seconds["training_compile"] = 0.0
         if self.config.compile_graph:
             # Each torch.compile call gets its own GraphModule copy.  PyTorch 2.10
             # can retain higher-order autograd state on compiled force callables,
             # so the cached source graph must never be one already handed to compile.
-            cached_graph_module = rebuild_fx_graph_module(trace_result.graph_module)
-            training_graph_module = rebuild_fx_graph_module(trace_result.graph_module)
             phase_start = log_phase_start("training_compile")
             training_executable, _ = compile_fx_graph_module(
                 training_graph_module,
@@ -2997,6 +3010,17 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 max_fusion_size=self.config.compile_max_fusion_size,
             )
             log_phase_done("training_compile", phase_start)
+        else:
+            phase_start = log_phase_start("training_graph_rebuild")
+            training_executable, _ = compile_fx_graph_module(
+                training_graph_module,
+                compile_graph=False,
+                compile_mode=self.config.compile_mode,
+                compile_dynamic=self.config.compile_dynamic,
+                shape_padding=self.config.compile_shape_padding,
+                max_fusion_size=self.config.compile_max_fusion_size,
+            )
+            log_phase_done("training_graph_rebuild", phase_start)
 
         self.model.zero_grad(set_to_none=True)
         return _CompiledEdgeForceStep(
