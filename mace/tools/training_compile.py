@@ -2746,23 +2746,13 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 if self.config.force_gradient_mode == "positions":
                     compute_stress_output = "stress" in output_names
                     compute_virials_output = "virials" in output_names
-                    if compute_stress_output or compute_virials_output:
-                        energy, forces, stress, virials = _position_model_outputs(
-                            self.model,
-                            current_data,
-                            gradient_arg,
-                            compute_virials=compute_virials_output,
-                            compute_stress=compute_stress_output,
-                        )
-                    else:
-                        energy, forces = _position_force_energy_and_forces(
-                            self.model,
-                            current_data,
-                            gradient_arg,
-                            use_e3nn_spherical_harmonics=self.config.use_e3nn_spherical_harmonics,
-                        )
-                        stress = None
-                        virials = None
+                    energy, forces, stress, virials = _position_model_outputs(
+                        self.model,
+                        current_data,
+                        gradient_arg,
+                        compute_virials=compute_virials_output,
+                        compute_stress=compute_stress_output,
+                    )
                     if compile_loss:
                         loss = _edge_force_compiled_tensor_loss(
                             loss_kind=compiled_loss_kind,

@@ -4405,6 +4405,103 @@ def test_take_step_training_compile_supports_builtin_stress_virials_losses(
     assert "edge_force_compile" not in metrics
 
 
+def test_edge_force_position_mode_uses_original_model_forward_for_forces_only(
+    monkeypatch,
+):
+    import types
+
+    from mace.modules import WeightedEnergyForcesLoss
+    from mace.tools import training_compile
+
+    captured = {}
+    original_forward_calls = []
+
+    def fake_trace_force_closure(fn, example_inputs, **kwargs):
+        del kwargs
+        captured["fn"] = fn
+        return types.SimpleNamespace(
+            graph_module=types.SimpleNamespace(
+                graph=types.SimpleNamespace(nodes=[object()])
+            ),
+            detach_nodes_before=0,
+            detach_nodes_after=0,
+        )
+
+    def fake_compile_fx_graph_module(*args, **kwargs):
+        del args, kwargs
+
+        def executable(positions, *input_tensors):
+            return captured["fn"](positions, *input_tensors)
+
+        return executable, {"compile_graph": True}
+
+    def fake_position_model_outputs(model, data_dict, positions, **kwargs):
+        del model, data_dict, kwargs
+        original_forward_calls.append(True)
+        energy = positions.reshape(-1)[:1] * 0.0
+        forces = torch.zeros_like(positions)
+        return energy, forces, None, None
+
+    def forbidden_shadow_forward(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("shadow position force path should not be used")
+
+    monkeypatch.setattr(
+        training_compile, "trace_force_closure", fake_trace_force_closure
+    )
+    monkeypatch.setattr(
+        training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "rebuild_fx_graph_module", lambda graph_module: graph_module
+    )
+    def snapshot_payload():
+        return {
+            "energy": torch.zeros(1),
+            "forces": torch.zeros_like(batch.positions),
+            "loss": torch.zeros(()),
+            "grads": {},
+        }
+
+    monkeypatch.setattr(
+        training_compile, "_position_model_outputs", fake_position_model_outputs
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_position_force_energy_and_forces",
+        forbidden_shadow_forward,
+    )
+    monkeypatch.setattr(
+        training_compile, "_position_force_value_snapshot", lambda **kwargs: snapshot_payload()
+    )
+
+    model = create_tiny_mace("cpu")
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        model,
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=True,
+            cache_hit_gate=False,
+            cache_policy="shape",
+            allow_fallback=False,
+            refresh_executable_each_step=False,
+            force_gradient_mode="positions",
+            setup_gate="strict",
+        ),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+
+    compiled = wrapper._compile_step(
+        batch=batch,
+        loss_fn=WeightedEnergyForcesLoss(),
+        cache_key=("shape",),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert compiled.output_names == ("energy", "forces")
+    assert original_forward_calls
+
+
 def test_edge_force_compile_graph_uses_returned_stress_for_builtin_stress_loss(
     monkeypatch,
 ):
