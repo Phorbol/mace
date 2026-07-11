@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=MACE-EDGE-FORCE-EPOCH
-#SBATCH --partition=4V100PX
+#SBATCH --partition=16V100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=1
-#SBATCH --qos=rush-1o2gpu
+#SBATCH --qos=flood-1o2gpu
 
 set -euo pipefail
 source /opt/envs/anaconda3.env

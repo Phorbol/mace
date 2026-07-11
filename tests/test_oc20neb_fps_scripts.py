@@ -157,6 +157,8 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     sbatch = SCRIPT_ROOT / "fullcase200-ef-20k-demo.sbatch"
     text = sbatch.read_text()
 
+    assert "#SBATCH --partition=16V100" in text
+    assert "#SBATCH --qos=flood-1o2gpu" in text
     assert "MACE_OC20NEB_TARGET_STEPS:-20000" in text
     assert "conda-envs/mace-dpa4-cu126/bin/python" in text
     assert "runs/oc20neb_fullcase200_fps_extxyz" in text
@@ -345,6 +347,8 @@ def test_abacus_raw_extrapolation_sbatch_uses_raw_reader_models_and_dpa4_preflig
     sbatch = SCRIPT_ROOT / "abacus-raw-extrapolation-eval.sbatch"
     text = sbatch.read_text()
 
+    assert "#SBATCH --partition=16V100" in text
+    assert "#SBATCH --qos=flood-1o2gpu" in text
     assert "evaluate_abacus_raw_extrapolation.py" in text
     assert "conda-envs/mace-dpa4-cu126/bin/python" in text
     assert "abacus_rpbe_last10_seed_pure_sella_selected20" in text

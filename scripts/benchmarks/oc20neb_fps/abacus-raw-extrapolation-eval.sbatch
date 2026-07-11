@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=MACE-ABACUS-OOD
-#SBATCH --partition=4V100PX
+#SBATCH --partition=16V100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=1
-#SBATCH --qos=rush-1o2gpu
+#SBATCH --qos=flood-1o2gpu
 #SBATCH --output=runs/abacus_raw_extrapolation_eval/%x-%j.out
 #SBATCH --error=runs/abacus_raw_extrapolation_eval/%x-%j.err
 

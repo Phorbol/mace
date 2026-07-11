@@ -34,6 +34,15 @@ def load_script(name: str):
 
 
 
+
+def test_recio8k_generator_defaults_to_available_16v100_partition():
+    generator = load_script("generate_recio8k_scaling_cases.py")
+    parser = generator.build_parser()
+    args = parser.parse_args([])
+
+    assert args.partition == "16V100"
+    assert args.qos == "flood-1o2gpu"
+
 def test_dpa4_stress_20k_demo_sbatch_targets_current_env_and_stress_compile():
     sbatch = (
         Path(__file__).resolve().parents[1]
@@ -43,6 +52,8 @@ def test_dpa4_stress_20k_demo_sbatch_targets_current_env_and_stress_compile():
         / "dpa4-stress-20k-demo.sbatch"
     ).read_text()
 
+    assert "#SBATCH --partition=16V100" in sbatch
+    assert "#SBATCH --qos=flood-1o2gpu" in sbatch
     assert "MACE_DPA4_DEMO_TARGET_STEPS:-20000" in sbatch
     assert "conda-envs/mace-dpa4-cu126/bin/python" in sbatch
     assert "row_000060_34ee2613164a1ac6_Pd-Zn_111_-bulk1127-shift0.xyz" in sbatch
@@ -264,6 +275,8 @@ def test_edge_force_epoch_profile_sbatch_uses_sai_safe_defaults():
         / "edge-force-training-epoch-profile.sbatch"
     ).read_text()
 
+    assert "#SBATCH --partition=16V100" in sbatch
+    assert "#SBATCH --qos=flood-1o2gpu" in sbatch
     assert "#SBATCH --ntasks-per-node" not in sbatch
     assert "#SBATCH --cpus-per-task" not in sbatch
     assert "#SBATCH --mem" not in sbatch

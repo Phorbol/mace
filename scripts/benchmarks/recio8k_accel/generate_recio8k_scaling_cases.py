@@ -476,7 +476,7 @@ def _parse_batch_sizes(value: str) -> list[int]:
     return sizes
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Prepare RECIO8k training speed, memory, and accuracy benchmark cases."
     )
@@ -485,8 +485,8 @@ def main() -> None:
     parser.add_argument("--train-file", type=Path, default=DEFAULT_TRAIN_FILE)
     parser.add_argument("--target-steps", type=int, default=DEFAULT_TARGET_STEPS)
     parser.add_argument("--train-size", type=int, default=DEFAULT_TRAIN_SIZE)
-    parser.add_argument("--partition", default="4V100PX")
-    parser.add_argument("--qos", default="rush-1o2gpu")
+    parser.add_argument("--partition", default="16V100")
+    parser.add_argument("--qos", default="flood-1o2gpu")
     parser.add_argument(
         "--scheduler",
         choices=("ReduceLROnPlateau", "WSD", "ExponentialLR"),
@@ -516,6 +516,11 @@ def main() -> None:
         default=16,
         help="Best batch size to use for --mode=model.",
     )
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
 
     if args.mode == "batch":
