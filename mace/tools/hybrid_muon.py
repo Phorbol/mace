@@ -354,6 +354,30 @@ def _matrix_layout_view_to_tensor(
     )
 
 
+def _normalize_module_optim_spec(name: str, spec) -> OptimSpec | None:
+    if spec is None:
+        return None
+    if isinstance(spec, dict):
+        spec = OptimSpec(**spec)
+    if not isinstance(spec, OptimSpec):
+        raise RuntimeError(
+            f"HybridMuon routing='module' requires OptimSpec for parameter {name!r}"
+        )
+    return spec
+
+
+def _optim_spec_from_module(
+    module: torch.nn.Module, local_name: str, param: torch.nn.Parameter
+) -> OptimSpec | None:
+    getter = getattr(module, "hybrid_muon_optim_spec", None)
+    spec = getter(local_name, param) if callable(getter) else None
+    if spec is None:
+        specs = getattr(module, "hybrid_muon_optim_specs", None)
+        if specs is not None:
+            spec = specs.get(local_name)
+    return _normalize_module_optim_spec(local_name, spec)
+
+
 def _module_declared_optim_spec(
     name: str,
     param: torch.nn.Parameter,
@@ -375,21 +399,24 @@ def _module_declared_optim_spec(
             f"for parameter {name!r}"
         )
 
-    spec = None
-    getter = getattr(module, "hybrid_muon_optim_spec", None)
-    if callable(getter):
-        spec = getter(local_name, param)
-    if spec is None:
-        specs = getattr(module, "hybrid_muon_optim_specs", None)
-        if specs is not None:
-            spec = specs.get(local_name)
-    if isinstance(spec, dict):
-        spec = OptimSpec(**spec)
-    if not isinstance(spec, OptimSpec):
-        raise RuntimeError(
-            f"HybridMuon routing='module' requires OptimSpec for parameter {name!r}"
-        )
-    return spec
+    spec = _optim_spec_from_module(module, local_name, param)
+    if spec is not None:
+        return spec
+
+    parts = module_name.split(".")
+    for index in range(len(parts) - 1, 0, -1):
+        ancestor_name = ".".join(parts[:index])
+        ancestor = module_map.get(ancestor_name)
+        if ancestor is None:
+            continue
+        relative_name = name[len(ancestor_name) + 1 :]
+        spec = _optim_spec_from_module(ancestor, relative_name, param)
+        if spec is not None:
+            return spec
+
+    raise RuntimeError(
+        f"HybridMuon routing='module' requires OptimSpec for parameter {name!r}"
+    )
 
 
 def _is_equivariant_slice_candidate(name: str) -> bool:

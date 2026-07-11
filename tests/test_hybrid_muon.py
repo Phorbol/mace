@@ -313,6 +313,41 @@ def test_hybrid_muon_state_dict_does_not_remove_runtime_matrix_specs(monkeypatch
     assert not torch.allclose(module.weight, before)
 
 
+def test_hybrid_muon_module_routing_accepts_ancestor_declarations():
+    class BlockDeclaredModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = torch.nn.Linear(4, 3)
+            self.hybrid_muon_optim_specs = {
+                "linear.weight": OptimSpec(route="muon", matrix_axes=(0, 1)),
+                "linear.bias": OptimSpec(route="adamw"),
+            }
+
+    module = BlockDeclaredModule()
+    groups, summary = build_hybrid_muon_param_groups(
+        [(f"block.{name}", param) for name, param in module.named_parameters()],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={
+            "block" if name == "" else f"block.{name}": submodule
+            for name, submodule in module.named_modules()
+        },
+    )
+
+    by_name = {entry["name"]: entry for entry in summary}
+    assert by_name["block.linear.weight"]["route"] == "muon"
+    assert by_name["block.linear.weight"]["matrix_shape"] == (3, 4)
+    assert by_name["block.linear.bias"]["route"] == "adamw"
+
+    muon_group = next(group for group in groups if group["route"] == "muon")
+    adam_group = next(group for group in groups if group["route"] == "adam")
+    assert set(muon_group["param_matrix_layouts"]) == {"block.linear.weight"}
+    assert adam_group["param_names"] == ["block.linear.bias"]
+
+
 def test_hybrid_muon_module_routing_uses_radial_mlp_declarations():
     from mace.modules.radial import RadialMLP
 
