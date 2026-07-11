@@ -323,6 +323,28 @@ def test_graph_breaks(device):
     assert explanation.graph_break_count == 0
 
 
+def test_replace_module_parameters_clones_e3nn_linear_weight_for_compile_graph():
+    from mace.tools import training_compile
+
+    linear = o3.Linear("2x0e", "2x0e", internal_weights=True)
+    placeholder = linear.weight.detach().clone().requires_grad_(True)
+
+    saved = training_compile._replace_module_parameters_with_tensors(
+        linear,
+        ("weight",),
+        (placeholder,),
+        clone_autograd_view_params=True,
+    )
+    try:
+        assert linear.weight is not placeholder
+        assert linear.weight.grad_fn is not None
+        output = linear(torch.randn(3, 2))
+        output.sum().backward()
+        assert placeholder.grad is not None
+    finally:
+        training_compile._restore_module_parameters(saved)
+
+
 def test_training_compile_helper_noop_cpu():
     from mace.tools.training_compile import prepare_model_for_training_compile
 

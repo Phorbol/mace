@@ -1052,10 +1052,36 @@ def _parameter_module_and_local_name(
     return model.get_submodule(module_name), local_name
 
 
+def _is_e3nn_linear_weight_parameter(
+    module: torch.nn.Module, local_name: str
+) -> bool:
+    return (
+        local_name == "weight"
+        and type(module).__module__ == "e3nn.o3._linear"
+        and hasattr(module, "weight_view_for_instruction")
+    )
+
+
+def _parameter_substitution_tensor(
+    module: torch.nn.Module,
+    local_name: str,
+    tensor: torch.Tensor,
+    *,
+    clone_autograd_view_params: bool,
+) -> torch.Tensor:
+    if clone_autograd_view_params and _is_e3nn_linear_weight_parameter(
+        module, local_name
+    ):
+        return tensor.clone()
+    return tensor
+
+
 def _replace_module_parameters_with_tensors(
     model: torch.nn.Module,
     param_names: tuple[str, ...],
     param_tensors: tuple[torch.Tensor, ...],
+    *,
+    clone_autograd_view_params: bool = False,
 ) -> list[tuple[torch.nn.Module, str, torch.Tensor | None]]:
     if len(param_names) != len(param_tensors):
         raise ValueError(
@@ -1067,7 +1093,12 @@ def _replace_module_parameters_with_tensors(
         for name, tensor in zip(param_names, param_tensors, strict=True):
             module, local_name = _parameter_module_and_local_name(model, name)
             saved.append((module, local_name, module._parameters[local_name]))
-            module._parameters[local_name] = tensor
+            module._parameters[local_name] = _parameter_substitution_tensor(
+                module,
+                local_name,
+                tensor,
+                clone_autograd_view_params=clone_autograd_view_params,
+            )
     except Exception:
         _restore_module_parameters(saved)
         raise
@@ -2582,7 +2613,10 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             current_data.update(zip(input_names, data_tensors, strict=True))
             current_data.update(zip(loss_input_names, loss_tensors, strict=True))
             saved_params = _replace_module_parameters_with_tensors(
-                self.model, param_names, param_tensors
+                self.model,
+                param_names,
+                param_tensors,
+                clone_autograd_view_params=self.config.compile_graph,
             )
             try:
                 if self.config.force_gradient_mode == "positions":
