@@ -338,3 +338,22 @@ def test_abacus_extrapolation_metrics_include_force_and_bias_corrected_energy():
     assert model_summary["force_components"]["rmse"] == np.sqrt(1.0 / 3.0)
     assert model_summary["energy_per_atom"]["mae"] == 1.5
     assert model_summary["energy_per_atom_case_bias_corrected"]["mae"] == 0.5
+
+
+
+def test_abacus_raw_extrapolation_sbatch_uses_raw_reader_models_and_dpa4_preflight():
+    sbatch = SCRIPT_ROOT / "abacus-raw-extrapolation-eval.sbatch"
+    text = sbatch.read_text()
+
+    assert "evaluate_abacus_raw_extrapolation.py" in text
+    assert "conda-envs/mace-dpa4-cu126/bin/python" in text
+    assert "abacus_rpbe_last10_seed_pure_sella_selected20" in text
+    assert '--model "${name}=mace:${model}"' in text
+    assert "run_mace_eval mace_mh1" in text
+    assert "oc20_usemppbe" in text
+    assert "run_mace_eval mace_omat50k" in text
+    assert "oc20neb" in text
+    assert "run_mace_eval mace_fps5k" in text
+    assert "dpa4_preflight" in text
+    assert "Unknown model type: dpa4" in text
+    assert "--write-label-extxyz" in text
