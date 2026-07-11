@@ -22,6 +22,7 @@ BATCH_SIZE=${MACE_OC20NEB_BATCH_SIZE:-8}
 VALID_BATCH_SIZE=${MACE_OC20NEB_VALID_BATCH_SIZE:-16}
 SEED=${MACE_OC20NEB_SEED:-456}
 EVAL_REPORTS=${MACE_OC20NEB_EVAL_REPORTS:-5}
+CASES=${MACE_OC20NEB_CASES:-eager,compile,hybrid_muon,hybrid_muon_compile}
 
 export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
@@ -72,6 +73,7 @@ cat > "${RUN_ROOT}/manifest.json" <<JSON
   "python": "${PYTHON_BIN}",
   "repo_root": "${REPO_ROOT}",
   "target_steps": ${TARGET_STEPS},
+  "cases": "${CASES}",
   "train_file": "${TRAIN_FILE}",
   "train_size": ${TRAIN_SIZE},
   "valid_file": "${VALID_FILE}"
@@ -146,18 +148,57 @@ run_case() {
   return "${status}"
 }
 
-run_case eager
-run_case compile \
-  --edge_force_compile \
-  --edge_force_compile_force_gradient_mode=positions \
-  --edge_force_compile_tracing_mode=real \
-  --edge_force_compile_setup_gate=strict \
-  --edge_force_compile_cache_policy=dynamic \
-  --edge_force_compile_min_repeats=2 \
-  --edge_force_compile_parity_check_interval=1000 \
-  --edge_force_compile_fixed_probe_interval=1000 \
-  --no-edge_force_compile_allow_fallback \
+case_enabled() {
+  local wanted=$1
+  local selected
+  IFS=',' read -r -a selected <<< "${CASES}"
+  for selected_case in "${selected[@]}"; do
+    selected_case=${selected_case//[[:space:]]/}
+    if [[ "${selected_case}" == "${wanted}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+run_selected_case() {
+  local case_name=$1
+  shift
+  if case_enabled "${case_name}"; then
+    echo "Running OC20NEB 20k case: ${case_name}"
+    run_case "${case_name}" "$@"
+  else
+    echo "Skipping OC20NEB 20k case: ${case_name}"
+  fi
+}
+
+compile_args=(
+  --edge_force_compile
+  --edge_force_compile_force_gradient_mode=positions
+  --edge_force_compile_tracing_mode=real
+  --edge_force_compile_setup_gate=strict
+  --edge_force_compile_cache_policy=dynamic
+  --edge_force_compile_min_repeats=2
+  --edge_force_compile_parity_check_interval=1000
+  --edge_force_compile_fixed_probe_interval=1000
+  --no-edge_force_compile_allow_fallback
   --no-edge_force_compile_disable_negative_speedup
+)
+
+hybrid_muon_args=(
+  --optimizer=hybrid_muon
+  --hybrid_muon_mode="${MACE_OC20NEB_HYBRID_MUON_MODE:-2d}"
+  --hybrid_muon_routing="${MACE_OC20NEB_HYBRID_MUON_ROUTING:-mace}"
+  --hybrid_muon_lr_factor="${MACE_OC20NEB_HYBRID_MUON_LR_FACTOR:-0.1}"
+  --hybrid_muon_weight_decay="${MACE_OC20NEB_HYBRID_MUON_WEIGHT_DECAY:-0.0}"
+  --hybrid_muon_adam_variant="${MACE_OC20NEB_HYBRID_MUON_ADAM_VARIANT:-adamw}"
+  --hybrid_muon_lr_scale_mode="${MACE_OC20NEB_HYBRID_MUON_LR_SCALE_MODE:-original}"
+)
+
+run_selected_case eager
+run_selected_case compile "${compile_args[@]}"
+run_selected_case hybrid_muon "${hybrid_muon_args[@]}"
+run_selected_case hybrid_muon_compile "${hybrid_muon_args[@]}" "${compile_args[@]}"
 
 "${PYTHON_BIN}" scripts/benchmarks/recio8k_accel/parse_metrics.py "${RUN_ROOT}" > "${RUN_ROOT}/summary.json"
 cat "${RUN_ROOT}/summary.json"

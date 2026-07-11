@@ -203,6 +203,13 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert "--forces_key=forces" in text
     assert "--edge_force_compile_force_gradient_mode=positions" in text
     assert "--no-edge_force_compile_allow_fallback" in text
+    assert "MACE_OC20NEB_CASES:-eager,compile,hybrid_muon,hybrid_muon_compile" in text
+    assert "run_selected_case hybrid_muon" in text
+    assert "run_selected_case hybrid_muon_compile" in text
+    assert "--optimizer=hybrid_muon" in text
+    assert '--hybrid_muon_mode="${MACE_OC20NEB_HYBRID_MUON_MODE:-2d}"' in text
+    assert '--hybrid_muon_routing="${MACE_OC20NEB_HYBRID_MUON_ROUTING:-mace}"' in text
+    assert '--hybrid_muon_lr_factor="${MACE_OC20NEB_HYBRID_MUON_LR_FACTOR:-0.1}"' in text
     assert "parse_metrics.py" in text
 
 
