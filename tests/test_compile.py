@@ -4251,6 +4251,144 @@ def test_take_step_training_compile_supports_builtin_stress_virials_losses(
     assert "edge_force_compile" not in metrics
 
 
+def test_edge_force_compile_graph_uses_returned_stress_for_builtin_stress_loss(
+    monkeypatch,
+):
+    from mace.modules import WeightedEnergyForcesStressLoss
+    from mace.tools import training_compile
+
+    model = create_tiny_mace("cpu")
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        model,
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=True,
+            cache_hit_gate=False,
+            cache_policy="shape",
+            allow_fallback=False,
+            refresh_executable_each_step=False,
+            force_gradient_mode="positions",
+            setup_gate="none",
+        ),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+
+    def executable(positions, *input_tensors):
+        del input_tensors
+        energy = torch.zeros(1, dtype=positions.dtype, requires_grad=True)
+        forces = torch.zeros_like(positions)
+        stress = torch.ones(1, 3, 3, dtype=positions.dtype, requires_grad=True)
+        return energy, forces, stress
+
+    def fake_compile_step(*, cache_key, **kwargs):
+        del kwargs
+        return training_compile._CompiledEdgeForceStep(
+            executable=executable,
+            graph_module=torch.fx.GraphModule(torch.nn.Module(), torch.fx.Graph()),
+            gate_result=training_compile.EdgeForceCompileGateResult(
+                enabled=True,
+                accepted=True,
+                fallback_reason="test",
+                detach_nodes_before=0,
+                detach_nodes_after=0,
+                node_count=0,
+                comparison={},
+                compile_kwargs={},
+            ),
+            cache_key=cache_key,
+            input_names=training_compile.edge_force_compile_input_names(
+                batch.to_dict().keys(), force_gradient_mode="positions"
+            ),
+            param_names=(),
+            returns_loss=False,
+            output_names=("energy", "forces", "stress"),
+            force_gradient_mode="positions",
+        )
+
+    monkeypatch.setattr(wrapper, "_compile_step", fake_compile_step)
+
+    loss, metrics = wrapper.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=WeightedEnergyForcesStressLoss(
+            energy_weight=0.0, forces_weight=0.0, stress_weight=1.0
+        ),
+        output_args={"forces": True, "virials": False, "stress": True},
+    )
+
+    assert loss.ndim == 0
+    assert torch.isfinite(loss)
+    assert metrics["edge_force_compile"] is True
+
+
+def test_edge_force_compile_graph_uses_returned_virials_for_builtin_virials_loss(
+    monkeypatch,
+):
+    from mace.modules import WeightedEnergyForcesVirialsLoss
+    from mace.tools import training_compile
+
+    model = create_tiny_mace("cpu")
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        model,
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=True,
+            cache_hit_gate=False,
+            cache_policy="shape",
+            allow_fallback=False,
+            refresh_executable_each_step=False,
+            force_gradient_mode="positions",
+            setup_gate="none",
+        ),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+
+    def executable(positions, *input_tensors):
+        del input_tensors
+        energy = torch.zeros(1, dtype=positions.dtype, requires_grad=True)
+        forces = torch.zeros_like(positions)
+        virials = torch.ones(1, 3, 3, dtype=positions.dtype, requires_grad=True)
+        return energy, forces, virials
+
+    def fake_compile_step(*, cache_key, **kwargs):
+        del kwargs
+        return training_compile._CompiledEdgeForceStep(
+            executable=executable,
+            graph_module=torch.fx.GraphModule(torch.nn.Module(), torch.fx.Graph()),
+            gate_result=training_compile.EdgeForceCompileGateResult(
+                enabled=True,
+                accepted=True,
+                fallback_reason="test",
+                detach_nodes_before=0,
+                detach_nodes_after=0,
+                node_count=0,
+                comparison={},
+                compile_kwargs={},
+            ),
+            cache_key=cache_key,
+            input_names=training_compile.edge_force_compile_input_names(
+                batch.to_dict().keys(), force_gradient_mode="positions"
+            ),
+            param_names=(),
+            returns_loss=False,
+            output_names=("energy", "forces", "virials"),
+            force_gradient_mode="positions",
+        )
+
+    monkeypatch.setattr(wrapper, "_compile_step", fake_compile_step)
+
+    loss, metrics = wrapper.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=WeightedEnergyForcesVirialsLoss(
+            energy_weight=0.0, forces_weight=0.0, virials_weight=1.0
+        ),
+        output_args={"forces": True, "virials": True, "stress": False},
+    )
+
+    assert loss.ndim == 0
+    assert torch.isfinite(loss)
+    assert metrics["edge_force_compile"] is True
+
+
 def test_take_step_keeps_compiled_force_loss_outside_autocast(monkeypatch):
     from mace.tools.precision import TrainingPrecisionConfig
     from mace.tools.train import take_step

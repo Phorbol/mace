@@ -1937,18 +1937,98 @@ def _loss_required_output_flags(loss_fn: torch.nn.Module) -> tuple[bool, bool]:
     return "virials" in required, "stress" in required
 
 
-def _loss_from_energy_forces(
-    *, batch, loss_fn, energy: torch.Tensor, forces: torch.Tensor
+def _loss_from_outputs(
+    *,
+    batch,
+    loss_fn,
+    energy: torch.Tensor,
+    forces: torch.Tensor,
+    stress: torch.Tensor | None = None,
+    virials: torch.Tensor | None = None,
 ) -> torch.Tensor:
     if hasattr(batch, "forces") and forces.shape[0] != batch.forces.shape[0]:
         forces = forces[: batch.forces.shape[0]]
     output = {
         "energy": energy,
         "forces": forces,
-        "virials": None,
-        "stress": None,
+        "virials": virials,
+        "stress": stress,
     }
     return loss_fn(pred=output, ref=batch)
+
+
+def _loss_from_energy_forces(
+    *, batch, loss_fn, energy: torch.Tensor, forces: torch.Tensor
+) -> torch.Tensor:
+    return _loss_from_outputs(
+        batch=batch,
+        loss_fn=loss_fn,
+        energy=energy,
+        forces=forces,
+    )
+
+
+def _edge_force_compile_output_names(
+    *,
+    force_gradient_mode: str,
+    compile_loss: bool,
+    loss_fn: torch.nn.Module,
+    output_args: dict[str, bool] | None = None,
+) -> tuple[str, ...]:
+    if compile_loss:
+        return ("energy", "forces", "loss")
+    if force_gradient_mode != "positions":
+        return ("energy", "edge_grad")
+    compute_virials, compute_stress = _loss_required_output_flags(loss_fn)
+    requested = output_args or {}
+    names = ["energy", "forces"]
+    if compute_stress or bool(requested.get("stress", False)):
+        names.append("stress")
+    if compute_virials or bool(requested.get("virials", False)):
+        names.append("virials")
+    return tuple(names)
+
+
+def _parse_edge_force_executable_outputs(
+    *,
+    executable_outputs,
+    output_names: tuple[str, ...] | None,
+    data_dict: dict[str, torch.Tensor],
+    force_gradient_mode: str,
+):
+    if output_names is None:
+        if len(executable_outputs) == 3:
+            energy, forces, loss = executable_outputs
+            return energy, forces, loss, None, None
+        energy, force_like = executable_outputs
+        forces = (
+            force_like
+            if force_gradient_mode == "positions"
+            else _atomic_forces_from_edge_grad(data_dict, force_like)
+        )
+        return energy, forces, None, None, None
+    if len(executable_outputs) != len(output_names):
+        raise RuntimeError(
+            "edge-force compiled executable returned "
+            f"{len(executable_outputs)} tensors for output contract {output_names}"
+        )
+    outputs = dict(zip(output_names, executable_outputs, strict=True))
+    energy = outputs["energy"]
+    if "forces" in outputs:
+        forces = outputs["forces"]
+    elif "edge_grad" in outputs:
+        forces = _atomic_forces_from_edge_grad(data_dict, outputs["edge_grad"])
+    else:
+        raise RuntimeError(
+            f"edge-force output contract lacks forces or edge_grad: {output_names}"
+        )
+    return (
+        energy,
+        forces,
+        outputs.get("loss"),
+        outputs.get("stress"),
+        outputs.get("virials"),
+    )
 
 
 def _edge_vector_inputs(
@@ -1989,6 +2069,7 @@ def _edge_force_snapshot_from_executable(
     param_names: tuple[str, ...] = (),
     loss_input_names: tuple[str, ...] = (),
     force_gradient_mode: str = "edge",
+    output_names: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     model.zero_grad(set_to_none=True)
     if bucket_sizes is None:
@@ -2011,20 +2092,20 @@ def _edge_force_snapshot_from_executable(
         loss_fn=loss_fn,
     )
     executable_outputs = executable(gradient_input, *inputs)
-    if len(executable_outputs) == 3:
-        energy, forces, loss = executable_outputs
-    else:
-        energy, force_like = executable_outputs
-        forces = (
-            force_like
-            if force_gradient_mode == "positions"
-            else _atomic_forces_from_edge_grad(data_dict, force_like)
-        )
-        loss = _loss_from_energy_forces(
+    energy, forces, loss, stress, virials = _parse_edge_force_executable_outputs(
+        executable_outputs=executable_outputs,
+        output_names=output_names,
+        data_dict=data_dict,
+        force_gradient_mode=force_gradient_mode,
+    )
+    if loss is None:
+        loss = _loss_from_outputs(
             batch=batch,
             loss_fn=loss_fn,
             energy=energy,
             forces=forces,
+            stress=stress,
+            virials=virials,
         )
     loss.backward()
     if hasattr(batch, "forces") and forces.shape[0] != batch.forces.shape[0]:
@@ -2048,6 +2129,7 @@ def _edge_force_value_snapshot_from_executable(
     param_names: tuple[str, ...] = (),
     loss_input_names: tuple[str, ...] = (),
     force_gradient_mode: str = "edge",
+    output_names: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     model.zero_grad(set_to_none=True)
     if bucket_sizes is None:
@@ -2070,20 +2152,20 @@ def _edge_force_value_snapshot_from_executable(
         loss_fn=loss_fn,
     )
     executable_outputs = executable(gradient_input, *inputs)
-    if len(executable_outputs) == 3:
-        energy, forces, loss = executable_outputs
-    else:
-        energy, force_like = executable_outputs
-        forces = (
-            force_like
-            if force_gradient_mode == "positions"
-            else _atomic_forces_from_edge_grad(data_dict, force_like)
-        )
-        loss = _loss_from_energy_forces(
+    energy, forces, loss, stress, virials = _parse_edge_force_executable_outputs(
+        executable_outputs=executable_outputs,
+        output_names=output_names,
+        data_dict=data_dict,
+        force_gradient_mode=force_gradient_mode,
+    )
+    if loss is None:
+        loss = _loss_from_outputs(
             batch=batch,
             loss_fn=loss_fn,
             energy=energy,
             forces=forces,
+            stress=stress,
+            virials=virials,
         )
     if hasattr(batch, "forces") and forces.shape[0] != batch.forces.shape[0]:
         forces = forces[: batch.forces.shape[0]]
@@ -2148,6 +2230,7 @@ class _CompiledEdgeForceStep:
     param_names: tuple[str, ...]
     loss_input_names: tuple[str, ...] = ()
     returns_loss: bool = False
+    output_names: tuple[str, ...] = ("energy", "edge_grad")
     force_gradient_mode: str = "edge"
     setup_phase_seconds: dict[str, float] = dataclasses.field(default_factory=dict)
 
@@ -2270,6 +2353,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     param_names=compiled.param_names,
                     loss_input_names=compiled.loss_input_names,
                     force_gradient_mode=compiled.force_gradient_mode,
+                    output_names=compiled.output_names,
                 )
             else:
                 reference = _position_force_value_snapshot(
@@ -2287,6 +2371,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     param_names=compiled.param_names,
                     loss_input_names=compiled.loss_input_names,
                     force_gradient_mode=compiled.force_gradient_mode,
+                    output_names=compiled.output_names,
                 )
             return _compare_edge_force_snapshots(
                 reference,
@@ -2329,6 +2414,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     param_names=compiled.param_names,
                     loss_input_names=compiled.loss_input_names,
                     force_gradient_mode=compiled.force_gradient_mode,
+                    output_names=compiled.output_names,
                 )
             else:
                 reference = _position_force_value_snapshot(
@@ -2346,6 +2432,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     param_names=compiled.param_names,
                     loss_input_names=compiled.loss_input_names,
                     force_gradient_mode=compiled.force_gradient_mode,
+                    output_names=compiled.output_names,
                 )
             comparison = _compare_edge_force_snapshots(
                 reference,
@@ -2539,7 +2626,9 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             abi_signature=abi_signature,
         )
 
-    def _compile_step(self, *, batch, loss_fn, cache_key: tuple) -> _CompiledEdgeForceStep:
+    def _compile_step(
+        self, *, batch, loss_fn, cache_key: tuple, output_args: dict[str, bool] | None = None
+    ) -> _CompiledEdgeForceStep:
         phase_seconds: dict[str, float] = {}
 
         def log_phase_start(phase_name: str) -> float:
@@ -2583,6 +2672,12 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         compiled_loss_kind = (
             _compiled_tensor_loss_kind(loss_fn) if compile_loss else ""
         )
+        output_names = _edge_force_compile_output_names(
+            force_gradient_mode=self.config.force_gradient_mode,
+            compile_loss=compile_loss,
+            loss_fn=loss_fn,
+            output_args=output_args,
+        )
         loss_input_names = (
             edge_force_compile_loss_input_names(data_dict.keys(), loss_fn=loss_fn)
             if compile_loss
@@ -2620,19 +2715,15 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             )
             try:
                 if self.config.force_gradient_mode == "positions":
-                    compute_stress_loss = compiled_loss_kind in {
-                        "weighted_energy_forces_stress",
-                        "weighted_huber_energy_forces_stress",
-                        "universal",
-                    }
-                    compute_virials_loss = compiled_loss_kind == "weighted_energy_forces_virials"
-                    if compute_stress_loss or compute_virials_loss:
+                    compute_stress_output = "stress" in output_names
+                    compute_virials_output = "virials" in output_names
+                    if compute_stress_output or compute_virials_output:
                         energy, forces, stress, virials = _position_model_outputs(
                             self.model,
                             current_data,
                             gradient_arg,
-                            compute_virials=compute_virials_loss,
-                            compute_stress=compute_stress_loss,
+                            compute_virials=compute_virials_output,
+                            compute_stress=compute_stress_output,
                         )
                     else:
                         energy, forces = _position_force_energy_and_forces(
@@ -2654,7 +2745,13 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                             loss_weights=loss_weights,
                         )
                         return energy, forces, loss
-                    return energy, forces
+                    outputs = {
+                        "energy": energy,
+                        "forces": forces,
+                        "stress": stress,
+                        "virials": virials,
+                    }
+                    return tuple(outputs[name] for name in output_names)
                 energy, edge_grad = _edge_force_energy_and_edge_grad(
                     self.model,
                     current_data,
@@ -2742,6 +2839,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     param_names=param_names,
                     loss_input_names=loss_input_names,
                     force_gradient_mode=self.config.force_gradient_mode,
+                    output_names=output_names,
                 )
             else:
                 candidate = _edge_force_snapshot_from_executable(
@@ -2754,6 +2852,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     param_names=param_names,
                     loss_input_names=loss_input_names,
                     force_gradient_mode=self.config.force_gradient_mode,
+                    output_names=output_names,
                 )
             log_phase_done("gate_candidate", phase_start)
 
@@ -2801,6 +2900,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             param_names=param_names,
             loss_input_names=loss_input_names,
             returns_loss=compile_loss,
+            output_names=output_names,
             force_gradient_mode=self.config.force_gradient_mode,
             setup_phase_seconds=phase_seconds,
         )
@@ -2890,8 +2990,17 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 _edge_force_can_compile_loss(loss_fn, data_dict.keys())
                 and not self.config.compile_graph
             )
+            expected_output_names = _edge_force_compile_output_names(
+                force_gradient_mode=self.config.force_gradient_mode,
+                compile_loss=expected_returns_loss,
+                loss_fn=loss_fn,
+                output_args=output_args,
+            )
             compiled = self._cached_compiled_step(cache_key)
-            if compiled is not None and compiled.returns_loss != expected_returns_loss:
+            if compiled is not None and (
+                compiled.returns_loss != expected_returns_loss
+                or compiled.output_names != expected_output_names
+            ):
                 self.cache.pop(cache_key, None)
                 compiled = None
             cache_hit = compiled is not None
@@ -2938,6 +3047,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     batch=batch,
                     loss_fn=loss_fn,
                     cache_key=cache_key,
+                    output_args=output_args,
                 )
                 setup_seconds = time.perf_counter() - setup_start
                 self.cache_policy_state.record_compile(
@@ -2970,6 +3080,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                         param_names=compiled.param_names,
                         loss_input_names=compiled.loss_input_names,
                         force_gradient_mode=compiled.force_gradient_mode,
+                        output_names=compiled.output_names,
                     )
                 else:
                     reference = _position_force_snapshot(
@@ -2987,6 +3098,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                         param_names=compiled.param_names,
                         loss_input_names=compiled.loss_input_names,
                         force_gradient_mode=compiled.force_gradient_mode,
+                        output_names=compiled.output_names,
                     )
                 comparison = _compare_edge_force_snapshots(
                     reference,
@@ -3085,20 +3197,20 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 ]
             with disable_functorch_donated_buffer():
                 executable_outputs = runtime_executable(gradient_input, *inputs)
-            if compiled.returns_loss:
-                energy, forces, loss = executable_outputs
-            else:
-                energy, force_like = executable_outputs
-                forces = (
-                    force_like
-                    if compiled.force_gradient_mode == "positions"
-                    else _atomic_forces_from_edge_grad(data_dict, force_like)
-                )
-                loss = _loss_from_energy_forces(
+            energy, forces, loss, stress, virials = _parse_edge_force_executable_outputs(
+                executable_outputs=executable_outputs,
+                output_names=compiled.output_names,
+                data_dict=data_dict,
+                force_gradient_mode=compiled.force_gradient_mode,
+            )
+            if loss is None:
+                loss = _loss_from_outputs(
                     batch=batch,
                     loss_fn=loss_fn,
                     energy=energy,
                     forces=forces,
+                    stress=stress,
+                    virials=virials,
                 )
             release_executable_after_step = bool(self.config.compile_graph)
             if release_executable_after_step:
@@ -3121,6 +3233,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             metrics = {
                 "edge_force_compile": True,
                 "edge_force_compile_loss": compiled.returns_loss,
+                "edge_force_output_names": ",".join(compiled.output_names),
                 "edge_force_gradient_mode": compiled.force_gradient_mode,
                 "edge_force_cache_hit": cache_hit,
                 "edge_force_gate_accepted": compiled.gate_result.accepted,
