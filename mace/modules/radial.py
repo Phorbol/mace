@@ -371,10 +371,20 @@ class RadialMLP(torch.nn.Module):
         in_channels = channels_list[0]
 
         for idx, out_channels in enumerate(channels_list[1:], start=1):
-            modules.append(torch.nn.Linear(in_channels, out_channels, bias=True))
+            linear = torch.nn.Linear(in_channels, out_channels, bias=True)
+            linear.hybrid_muon_optim_specs = {
+                "weight": {"route": "muon", "matrix_axes": (0, 1)},
+                "bias": {"route": "adamw"},
+            }
+            modules.append(linear)
             in_channels = out_channels
             if idx < len(channels_list) - 1:
-                modules.append(torch.nn.LayerNorm(out_channels))
+                norm = torch.nn.LayerNorm(out_channels)
+                norm.hybrid_muon_optim_specs = {
+                    "weight": {"route": "adamw"},
+                    "bias": {"route": "adamw"},
+                }
+                modules.append(norm)
                 modules.append(torch.nn.SiLU())
 
         self.net = torch.nn.Sequential(*modules)

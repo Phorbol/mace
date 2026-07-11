@@ -313,6 +313,41 @@ def test_hybrid_muon_state_dict_does_not_remove_runtime_matrix_specs(monkeypatch
     assert not torch.allclose(module.weight, before)
 
 
+def test_hybrid_muon_module_routing_uses_radial_mlp_declarations():
+    from mace.modules.radial import RadialMLP
+
+    module = RadialMLP([4, 8, 3])
+    groups, summary = build_hybrid_muon_param_groups(
+        [(f"radial.{name}", param) for name, param in module.named_parameters()],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={
+            f"radial.{name}": submodule
+            for name, submodule in module.named_modules()
+        },
+    )
+
+    by_name = {entry["name"]: entry for entry in summary}
+    assert by_name["radial.net.0.weight"]["route"] == "muon"
+    assert by_name["radial.net.0.weight"]["matrix_shape"] == (8, 4)
+    assert by_name["radial.net.3.weight"]["route"] == "muon"
+    assert by_name["radial.net.3.weight"]["matrix_shape"] == (3, 8)
+    assert by_name["radial.net.0.bias"]["route"] == "adamw"
+    assert by_name["radial.net.1.weight"]["route"] == "adamw"
+    assert by_name["radial.net.1.bias"]["route"] == "adamw"
+
+    muon_group = next(group for group in groups if group["route"] == "muon")
+    adam_group = next(group for group in groups if group["route"] == "adam")
+    assert muon_group["param_matrix_layouts"].keys() == {
+        "radial.net.0.weight",
+        "radial.net.3.weight",
+    }
+    assert adam_group["adam_variant"] == "adamw"
+
+
 def test_hybrid_muon_module_routing_uses_declared_slice_specs(monkeypatch):
     class FlatSlicedModule(torch.nn.Module):
         def __init__(self):
