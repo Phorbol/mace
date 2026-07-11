@@ -153,11 +153,34 @@ common_args=(
   --clip_grad="${MACE_OC20NEB_CLIP_GRAD:-10.0}"
 )
 
+case "${MACE_OC20NEB_RESTART_LATEST:-False}" in
+  True|true|1|yes|YES|on|ON)
+    common_args+=(--restart_latest)
+    ;;
+  False|false|0|no|NO|off|OFF|"")
+    ;;
+  *)
+    echo "Invalid MACE_OC20NEB_RESTART_LATEST=${MACE_OC20NEB_RESTART_LATEST}; expected True or False" >&2
+    exit 2
+    ;;
+esac
+
 run_case() {
   local case_name=$1
   shift
   local case_dir="${RUN_ROOT}/${case_name}"
   mkdir -p "${case_dir}/logs" "${case_dir}/models" "${case_dir}/checkpoints" "${case_dir}/results"
+  local case_env_name
+  local restart_source_dir
+  case_env_name="MACE_OC20NEB_RESTART_${case_name^^}_CHECKPOINTS_DIR"
+  restart_source_dir="${!case_env_name:-${MACE_OC20NEB_RESTART_CHECKPOINTS_DIR:-}}"
+  if [[ -n "${restart_source_dir}" ]]; then
+    if [[ ! -d "${restart_source_dir}" ]]; then
+      echo "Restart checkpoint directory not found for ${case_name}: ${restart_source_dir}" >&2
+      return 2
+    fi
+    find "${restart_source_dir}" -maxdepth 1 -type f -name '*.pt' -exec cp -n {} "${case_dir}/checkpoints/" \;
+  fi
 
   local monitor_pid=""
   if command -v nvidia-smi >/dev/null 2>&1; then
@@ -243,15 +266,19 @@ extra_args=()
 if [[ -n "${MACE_OC20NEB_EXTRA_ARGS:-}" ]]; then
   read -r -a extra_args <<< "${MACE_OC20NEB_EXTRA_ARGS}"
 fi
+post_args=()
+if [[ -n "${MACE_OC20NEB_POST_ARGS:-}" ]]; then
+  read -r -a post_args <<< "${MACE_OC20NEB_POST_ARGS}"
+fi
 
-run_selected_case eager "${extra_args[@]}"
-run_selected_case compile "${extra_args[@]}" "${compile_args[@]}"
-run_selected_case hybrid_muon "${extra_args[@]}" "${hybrid_muon_args[@]}"
-run_selected_case hybrid_muon_compile "${extra_args[@]}" "${hybrid_muon_args[@]}" "${compile_args[@]}"
-run_selected_case cueq "${extra_args[@]}" "${cueq_args[@]}"
-run_selected_case cueq_compile "${extra_args[@]}" "${cueq_args[@]}" "${compile_args[@]}"
-run_selected_case cueq_hybrid_muon "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_args[@]}"
-run_selected_case cueq_hybrid_muon_compile "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_args[@]}" "${compile_args[@]}"
+run_selected_case eager "${extra_args[@]}" "${post_args[@]}"
+run_selected_case compile "${extra_args[@]}" "${compile_args[@]}" "${post_args[@]}"
+run_selected_case hybrid_muon "${extra_args[@]}" "${hybrid_muon_args[@]}" "${post_args[@]}"
+run_selected_case hybrid_muon_compile "${extra_args[@]}" "${hybrid_muon_args[@]}" "${compile_args[@]}" "${post_args[@]}"
+run_selected_case cueq "${extra_args[@]}" "${cueq_args[@]}" "${post_args[@]}"
+run_selected_case cueq_compile "${extra_args[@]}" "${cueq_args[@]}" "${compile_args[@]}" "${post_args[@]}"
+run_selected_case cueq_hybrid_muon "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_args[@]}" "${post_args[@]}"
+run_selected_case cueq_hybrid_muon_compile "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_args[@]}" "${compile_args[@]}" "${post_args[@]}"
 
 "${PYTHON_BIN}" scripts/benchmarks/recio8k_accel/parse_metrics.py "${RUN_ROOT}" > "${RUN_ROOT}/summary.json"
 cat "${RUN_ROOT}/summary.json"
