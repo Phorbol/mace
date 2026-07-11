@@ -201,10 +201,18 @@ hybrid_muon_args=(
   --hybrid_muon_lr_scale_mode="${MACE_OC20NEB_HYBRID_MUON_LR_SCALE_MODE:-original}"
 )
 
+cueq_args=(
+  --enable_cueq=True
+)
+
 run_selected_case eager
 run_selected_case compile "${compile_args[@]}"
 run_selected_case hybrid_muon "${hybrid_muon_args[@]}"
 run_selected_case hybrid_muon_compile "${hybrid_muon_args[@]}" "${compile_args[@]}"
+run_selected_case cueq "${cueq_args[@]}"
+run_selected_case cueq_compile "${cueq_args[@]}" "${compile_args[@]}"
+run_selected_case cueq_hybrid_muon "${cueq_args[@]}" "${hybrid_muon_args[@]}"
+run_selected_case cueq_hybrid_muon_compile "${cueq_args[@]}" "${hybrid_muon_args[@]}" "${compile_args[@]}"
 
 "${PYTHON_BIN}" scripts/benchmarks/recio8k_accel/parse_metrics.py "${RUN_ROOT}" > "${RUN_ROOT}/summary.json"
 cat "${RUN_ROOT}/summary.json"

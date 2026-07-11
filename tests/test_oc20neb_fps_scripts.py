@@ -297,6 +297,11 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert "MACE_OC20NEB_CASES:-eager,compile,hybrid_muon,hybrid_muon_compile" in text
     assert "run_selected_case hybrid_muon" in text
     assert "run_selected_case hybrid_muon_compile" in text
+    assert "run_selected_case cueq" in text
+    assert "run_selected_case cueq_compile" in text
+    assert "run_selected_case cueq_hybrid_muon" in text
+    assert "run_selected_case cueq_hybrid_muon_compile" in text
+    assert "--enable_cueq=True" in text
     assert "--optimizer=hybrid_muon" in text
     assert '--hybrid_muon_mode="${MACE_OC20NEB_HYBRID_MUON_MODE:-2d}"' in text
     assert '--hybrid_muon_routing="${MACE_OC20NEB_HYBRID_MUON_ROUTING:-mace}"' in text
