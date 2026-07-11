@@ -709,7 +709,20 @@ def take_step(
     global_step: int = 0,
 ) -> Tuple[float, Dict[str, Any]]:
     start_time = time.time()
+    step_timing = {
+        "train_batch_to_device_seconds": 0.0,
+        "train_forward_loss_seconds": 0.0,
+        "train_backward_seconds": 0.0,
+        "train_compiled_grad_copy_seconds": 0.0,
+        "train_grad_clip_seconds": 0.0,
+        "train_optimizer_step_seconds": 0.0,
+        "train_ema_update_seconds": 0.0,
+    }
+    batch_to_device_start = time.perf_counter()
     batch = batch.to(device, non_blocking=non_blocking_transfer)
+    step_timing["train_batch_to_device_seconds"] += (
+        time.perf_counter() - batch_to_device_start
+    )
     batch_dict = batch.to_dict()
     if precision_config is None:
         precision_config = TrainingPrecisionConfig(enabled=False, dtype=None)
@@ -737,6 +750,7 @@ def take_step(
             if detect_anomaly
             else nullcontext()
         )
+        forward_loss_start = time.perf_counter()
         with forward_anomaly_context, get_float32_matmul_precision_context(precision_config):
             if can_use_compiled_force_loss:
                 loss, compile_metrics = compiled_force_loss(
@@ -754,6 +768,9 @@ def take_step(
                         compute_stress=output_args["stress"],
                     )
                     loss = loss_fn(pred=output, ref=batch)
+        step_timing["train_forward_loss_seconds"] += (
+            time.perf_counter() - forward_loss_start
+        )
         retain_graph_for_backward = False
         compiled_param_grad_tensors = ()
         if compile_metrics is not None:
@@ -781,9 +798,12 @@ def take_step(
             if detect_anomaly
             else nullcontext()
         )
+        backward_start = time.perf_counter()
         with anomaly_context, backward_context:
             loss.backward(retain_graph=retain_graph_for_backward)
+        step_timing["train_backward_seconds"] += time.perf_counter() - backward_start
         if compiled_param_grad_tensors:
+            grad_copy_start = time.perf_counter()
             named_parameters = dict(model.named_parameters())
             for name, grad_source in compiled_param_grad_tensors:
                 parameter = named_parameters.get(name)
@@ -800,17 +820,28 @@ def take_step(
                 if parameter.grad is None:
                     parameter.grad = torch.empty_like(parameter)
                 parameter.grad.copy_(grad)
+            step_timing["train_compiled_grad_copy_seconds"] += (
+                time.perf_counter() - grad_copy_start
+            )
         if max_grad_norm is not None:
+            grad_clip_start = time.perf_counter()
             grad_norm = stable_clip_grad_norm_(
                 model.parameters(),
                 max_norm=max_grad_norm,
                 stable=guard_config.stable_grad_clip,
             )
+            step_timing["train_grad_clip_seconds"] += (
+                time.perf_counter() - grad_clip_start
+            )
         elif nonfinite_grad_guard is not None:
+            grad_clip_start = time.perf_counter()
             grad_norm = stable_clip_grad_norm_(
                 model.parameters(),
                 max_norm=float("inf"),
                 stable=True,
+            )
+            step_timing["train_grad_clip_seconds"] += (
+                time.perf_counter() - grad_clip_start
             )
         if nonfinite_grad_guard is not None and grad_norm is not None:
             nonfinite_grad_guard.update(grad_norm)
@@ -827,10 +858,18 @@ def take_step(
 
     loss_skipped = skip_result.skip if skip_result is not None else False
     if not loss_skipped:
+        optimizer_step_start = time.perf_counter()
         optimizer.step()
+        step_timing["train_optimizer_step_seconds"] += (
+            time.perf_counter() - optimizer_step_start
+        )
 
         if ema is not None:
+            ema_update_start = time.perf_counter()
             ema.update()
+            step_timing["train_ema_update_seconds"] += (
+                time.perf_counter() - ema_update_start
+            )
 
     loss_dict = {
         "loss": to_numpy(loss),
@@ -840,6 +879,7 @@ def take_step(
             skip_result.reason if skip_result is not None else "none"
         ),
     }
+    loss_dict.update(step_timing)
     if compile_metrics is not None:
         loss_dict.update(compile_metrics)
     if skip_result is not None:

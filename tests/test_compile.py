@@ -4489,6 +4489,17 @@ def test_take_step_uses_compiled_force_training_loss_hook():
     assert ema.updates == 1
     assert metrics["edge_force_compile"] is True
     assert metrics["edge_force_cache_hit"] is False
+    for key in (
+        "train_batch_to_device_seconds",
+        "train_forward_loss_seconds",
+        "train_backward_seconds",
+        "train_compiled_grad_copy_seconds",
+        "train_grad_clip_seconds",
+        "train_optimizer_step_seconds",
+        "train_ema_update_seconds",
+    ):
+        assert key in metrics
+        assert metrics[key] >= 0.0
 
 
 @pytest.mark.parametrize(
