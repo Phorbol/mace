@@ -676,6 +676,77 @@ def test_edge_force_compile_shape_cache_key_includes_abi_signature():
     assert reduced[-2] == ("abi", ("compile_mode", "reduce-overhead"))
 
 
+def test_edge_force_compiled_loss_cache_key_separates_loss_kind():
+    from mace.modules import WeightedEnergyForcesL1L2Loss, WeightedForcesLoss
+    from mace.tools import training_compile
+
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    data_dict = batch.to_dict()
+    input_names = training_compile.edge_force_compile_input_names(data_dict.keys())
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        create_tiny_mace("cpu"),
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_policy="dynamic",
+        ),
+    )
+
+    forces_key = wrapper._cache_key(
+        batch=batch,
+        input_names=input_names,
+        data_dict=data_dict,
+        loss_fn=WeightedForcesLoss(),
+    )
+    l1l2_key = wrapper._cache_key(
+        batch=batch,
+        input_names=input_names,
+        data_dict=data_dict,
+        loss_fn=WeightedEnergyForcesL1L2Loss(),
+    )
+
+    assert forces_key != l1l2_key
+    assert ("compiled_loss", "weighted_forces") in forces_key[-2]
+    assert ("compiled_loss", "weighted_energy_forces_l1l2") in l1l2_key[-2]
+
+
+def test_edge_force_compiled_loss_cache_entries_separate_loss_kind():
+    from mace.modules import WeightedEnergyForcesL1L2Loss, WeightedForcesLoss
+    from mace.tools import training_compile
+
+    prepared = training_compile.prepare_edge_force_compiled_loss(
+        create_tiny_mace("cpu"),
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_policy="dynamic",
+            setup_gate="none",
+            cache_hit_gate=False,
+            allow_fallback=False,
+        ),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+
+    prepared.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=WeightedForcesLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+    prepared.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=WeightedEnergyForcesL1L2Loss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert len(prepared.cache) == 2
+    cache_keys = list(prepared.cache.keys())
+    assert any(("compiled_loss", "weighted_forces") in key[-2] for key in cache_keys)
+    assert any(
+        ("compiled_loss", "weighted_energy_forces_l1l2") in key[-2]
+        for key in cache_keys
+    )
+
+
 def test_edge_force_compiled_loss_cache_key_separates_compile_options():
     from mace.tools import training_compile
 
