@@ -2483,6 +2483,7 @@ def test_edge_force_compiled_tensor_loss_compile_graph_copies_parameter_grads(mo
             cache_hit_gate=False,
             force_gradient_mode="positions",
             allow_fallback=False,
+            parity_check_gradients=False,
         ),
     )
     loss, metrics = prepared.compiled_force_training_loss(
@@ -4487,6 +4488,7 @@ def test_edge_force_position_mode_uses_original_model_forward_for_forces_only(
             refresh_executable_each_step=False,
             force_gradient_mode="positions",
             setup_gate="strict",
+            parity_check_gradients=False,
         ),
     )
     batch = _BatchDictAdapter(create_batch("cpu"))
@@ -4500,6 +4502,98 @@ def test_edge_force_position_mode_uses_original_model_forward_for_forces_only(
 
     assert compiled.output_names == ("energy", "forces")
     assert original_forward_calls
+
+
+def test_edge_force_compile_graph_setup_gate_can_check_parameter_grads(
+    monkeypatch,
+):
+    import types
+
+    import pytest
+
+    from mace.modules import WeightedEnergyForcesLoss
+    from mace.tools import training_compile
+
+    model = create_tiny_mace("cpu")
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    first_param_name = next(
+        name for name, param in model.named_parameters() if param.requires_grad
+    )
+
+    def fake_trace_force_closure(fn, example_inputs, **kwargs):
+        del fn, example_inputs, kwargs
+        return types.SimpleNamespace(
+            graph_module=types.SimpleNamespace(
+                graph=types.SimpleNamespace(nodes=[object()])
+            ),
+            detach_nodes_before=0,
+            detach_nodes_after=0,
+        )
+
+    def fake_compile_fx_graph_module(*args, **kwargs):
+        del args, kwargs
+        return (lambda *call_args: call_args), {"compile_graph": True}
+
+    def snapshot_payload(grad_value):
+        return {
+            "energy": torch.zeros(1),
+            "forces": torch.zeros_like(batch.positions),
+            "loss": torch.zeros(()),
+            "grads": {first_param_name: torch.full_like(dict(model.named_parameters())[first_param_name], grad_value)},
+        }
+
+    def forbidden_value_snapshot(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("setup gate should check parameter gradients")
+
+    monkeypatch.setattr(
+        training_compile, "trace_force_closure", fake_trace_force_closure
+    )
+    monkeypatch.setattr(
+        training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "rebuild_fx_graph_module", lambda graph_module: graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "_position_force_snapshot", lambda **kwargs: snapshot_payload(0.0)
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_edge_force_snapshot_from_executable",
+        lambda **kwargs: snapshot_payload(1.0),
+    )
+    monkeypatch.setattr(
+        training_compile, "_position_force_value_snapshot", forbidden_value_snapshot
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_edge_force_value_snapshot_from_executable",
+        forbidden_value_snapshot,
+    )
+
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        model,
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=True,
+            cache_hit_gate=False,
+            cache_policy="shape",
+            allow_fallback=False,
+            refresh_executable_each_step=False,
+            force_gradient_mode="positions",
+            setup_gate="strict",
+            parity_check_gradients=True,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="edge-force compile gate failed"):
+        wrapper._compile_step(
+            batch=batch,
+            loss_fn=WeightedEnergyForcesLoss(),
+            cache_key=("shape",),
+            output_args={"forces": True, "virials": False, "stress": False},
+        )
 
 
 def test_edge_force_position_mode_bucket_policy_uses_unpadded_shape_key(

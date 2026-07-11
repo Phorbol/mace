@@ -2841,14 +2841,14 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             )
         else:
             phase_start = log_phase_start("gate_reference")
-            if self.config.compile_graph:
-                reference = _position_force_value_snapshot(
+            if self.config.parity_check_gradients:
+                reference = _position_force_snapshot(
                     model=self.model,
                     batch=batch,
                     loss_fn=loss_fn,
                 )
             else:
-                reference = _position_force_snapshot(
+                reference = _position_force_value_snapshot(
                     model=self.model,
                     batch=batch,
                     loss_fn=loss_fn,
@@ -2856,8 +2856,8 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             log_phase_done("gate_reference", phase_start)
 
             phase_start = log_phase_start("gate_candidate")
-            if self.config.compile_graph:
-                candidate = _edge_force_value_snapshot_from_executable(
+            if self.config.parity_check_gradients:
+                candidate = _edge_force_snapshot_from_executable(
                     model=self.model,
                     batch=batch,
                     loss_fn=loss_fn,
@@ -2868,9 +2868,10 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     loss_input_names=loss_input_names,
                     force_gradient_mode=self.config.force_gradient_mode,
                     output_names=output_names,
+                    clone_parameter_inputs=self.config.compile_graph,
                 )
             else:
-                candidate = _edge_force_snapshot_from_executable(
+                candidate = _edge_force_value_snapshot_from_executable(
                     model=self.model,
                     batch=batch,
                     loss_fn=loss_fn,
