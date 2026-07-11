@@ -5,7 +5,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from ase import Atoms
+from ase.calculators.singlepoint import SinglePointCalculator
 from ase.io import read
+from ase.io import write
 
 
 SCRIPT_ROOT = (
@@ -75,3 +78,93 @@ def test_sai_wrapper_uses_valid_file_and_sai_safe_resource_flags():
     assert "#SBATCH --cpus-per-task" not in text
     assert "#SBATCH --mem" not in text
     assert "#SBATCH --ntasks-per-node" not in text
+
+
+def test_prepare_fullcase200_fps_writes_manifest_selected_extxyz(tmp_path):
+    preparer = load_script("prepare_fullcase200_fps_extxyz.py")
+    data_root = tmp_path / "data" / "dft_trajs_for_release"
+    traj_dir = data_root / "dissociations"
+    traj_dir.mkdir(parents=True)
+    traj_path = traj_dir / "case_a.traj"
+
+    images = []
+    for frame_index in range(5):
+        atoms = Atoms(
+            symbols=["H", "O"],
+            positions=[[0.0, 0.0, 0.0], [1.0 + 0.1 * frame_index, 0.0, 0.0]],
+            cell=np.eye(3) * 8.0,
+            pbc=True,
+        )
+        atoms.calc = SinglePointCalculator(
+            atoms,
+            energy=float(frame_index),
+            forces=np.asarray([[frame_index, 0.0, 0.0], [0.0, -frame_index, 0.0]]),
+        )
+        images.append(atoms)
+    write(traj_path, images)
+
+    manifest = tmp_path / "selected200_manifest.jsonl"
+    manifest.write_text(
+        '{"case_id": "case_a", "path": "data/dft_trajs_for_release/dissociations/case_a.traj"}\n'
+    )
+    features = np.asarray(
+        [
+            [0.0, 0.0],
+            [0.1, 0.0],
+            [0.2, 0.0],
+            [10.0, 0.0],
+            [10.1, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    feature_path = tmp_path / "features.npz"
+    np.savez(
+        feature_path,
+        features=features,
+        source_keys=np.asarray([f"case_a:{i}" for i in range(5)]),
+    )
+
+    summary = preparer.prepare_fullcase200_fps_extxyz(
+        manifest_path=manifest,
+        data_root=data_root,
+        output_dir=tmp_path / "out",
+        train_size=2,
+        valid_size=2,
+        seed=7,
+        features_npz=feature_path,
+        overwrite=False,
+    )
+
+    assert summary["train"]["frames"] == 2
+    assert summary["valid"]["frames"] == 2
+    assert summary["source"]["candidate_frames"] == 5
+
+    train_atoms = read(tmp_path / "out" / "train.extxyz", index=":")
+    valid_atoms = read(tmp_path / "out" / "valid.extxyz", index=":")
+    train_keys = {atoms.info["source_key"] for atoms in train_atoms}
+    valid_keys = {atoms.info["source_key"] for atoms in valid_atoms}
+
+    assert train_keys == {"case_a:0", "case_a:4"}
+    assert train_keys.isdisjoint(valid_keys)
+    assert all(
+        atoms.get_potential_energy() == atoms.info["source_frame"]
+        for atoms in train_atoms + valid_atoms
+    )
+    assert all(atoms.get_forces().shape == (2, 3) for atoms in train_atoms + valid_atoms)
+
+
+def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
+    sbatch = SCRIPT_ROOT / "fullcase200-ef-20k-demo.sbatch"
+    text = sbatch.read_text()
+
+    assert "MACE_OC20NEB_TARGET_STEPS:-20000" in text
+    assert "conda-envs/mace-dpa4-cu126/bin/python" in text
+    assert "runs/oc20neb_fullcase200_fps_extxyz" in text
+    assert '--train_file="${TRAIN_FILE}"' in text
+    assert '--valid_file="${VALID_FILE}"' in text
+    assert "--loss=weighted" in text
+    assert "--energy_key=energy" in text
+    assert "--forces_key=forces" in text
+    assert "--edge_force_compile_force_gradient_mode=positions" in text
+    assert "--no-edge_force_compile_allow_fallback" in text
+    assert "parse_metrics.py" in text
