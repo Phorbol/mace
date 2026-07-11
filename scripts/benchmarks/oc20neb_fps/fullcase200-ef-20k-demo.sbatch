@@ -239,14 +239,19 @@ cueq_args=(
   --enable_cueq=True
 )
 
-run_selected_case eager
-run_selected_case compile "${compile_args[@]}"
-run_selected_case hybrid_muon "${hybrid_muon_args[@]}"
-run_selected_case hybrid_muon_compile "${hybrid_muon_args[@]}" "${compile_args[@]}"
-run_selected_case cueq "${cueq_args[@]}"
-run_selected_case cueq_compile "${cueq_args[@]}" "${compile_args[@]}"
-run_selected_case cueq_hybrid_muon "${cueq_args[@]}" "${hybrid_muon_args[@]}"
-run_selected_case cueq_hybrid_muon_compile "${cueq_args[@]}" "${hybrid_muon_args[@]}" "${compile_args[@]}"
+extra_args=()
+if [[ -n "${MACE_OC20NEB_EXTRA_ARGS:-}" ]]; then
+  read -r -a extra_args <<< "${MACE_OC20NEB_EXTRA_ARGS}"
+fi
+
+run_selected_case eager "${extra_args[@]}"
+run_selected_case compile "${extra_args[@]}" "${compile_args[@]}"
+run_selected_case hybrid_muon "${extra_args[@]}" "${hybrid_muon_args[@]}"
+run_selected_case hybrid_muon_compile "${extra_args[@]}" "${hybrid_muon_args[@]}" "${compile_args[@]}"
+run_selected_case cueq "${extra_args[@]}" "${cueq_args[@]}"
+run_selected_case cueq_compile "${extra_args[@]}" "${cueq_args[@]}" "${compile_args[@]}"
+run_selected_case cueq_hybrid_muon "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_args[@]}"
+run_selected_case cueq_hybrid_muon_compile "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_args[@]}" "${compile_args[@]}"
 
 "${PYTHON_BIN}" scripts/benchmarks/recio8k_accel/parse_metrics.py "${RUN_ROOT}" > "${RUN_ROOT}/summary.json"
 cat "${RUN_ROOT}/summary.json"
