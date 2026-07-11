@@ -26,6 +26,7 @@ from mace.cli.visualise_train import TrainingPlotter
 
 from . import torch_geometric
 from .checkpoint import CheckpointHandler, CheckpointState
+from .force_compile import disable_functorch_donated_buffer
 from .precision import (
     TrainingPrecisionConfig,
     get_autocast_context,
@@ -758,7 +759,13 @@ def take_step(
             if skip_result.skip:
                 return loss, skip_result, grad_norm, compile_metrics
 
-        loss.backward(retain_graph=retain_graph_for_backward)
+        backward_context = (
+            disable_functorch_donated_buffer()
+            if retain_graph_for_backward
+            else nullcontext()
+        )
+        with backward_context:
+            loss.backward(retain_graph=retain_graph_for_backward)
         if compiled_param_grad_tensors:
             named_parameters = dict(model.named_parameters())
             for name, grad_source in compiled_param_grad_tensors:

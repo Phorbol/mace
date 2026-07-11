@@ -4435,6 +4435,52 @@ def test_take_step_consumes_compiled_force_retain_graph_metric(monkeypatch):
     assert metrics["edge_force_compile"] is True
 
 
+def test_take_step_disables_functorch_donated_buffer_for_retained_backward(
+    monkeypatch,
+):
+    import torch._functorch.config as functorch_config
+
+    from mace.tools.train import take_step
+
+    class CompiledForceLossModel(_CompiledForceLossModel):
+        def compiled_force_training_loss(self, *, batch, loss_fn, output_args):
+            loss, metrics = super().compiled_force_training_loss(
+                batch=batch, loss_fn=loss_fn, output_args=output_args
+            )
+            metrics["_retain_graph_for_backward"] = True
+            return loss, metrics
+
+    backward_donated_buffer_values = []
+    original_backward = torch.Tensor.backward
+
+    def recording_backward(self, *args, **kwargs):
+        backward_donated_buffer_values.append(functorch_config.donated_buffer)
+        return original_backward(self, *args, **kwargs)
+
+    previous = functorch_config.donated_buffer
+    monkeypatch.setattr(torch.Tensor, "backward", recording_backward)
+    functorch_config.donated_buffer = True
+    try:
+        model = CompiledForceLossModel()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+
+        take_step(
+            model=model,
+            loss_fn=_MiniLoss(),
+            batch=_MiniBatch(),
+            optimizer=optimizer,
+            ema=None,
+            output_args={"forces": True, "virials": False, "stress": False},
+            max_grad_norm=None,
+            device=torch.device("cpu"),
+        )
+
+        assert backward_donated_buffer_values == [False]
+        assert functorch_config.donated_buffer is True
+    finally:
+        functorch_config.donated_buffer = previous
+
+
 def test_take_step_copies_compiled_parameter_clone_grads_before_optimizer_step():
     from mace.tools.train import take_step
 

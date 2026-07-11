@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import os
 from collections.abc import Callable, Sequence
+from contextlib import contextmanager
 from typing import Any
 
 import torch
@@ -13,6 +14,22 @@ from mace.tools.scatter import scatter_sum
 
 def _noop_restore() -> None:
     return
+
+
+@contextmanager
+def disable_functorch_donated_buffer():
+    try:
+        import torch._functorch.config as functorch_config
+    except (ImportError, AttributeError):
+        yield
+        return
+
+    previous_donated_buffer = functorch_config.donated_buffer
+    functorch_config.donated_buffer = False
+    try:
+        yield
+    finally:
+        functorch_config.donated_buffer = previous_donated_buffer
 
 
 def patch_inductor_force_int64_indexing() -> Callable[[], None]:
@@ -230,17 +247,8 @@ def compile_fx_graph_module(
         if compile_mode != "default":
             compile_kwargs["mode"] = compile_mode
 
-        try:
-            import torch._functorch.config as functorch_config
-        except (ImportError, AttributeError):
-            return torch.compile(graph_module, **compile_kwargs), compile_kwargs
-
-        previous_donated_buffer = functorch_config.donated_buffer
-        functorch_config.donated_buffer = False
-        try:
+        with disable_functorch_donated_buffer():
             executable = torch.compile(graph_module, **compile_kwargs)
-        finally:
-            functorch_config.donated_buffer = previous_donated_buffer
         return executable, compile_kwargs
     finally:
         restore_global_patches()

@@ -12,6 +12,7 @@ from mace.cache_utils import BoundedLRUCache
 from mace.tools import compile as mace_compile
 from mace.tools.force_compile import (
     compile_fx_graph_module,
+    disable_functorch_donated_buffer,
     edge_gradient_to_atomic_forces,
     rebuild_fx_graph_module,
     trace_force_closure,
@@ -3048,7 +3049,8 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     *(tensor for _, tensor in compiled_param_grad_tensors),
                     *inputs[param_count:],
                 ]
-            executable_outputs = runtime_executable(gradient_input, *inputs)
+            with disable_functorch_donated_buffer():
+                executable_outputs = runtime_executable(gradient_input, *inputs)
             if compiled.returns_loss:
                 energy, forces, loss = executable_outputs
             else:
