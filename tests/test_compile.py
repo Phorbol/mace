@@ -555,6 +555,8 @@ def test_edge_force_compile_loss_input_names_are_loss_specific():
     from mace.modules import (
         WeightedEnergyForcesL1L2Loss,
         WeightedEnergyForcesLoss,
+        WeightedEnergyForcesStressLoss,
+        WeightedEnergyForcesVirialsLoss,
         WeightedForcesLoss,
     )
     from mace.tools.training_compile import edge_force_compile_loss_input_names
@@ -562,9 +564,13 @@ def test_edge_force_compile_loss_input_names_are_loss_specific():
     data_keys = {
         "energy",
         "forces",
+        "stress",
+        "virials",
         "weight",
         "energy_weight",
         "forces_weight",
+        "stress_weight",
+        "virials_weight",
     }
 
     assert edge_force_compile_loss_input_names(
@@ -576,6 +582,28 @@ def test_edge_force_compile_loss_input_names_are_loss_specific():
     assert edge_force_compile_loss_input_names(
         data_keys, loss_fn=WeightedEnergyForcesL1L2Loss()
     ) == ("energy", "forces", "weight", "energy_weight")
+    assert edge_force_compile_loss_input_names(
+        data_keys, loss_fn=WeightedEnergyForcesStressLoss()
+    ) == (
+        "energy",
+        "forces",
+        "stress",
+        "weight",
+        "energy_weight",
+        "forces_weight",
+        "stress_weight",
+    )
+    assert edge_force_compile_loss_input_names(
+        data_keys, loss_fn=WeightedEnergyForcesVirialsLoss()
+    ) == (
+        "energy",
+        "forces",
+        "virials",
+        "weight",
+        "energy_weight",
+        "forces_weight",
+        "virials_weight",
+    )
 
 
 def test_edge_force_compile_loss_input_names_reject_missing_loss_specific_keys():
@@ -1249,6 +1277,82 @@ def test_position_force_weighted_energy_forces_tensor_loss_matches_loss_module()
     )
 
     assert_close(forces, model(batch.to_dict(), training=True)["forces"])
+    assert_close(actual, reference)
+
+
+def test_position_force_weighted_energy_forces_stress_tensor_loss_matches_loss_module():
+    from mace.modules import WeightedEnergyForcesStressLoss
+    from mace.tools.training_compile import (
+        _edge_force_weighted_energy_forces_stress_loss,
+        _edge_vector_inputs,
+    )
+
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    loss_fn = WeightedEnergyForcesStressLoss(
+        energy_weight=1.3, forces_weight=7.0, stress_weight=2.5
+    )
+    data_dict, _, _, _ = _edge_vector_inputs(batch)
+    energy = data_dict["energy"] + 0.2
+    forces = data_dict["forces"] + 0.3
+    stress = data_dict["stress"] + 0.4
+
+    reference = loss_fn(
+        pred={
+            "energy": energy,
+            "forces": forces,
+            "stress": stress,
+            "virials": None,
+        },
+        ref=batch,
+    )
+    actual = _edge_force_weighted_energy_forces_stress_loss(
+        data_dict=data_dict,
+        energy=energy,
+        forces=forces,
+        stress=stress,
+        energy_loss_weight=loss_fn.energy_weight,
+        forces_loss_weight=loss_fn.forces_weight,
+        stress_loss_weight=loss_fn.stress_weight,
+    )
+
+    assert_close(actual, reference)
+
+
+def test_position_force_weighted_energy_forces_virials_tensor_loss_matches_loss_module():
+    from mace.modules import WeightedEnergyForcesVirialsLoss
+    from mace.tools.training_compile import (
+        _edge_force_weighted_energy_forces_virials_loss,
+        _edge_vector_inputs,
+    )
+
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    loss_fn = WeightedEnergyForcesVirialsLoss(
+        energy_weight=1.3, forces_weight=7.0, virials_weight=2.5
+    )
+    data_dict, _, _, _ = _edge_vector_inputs(batch)
+    energy = data_dict["energy"] + 0.2
+    forces = data_dict["forces"] + 0.3
+    virials = data_dict["virials"] + 0.4
+
+    reference = loss_fn(
+        pred={
+            "energy": energy,
+            "forces": forces,
+            "stress": None,
+            "virials": virials,
+        },
+        ref=batch,
+    )
+    actual = _edge_force_weighted_energy_forces_virials_loss(
+        data_dict=data_dict,
+        energy=energy,
+        forces=forces,
+        virials=virials,
+        energy_loss_weight=loss_fn.energy_weight,
+        forces_loss_weight=loss_fn.forces_weight,
+        virials_loss_weight=loss_fn.virials_weight,
+    )
+
     assert_close(actual, reference)
 
 

@@ -360,6 +360,26 @@ def _compiled_tensor_loss_input_names_for_loss(
         return ("forces", "weight", "forces_weight")
     if _is_weighted_energy_forces_l1l2_loss(loss_fn):
         return ("energy", "forces", "weight", "energy_weight")
+    if _is_weighted_energy_forces_stress_loss(loss_fn):
+        return (
+            "energy",
+            "forces",
+            "stress",
+            "weight",
+            "energy_weight",
+            "forces_weight",
+            "stress_weight",
+        )
+    if _is_weighted_energy_forces_virials_loss(loss_fn):
+        return (
+            "energy",
+            "forces",
+            "virials",
+            "weight",
+            "energy_weight",
+            "forces_weight",
+            "virials_weight",
+        )
     return ()
 
 
@@ -400,6 +420,7 @@ _LOSS_OUTPUT_CAPABILITY_BY_TYPE_NAME = {
     "WeightedEnergyForcesStressLoss": LossOutputCapability(
         required_outputs=("energy", "forces", "stress"),
         edge_force_supported=False,
+        compiled_tensor_loss_supported=True,
         unsupported_reason="unsupported_loss",
     ),
     "WeightedHuberEnergyForcesStressLoss": LossOutputCapability(
@@ -415,6 +436,7 @@ _LOSS_OUTPUT_CAPABILITY_BY_TYPE_NAME = {
     "WeightedEnergyForcesVirialsLoss": LossOutputCapability(
         required_outputs=("energy", "forces", "virials"),
         edge_force_supported=False,
+        compiled_tensor_loss_supported=True,
         unsupported_reason="unsupported_loss",
     ),
     "DipoleSingleLoss": LossOutputCapability(
@@ -469,6 +491,14 @@ def _is_weighted_energy_forces_l1l2_loss(loss_fn: torch.nn.Module) -> bool:
     return _is_instance_of_named_type(loss_fn, ("WeightedEnergyForcesL1L2Loss",))
 
 
+def _is_weighted_energy_forces_stress_loss(loss_fn: torch.nn.Module) -> bool:
+    return _is_instance_of_named_type(loss_fn, ("WeightedEnergyForcesStressLoss",))
+
+
+def _is_weighted_energy_forces_virials_loss(loss_fn: torch.nn.Module) -> bool:
+    return _is_instance_of_named_type(loss_fn, ("WeightedEnergyForcesVirialsLoss",))
+
+
 def _compiled_tensor_loss_weights(loss_fn: torch.nn.Module) -> tuple[torch.Tensor, ...]:
     if _is_weighted_energy_forces_loss(loss_fn):
         return (loss_fn.energy_weight, loss_fn.forces_weight)
@@ -476,6 +506,10 @@ def _compiled_tensor_loss_weights(loss_fn: torch.nn.Module) -> tuple[torch.Tenso
         return (loss_fn.forces_weight,)
     if _is_weighted_energy_forces_l1l2_loss(loss_fn):
         return (loss_fn.energy_weight, loss_fn.forces_weight)
+    if _is_weighted_energy_forces_stress_loss(loss_fn):
+        return (loss_fn.energy_weight, loss_fn.forces_weight, loss_fn.stress_weight)
+    if _is_weighted_energy_forces_virials_loss(loss_fn):
+        return (loss_fn.energy_weight, loss_fn.forces_weight, loss_fn.virials_weight)
     raise TypeError(
         f"compiled tensor loss does not support {type(loss_fn).__name__}"
     )
@@ -488,6 +522,10 @@ def _compiled_tensor_loss_kind(loss_fn: torch.nn.Module) -> str:
         return "weighted_forces"
     if _is_weighted_energy_forces_l1l2_loss(loss_fn):
         return "weighted_energy_forces_l1l2"
+    if _is_weighted_energy_forces_stress_loss(loss_fn):
+        return "weighted_energy_forces_stress"
+    if _is_weighted_energy_forces_virials_loss(loss_fn):
+        return "weighted_energy_forces_virials"
     raise TypeError(
         f"compiled tensor loss does not support {type(loss_fn).__name__}"
     )
@@ -1454,6 +1492,71 @@ def _edge_force_weighted_energy_forces_l1l2_loss(
     )
 
 
+def _weighted_stress_mse_raw(
+    data_dict: dict[str, torch.Tensor], stress: torch.Tensor
+) -> torch.Tensor:
+    configs_weight = data_dict["weight"].view(-1, 1, 1)
+    configs_stress_weight = data_dict["stress_weight"].view(-1, 1, 1)
+    return (
+        configs_weight
+        * configs_stress_weight
+        * torch.square(data_dict["stress"] - stress)
+    )
+
+
+def _weighted_virials_mse_raw(
+    data_dict: dict[str, torch.Tensor], virials: torch.Tensor
+) -> torch.Tensor:
+    configs_weight = data_dict["weight"].view(-1, 1, 1)
+    configs_virials_weight = data_dict["virials_weight"].view(-1, 1, 1)
+    num_atoms = (data_dict["ptr"][1:] - data_dict["ptr"][:-1]).view(-1, 1, 1)
+    return (
+        configs_weight
+        * configs_virials_weight
+        * torch.square((data_dict["virials"] - virials) / num_atoms)
+    )
+
+
+def _edge_force_weighted_energy_forces_stress_loss(
+    *,
+    data_dict: dict[str, torch.Tensor],
+    energy: torch.Tensor,
+    forces: torch.Tensor,
+    stress: torch.Tensor,
+    energy_loss_weight: torch.Tensor,
+    forces_loss_weight: torch.Tensor,
+    stress_loss_weight: torch.Tensor,
+) -> torch.Tensor:
+    energy_scale = energy_loss_weight.to(device=energy.device)
+    forces_scale = forces_loss_weight.to(device=energy.device)
+    stress_scale = stress_loss_weight.to(device=energy.device)
+    return (
+        energy_scale * _weighted_energy_mse_raw(data_dict, energy).mean()
+        + forces_scale * _weighted_forces_mse_raw(data_dict, forces).mean()
+        + stress_scale * _weighted_stress_mse_raw(data_dict, stress).mean()
+    )
+
+
+def _edge_force_weighted_energy_forces_virials_loss(
+    *,
+    data_dict: dict[str, torch.Tensor],
+    energy: torch.Tensor,
+    forces: torch.Tensor,
+    virials: torch.Tensor,
+    energy_loss_weight: torch.Tensor,
+    forces_loss_weight: torch.Tensor,
+    virials_loss_weight: torch.Tensor,
+) -> torch.Tensor:
+    energy_scale = energy_loss_weight.to(device=energy.device)
+    forces_scale = forces_loss_weight.to(device=energy.device)
+    virials_scale = virials_loss_weight.to(device=energy.device)
+    return (
+        energy_scale * _weighted_energy_mse_raw(data_dict, energy).mean()
+        + forces_scale * _weighted_forces_mse_raw(data_dict, forces).mean()
+        + virials_scale * _weighted_virials_mse_raw(data_dict, virials).mean()
+    )
+
+
 def _edge_force_compiled_tensor_loss(
     *,
     loss_kind: str,
@@ -1461,6 +1564,8 @@ def _edge_force_compiled_tensor_loss(
     energy: torch.Tensor,
     forces: torch.Tensor,
     loss_weights: tuple[torch.Tensor, ...],
+    stress: torch.Tensor | None = None,
+    virials: torch.Tensor | None = None,
 ) -> torch.Tensor:
     if loss_kind == "weighted_energy_forces":
         return _edge_force_weighted_energy_forces_loss(
@@ -1483,6 +1588,30 @@ def _edge_force_compiled_tensor_loss(
             forces=forces,
             energy_loss_weight=loss_weights[0],
             forces_loss_weight=loss_weights[1],
+        )
+    if loss_kind == "weighted_energy_forces_stress":
+        if stress is None:
+            raise RuntimeError("compiled stress loss requires stress output")
+        return _edge_force_weighted_energy_forces_stress_loss(
+            data_dict=data_dict,
+            energy=energy,
+            forces=forces,
+            stress=stress,
+            energy_loss_weight=loss_weights[0],
+            forces_loss_weight=loss_weights[1],
+            stress_loss_weight=loss_weights[2],
+        )
+    if loss_kind == "weighted_energy_forces_virials":
+        if virials is None:
+            raise RuntimeError("compiled virials loss requires virials output")
+        return _edge_force_weighted_energy_forces_virials_loss(
+            data_dict=data_dict,
+            energy=energy,
+            forces=forces,
+            virials=virials,
+            energy_loss_weight=loss_weights[0],
+            forces_loss_weight=loss_weights[1],
+            virials_loss_weight=loss_weights[2],
         )
     raise RuntimeError(f"unsupported compiled tensor loss kind: {loss_kind}")
 
