@@ -168,3 +168,173 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert "--edge_force_compile_force_gradient_mode=positions" in text
     assert "--no-edge_force_compile_allow_fallback" in text
     assert "parse_metrics.py" in text
+
+
+def test_abacus_raw_eval_discovery_includes_vib_and_ignores_sella_traj(tmp_path):
+    evaluator = load_script("evaluate_abacus_raw_extrapolation.py")
+    exp = tmp_path / "abacus_exp"
+    sella_log = exp / "cases" / "000_case_a" / "sella" / "abacus_evals" / "eval_000001" / "OUT.ABACUS" / "running_scf.log"
+    vib_log = exp / "cases" / "000_case_a" / "sella" / "vib_tag2_resume" / "abacus_evals" / "eval_000002" / "OUT.ABACUS" / "running_scf.log"
+    sella_log.parent.mkdir(parents=True)
+    vib_log.parent.mkdir(parents=True)
+    sella_log.write_text("raw scf")
+    vib_log.write_text("raw vib scf")
+    (exp / "cases" / "000_case_a" / "sella" / "sella_ts.traj").write_text("not a label source")
+
+    records = evaluator.discover_abacus_eval_logs([exp])
+
+    assert [(record.case_id, record.role, record.eval_id) for record in records] == [
+        ("000_case_a", "sella", "eval_000001"),
+        ("000_case_a", "sella/vib_tag2_resume", "eval_000002"),
+    ]
+    assert all("sella_ts.traj" not in str(record.running_log) for record in records)
+
+
+def test_abacus_eval_falls_back_to_abacuslite_helpers_when_band_tables_are_missing(tmp_path):
+    evaluator = load_script("evaluate_abacus_raw_extrapolation.py")
+    running_log = tmp_path / "cases" / "case_a" / "sella" / "abacus_evals" / "eval_000001" / "OUT.ABACUS" / "running_scf.log"
+    running_log.parent.mkdir(parents=True)
+    running_log.write_text("raw scf without kpoint table")
+    record = evaluator.AbacusLogRecord(
+        experiment_root=tmp_path,
+        case_id="case_a",
+        role="sella",
+        eval_id="eval_000001",
+        running_log=running_log,
+        kind="eval",
+    )
+    frame = {
+        "elem": np.asarray(["H", "O"]),
+        "coords": np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
+        "cell": np.eye(3) * 8.0,
+    }
+
+    class FakeLegacy:
+        @staticmethod
+        def read_abacus_out(*_args, **_kwargs):
+            raise AssertionError("No k-point found")
+
+        @staticmethod
+        def read_traj_from_running_log(_lines):
+            return [frame]
+
+        @staticmethod
+        def read_forces_from_running_log(_lines):
+            return [np.asarray([[0.1, 0.0, 0.0], [0.0, -0.1, 0.0]])]
+
+        @staticmethod
+        def read_stress_from_running_log(_lines):
+            return []
+
+        @staticmethod
+        def read_energies_from_running_log(_lines):
+            return [], [{"E_KohnSham": -7.5, "E_Fermi": 0.0}]
+
+        @staticmethod
+        def read_iter_header_from_running_log(_lines):
+            return [(1, 1)]
+
+        @staticmethod
+        def find_final_info_with_iter_header(energies, _headers):
+            return energies
+
+    loaded = evaluator.read_abacus_record(record, legacyio_module=FakeLegacy)
+
+    assert loaded.skip_reason is None
+    assert len(loaded.images) == 1
+    assert loaded.images[0].energy == -7.5
+    np.testing.assert_allclose(
+        loaded.images[0].forces,
+        [[0.1, 0.0, 0.0], [0.0, -0.1, 0.0]],
+    )
+
+
+def test_abacus_socket_multiforce_single_structure_is_skipped_without_misalignment(tmp_path):
+    evaluator = load_script("evaluate_abacus_raw_extrapolation.py")
+    running_log = tmp_path / "OUT.ABACUS" / "running_socket.log"
+    running_log.parent.mkdir()
+    running_log.write_text("socket raw")
+    record = evaluator.AbacusLogRecord(
+        experiment_root=tmp_path,
+        case_id="case_socket",
+        role="sella_socket_wrapped",
+        eval_id="socket",
+        running_log=running_log,
+        kind="socket",
+    )
+
+    frame = {
+        "elem": np.asarray(["H", "O"]),
+        "coords": np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
+        "cell": np.eye(3) * 8.0,
+    }
+
+    class FakeLatest:
+        @staticmethod
+        def read_traj_from_running_log(_lines):
+            return [frame]
+
+        @staticmethod
+        def read_forces_from_running_log(_lines):
+            return [np.zeros((2, 3)), np.ones((2, 3))]
+
+        @staticmethod
+        def read_stress_from_running_log(_lines):
+            return []
+
+        @staticmethod
+        def read_energies_from_running_log(_lines):
+            return [], [
+                {"E_KohnSham": -1.0, "E_Fermi": 0.0},
+                {"E_KohnSham": -2.0, "E_Fermi": 0.0},
+            ]
+
+        @staticmethod
+        def read_iter_header_from_running_log(_lines):
+            return [(1, 1), (2, 1)]
+
+        @staticmethod
+        def find_final_info_with_iter_header(energies, _headers):
+            return energies
+
+    loaded = evaluator.read_abacus_record(record, latestio_module=FakeLatest)
+
+    assert loaded.images == []
+    assert loaded.skip_reason is not None
+    assert "1 structure frame" in loaded.skip_reason
+    assert "2 force frames" in loaded.skip_reason
+
+
+def test_abacus_extrapolation_metrics_include_force_and_bias_corrected_energy():
+    evaluator = load_script("evaluate_abacus_raw_extrapolation.py")
+    rows = [
+        {
+            "model": "model_a",
+            "case_id": "case_1",
+            "role": "sella",
+            "natoms": 2,
+            "reference_energy": 10.0,
+            "predicted_energy": 12.0,
+            "reference_forces": np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
+            "predicted_forces": np.asarray([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]),
+        },
+        {
+            "model": "model_a",
+            "case_id": "case_1",
+            "role": "sella",
+            "natoms": 2,
+            "reference_energy": 20.0,
+            "predicted_energy": 24.0,
+            "reference_forces": np.asarray([[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]),
+            "predicted_forces": np.asarray([[0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]),
+        },
+    ]
+
+    summary = evaluator.summarize_prediction_rows(rows)
+
+    model_summary = summary["models"]["model_a"]
+    assert model_summary["structures"] == 2
+    assert model_summary["force_components"]["mae"] == 1.0 / 3.0
+    assert model_summary["force_components"]["rmse"] == np.sqrt(1.0 / 3.0)
+    assert model_summary["energy_per_atom"]["mae"] == 1.5
+    assert model_summary["energy_per_atom_case_bias_corrected"]["mae"] == 0.5
