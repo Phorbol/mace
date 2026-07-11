@@ -1973,6 +1973,7 @@ def test_edge_force_compiled_loss_can_use_position_gradient_mode():
 
 
 def test_edge_force_compiled_loss_bucket_policy_compiles_padded_inputs():
+    from mace.modules import WeightedEnergyForcesLoss
     from mace.tools.train import take_step
     from mace.tools.training_compile import (
         EdgeForceCompileConfig,
@@ -2000,7 +2001,7 @@ def test_edge_force_compiled_loss_bucket_policy_compiles_padded_inputs():
 
     _, metrics = take_step(
         model=prepared,
-        loss_fn=_EnergyForcesMiniLoss(),
+        loss_fn=WeightedEnergyForcesLoss(),
         batch=batch,
         optimizer=optimizer,
         ema=None,
@@ -2176,6 +2177,7 @@ def test_edge_force_compiled_loss_handles_nonidentity_scaleshift():
 
 
 def test_prepare_edge_force_compiled_loss_wraps_scaleshiftmace_for_take_step():
+    from mace.modules import WeightedEnergyForcesLoss
     from mace.tools.train import take_step
     from mace.tools.training_compile import (
         EdgeForceCompileConfig,
@@ -2196,7 +2198,7 @@ def test_prepare_edge_force_compiled_loss_wraps_scaleshiftmace_for_take_step():
 
     loss, metrics = take_step(
         model=prepared,
-        loss_fn=_EnergyForcesMiniLoss(),
+        loss_fn=WeightedEnergyForcesLoss(),
         batch=batch,
         optimizer=optimizer,
         ema=None,
@@ -3300,6 +3302,7 @@ class _CompiledForceLossModel(torch.nn.Module):
         self.weight = torch.nn.Parameter(torch.ones(()))
         self.forward_calls = 0
         self.compiled_loss_calls = 0
+        self.compiled_output_args = []
 
     def forward(self, batch, **kwargs):
         self.forward_calls += 1
@@ -3307,7 +3310,7 @@ class _CompiledForceLossModel(torch.nn.Module):
 
     def compiled_force_training_loss(self, *, batch, loss_fn, output_args):
         self.compiled_loss_calls += 1
-        assert output_args == {"forces": True, "virials": False, "stress": False}
+        self.compiled_output_args.append(dict(output_args))
         loss = loss_fn(pred={"value": batch.x.sum() * self.weight}, ref=batch)
         return loss, {"edge_force_compile": True, "edge_force_cache_hit": False}
 
@@ -3831,51 +3834,34 @@ def test_take_step_uses_compiled_force_training_loss_hook():
     assert metrics["edge_force_cache_hit"] is False
 
 
-def test_take_step_records_compile_disabled_reason_for_stress_outputs():
+@pytest.mark.parametrize(
+    "output_args",
+    [
+        {"forces": True, "virials": False, "stress": True},
+        {"forces": True, "virials": True, "stress": False},
+    ],
+)
+def test_take_step_forwards_requested_outputs_to_compiled_force_loss_hook(output_args):
     from mace.tools.train import take_step
 
     model = _CompiledForceLossModel()
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
 
     loss, metrics = take_step(
         model=model,
         loss_fn=_MiniLoss(),
         batch=_MiniBatch(),
-        optimizer=optimizer,
+        optimizer=torch.optim.SGD(model.parameters(), lr=0.1),
         ema=None,
-        output_args={"forces": True, "virials": False, "stress": True},
+        output_args=output_args,
         max_grad_norm=None,
         device=torch.device("cpu"),
     )
 
     assert loss.item() == pytest.approx(1.0)
-    assert model.forward_calls == 1
-    assert model.compiled_loss_calls == 0
-    assert metrics["edge_force_compile"] is False
-    assert metrics["edge_force_compile_disabled_reason"] == "unsupported_outputs"
-
-
-def test_take_step_records_compile_disabled_reason_for_virial_outputs():
-    from mace.tools.train import take_step
-
-    model = _CompiledForceLossModel()
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
-
-    _, metrics = take_step(
-        model=model,
-        loss_fn=_MiniLoss(),
-        batch=_MiniBatch(),
-        optimizer=optimizer,
-        ema=None,
-        output_args={"forces": True, "virials": True, "stress": False},
-        max_grad_norm=None,
-        device=torch.device("cpu"),
-    )
-
-    assert model.forward_calls == 1
-    assert model.compiled_loss_calls == 0
-    assert metrics["edge_force_compile"] is False
-    assert metrics["edge_force_compile_disabled_reason"] == "unsupported_outputs"
+    assert model.forward_calls == 0
+    assert model.compiled_loss_calls == 1
+    assert model.compiled_output_args == [output_args]
+    assert metrics["edge_force_compile"] is True
 
 
 def test_take_step_does_not_retain_outer_graph_for_compiled_force_loss(monkeypatch):

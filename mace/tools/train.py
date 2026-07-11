@@ -721,22 +721,9 @@ def take_step(
         compile_metrics = None
         compiled_force_loss = getattr(model, "compiled_force_training_loss", None)
         has_compiled_force_loss = callable(compiled_force_loss)
-        unsupported_compile_outputs = bool(
-            has_compiled_force_loss
-            and output_args["forces"]
-            and (output_args["virials"] or output_args["stress"])
-        )
         can_use_compiled_force_loss = bool(
-            has_compiled_force_loss
-            and output_args["forces"]
-            and not output_args["virials"]
-            and not output_args["stress"]
+            has_compiled_force_loss and output_args["forces"]
         )
-        if unsupported_compile_outputs:
-            compile_metrics = {
-                "edge_force_compile": False,
-                "edge_force_compile_disabled_reason": "unsupported_outputs",
-            }
         with get_float32_matmul_precision_context(precision_config):
             if can_use_compiled_force_loss:
                 loss, compile_metrics = compiled_force_loss(
