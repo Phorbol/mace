@@ -742,9 +742,13 @@ def take_step(
                     )
                     loss = loss_fn(pred=output, ref=batch)
         retain_graph_for_backward = False
+        compiled_param_grad_tensors = ()
         if compile_metrics is not None:
             retain_graph_for_backward = bool(
                 compile_metrics.pop("_retain_graph_for_backward", False)
+            )
+            compiled_param_grad_tensors = compile_metrics.pop(
+                "_compiled_param_grad_tensors", ()
             )
 
         skip_result = None
@@ -755,6 +759,19 @@ def take_step(
                 return loss, skip_result, grad_norm, compile_metrics
 
         loss.backward(retain_graph=retain_graph_for_backward)
+        if compiled_param_grad_tensors:
+            named_parameters = dict(model.named_parameters())
+            for name, grad_source in compiled_param_grad_tensors:
+                parameter = named_parameters[name]
+                if grad_source.grad is None:
+                    parameter.grad = None
+                    continue
+                grad = grad_source.grad.detach().to(
+                    device=parameter.device, dtype=parameter.dtype
+                )
+                if parameter.grad is None:
+                    parameter.grad = torch.empty_like(parameter)
+                parameter.grad.copy_(grad)
         if max_grad_norm is not None:
             grad_norm = stable_clip_grad_norm_(
                 model.parameters(),

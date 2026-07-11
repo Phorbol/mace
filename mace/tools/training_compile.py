@@ -3035,6 +3035,19 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 loss_input_names=compiled.loss_input_names,
                 loss_fn=loss_fn,
             )
+            compiled_param_grad_tensors: tuple[tuple[str, torch.Tensor], ...] = ()
+            if self.config.compile_graph:
+                param_count = len(compiled.param_names)
+                compiled_param_grad_tensors = tuple(
+                    (name, tensor.detach().clone().requires_grad_(True))
+                    for name, tensor in zip(
+                        compiled.param_names, inputs[:param_count], strict=True
+                    )
+                )
+                inputs = [
+                    *(tensor for _, tensor in compiled_param_grad_tensors),
+                    *inputs[param_count:],
+                ]
             executable_outputs = runtime_executable(gradient_input, *inputs)
             if compiled.returns_loss:
                 energy, forces, loss = executable_outputs
@@ -3096,6 +3109,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             }
             if self.config.compile_graph:
                 metrics["_retain_graph_for_backward"] = True
+                metrics["_compiled_param_grad_tensors"] = compiled_param_grad_tensors
             if bucket_sizes is not None:
                 metrics["edge_force_bucket_atoms"] = bucket_sizes[0]
                 metrics["edge_force_bucket_edges"] = bucket_sizes[1]

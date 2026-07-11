@@ -4435,6 +4435,47 @@ def test_take_step_consumes_compiled_force_retain_graph_metric(monkeypatch):
     assert metrics["edge_force_compile"] is True
 
 
+def test_take_step_copies_compiled_parameter_clone_grads_before_optimizer_step():
+    from mace.tools.train import take_step
+
+    class CloneParamCompiledModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(()))
+            self.clone_seen = None
+
+        def compiled_force_training_loss(self, *, batch, loss_fn, output_args):
+            del loss_fn, output_args
+            clone = self.weight.detach().clone().requires_grad_(True)
+            self.clone_seen = clone
+            loss = clone * batch.x.sum()
+            return loss, {
+                "edge_force_compile": True,
+                "edge_force_cache_hit": False,
+                "_compiled_param_grad_tensors": (("weight", clone),),
+            }
+
+    model = CloneParamCompiledModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+
+    _, metrics = take_step(
+        model=model,
+        loss_fn=_MiniLoss(),
+        batch=_MiniBatch(),
+        optimizer=optimizer,
+        ema=None,
+        output_args={"forces": True, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+
+    assert model.clone_seen is not model.weight
+    assert model.clone_seen.grad.item() == pytest.approx(1.0)
+    assert model.weight.grad.item() == pytest.approx(1.0)
+    assert model.weight.item() == pytest.approx(0.9)
+    assert "_compiled_param_grad_tensors" not in metrics
+
+
 def test_take_step_retries_eager_after_compile_backward_failure():
     from mace.tools.train import take_step
 
