@@ -551,6 +551,46 @@ def test_edge_force_compile_input_names_exclude_labels_and_geometry():
     assert names == ("positions", "edge_index", "node_attrs", "batch", "ptr", "head")
 
 
+def test_edge_force_compile_loss_input_names_are_loss_specific():
+    from mace.modules import (
+        WeightedEnergyForcesL1L2Loss,
+        WeightedEnergyForcesLoss,
+        WeightedForcesLoss,
+    )
+    from mace.tools.training_compile import edge_force_compile_loss_input_names
+
+    data_keys = {
+        "energy",
+        "forces",
+        "weight",
+        "energy_weight",
+        "forces_weight",
+    }
+
+    assert edge_force_compile_loss_input_names(
+        data_keys, loss_fn=WeightedEnergyForcesLoss()
+    ) == ("energy", "forces", "weight", "energy_weight", "forces_weight")
+    assert edge_force_compile_loss_input_names(
+        data_keys, loss_fn=WeightedForcesLoss()
+    ) == ("forces", "weight", "forces_weight")
+    assert edge_force_compile_loss_input_names(
+        data_keys, loss_fn=WeightedEnergyForcesL1L2Loss()
+    ) == ("energy", "forces", "weight", "energy_weight")
+
+
+def test_edge_force_compile_loss_input_names_reject_missing_loss_specific_keys():
+    from mace.modules import WeightedForcesLoss
+    from mace.tools.training_compile import edge_force_compile_loss_input_names
+
+    assert (
+        edge_force_compile_loss_input_names(
+            {"energy", "weight", "forces_weight"},
+            loss_fn=WeightedForcesLoss(),
+        )
+        == ()
+    )
+
+
 def test_position_force_compile_input_names_include_shifts():
     from mace.tools.training_compile import edge_force_compile_input_names
 

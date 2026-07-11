@@ -350,11 +350,26 @@ _EDGE_FORCE_LOSS_INPUT_KEYS = (
 )
 
 
-def edge_force_compile_loss_input_names(data_keys) -> tuple[str, ...]:
+def _compiled_tensor_loss_input_names_for_loss(
+    loss_fn: torch.nn.Module | None,
+) -> tuple[str, ...]:
+    if loss_fn is None or _is_weighted_energy_forces_loss(loss_fn):
+        return _EDGE_FORCE_LOSS_INPUT_KEYS
+    if _is_weighted_forces_loss(loss_fn):
+        return ("forces", "weight", "forces_weight")
+    if _is_weighted_energy_forces_l1l2_loss(loss_fn):
+        return ("energy", "forces", "weight", "energy_weight")
+    return ()
+
+
+def edge_force_compile_loss_input_names(
+    data_keys, *, loss_fn: torch.nn.Module | None = None
+) -> tuple[str, ...]:
     keys = set(data_keys)
-    if not all(name in keys for name in _EDGE_FORCE_LOSS_INPUT_KEYS):
+    input_keys = _compiled_tensor_loss_input_names_for_loss(loss_fn)
+    if not input_keys or not all(name in keys for name in input_keys):
         return ()
-    return _EDGE_FORCE_LOSS_INPUT_KEYS
+    return input_keys
 
 
 @dataclasses.dataclass(frozen=True)
@@ -499,7 +514,7 @@ def _edge_force_requires_non_energy_force_outputs(loss_fn: torch.nn.Module) -> b
 def _edge_force_can_compile_loss(loss_fn: torch.nn.Module, data_keys) -> bool:
     capability = edge_force_loss_output_capability(loss_fn)
     return capability.compiled_tensor_loss_supported and bool(
-        edge_force_compile_loss_input_names(data_keys)
+        edge_force_compile_loss_input_names(data_keys, loss_fn=loss_fn)
     )
 
 
@@ -2130,7 +2145,9 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             _compiled_tensor_loss_kind(loss_fn) if compile_loss else ""
         )
         loss_input_names = (
-            edge_force_compile_loss_input_names(data_dict.keys()) if compile_loss else ()
+            edge_force_compile_loss_input_names(data_dict.keys(), loss_fn=loss_fn)
+            if compile_loss
+            else ()
         )
         param_names = _compiled_parameter_names(self.model)
         example_inputs = tuple(
