@@ -146,6 +146,16 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=True,
     )
     parser.add_argument(
+        "--edge_force_compile_reuse_executable",
+        help=(
+            "Reuse graph-compiled edge-force executables across optimizer steps. "
+            "Experimental: default is disabled because retained executables have "
+            "failed long-run parity checks on some PyTorch/e3nn stacks."
+        ),
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
         "--edge_force_compile_shape_padding",
         help="Allow Inductor shape_padding for the edge-force FX graph compile",
         action=argparse.BooleanOptionalAction,

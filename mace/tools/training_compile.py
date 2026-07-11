@@ -66,6 +66,7 @@ class EdgeForceCompileConfig:
     bucket_edges: tuple[int, ...] = ()
     bucket_margin: float = 1.0
     refresh_executable_each_step: bool | None = None
+    reuse_executable_across_steps: bool = False
     parity_check_interval: int = 0
     parity_check_gradients: bool = True
     parity_check_strict: bool = True
@@ -3213,7 +3214,11 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     virials=virials,
                 )
             release_executable_after_step = bool(
-                self.config.compile_graph and self.config.refresh_executable_each_step
+                self.config.compile_graph
+                and (
+                    self.config.refresh_executable_each_step
+                    or not self.config.reuse_executable_across_steps
+                )
             )
             if release_executable_after_step:
                 compiled.executable = None

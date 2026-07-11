@@ -434,6 +434,7 @@ def test_edge_force_compile_config_defaults_to_disabled():
     assert config.rtol == 1.0e-4
     assert config.cache_hit_gate is False
     assert config.refresh_executable_each_step is False
+    assert config.reuse_executable_across_steps is False
 
 
 def test_edge_force_symbolic_config_reuses_cached_executable_by_default():
@@ -442,6 +443,7 @@ def test_edge_force_symbolic_config_reuses_cached_executable_by_default():
     config = EdgeForceCompileConfig(tracing_mode="symbolic")
 
     assert config.refresh_executable_each_step is False
+    assert config.reuse_executable_across_steps is False
 
 
 def test_edge_force_compile_gate_rejects_disabled_config():
@@ -2459,7 +2461,7 @@ def test_edge_force_compiled_tensor_loss_compile_graph_requests_outer_retain_gra
     assert metrics["edge_force_compile"] is True
     assert metrics["edge_force_compile_loss"] is False
     assert metrics["_retain_graph_for_backward"] is True
-    assert metrics["edge_force_release_executable_after_step"] is False
+    assert metrics["edge_force_release_executable_after_step"] is True
 
 
 def test_edge_force_compiled_loss_bucket_policy_compiles_padded_inputs():
@@ -3125,7 +3127,7 @@ def test_edge_force_cache_hit_refreshes_runtime_executable(monkeypatch):
     assert next(iter(wrapper.cache.values())).executable is None
 
 
-def test_edge_force_compile_graph_reuses_executable_and_requests_outer_retain_graph(
+def test_edge_force_compile_graph_can_opt_in_to_executable_reuse(
     monkeypatch,
 ):
     import types
@@ -3199,6 +3201,7 @@ def test_edge_force_compile_graph_reuses_executable_and_requests_outer_retain_gr
             cache_policy="shape",
             allow_fallback=False,
             refresh_executable_each_step=False,
+            reuse_executable_across_steps=True,
             force_gradient_mode="positions",
             setup_gate="none",
         ),
