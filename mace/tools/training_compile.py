@@ -56,6 +56,7 @@ class EdgeForceCompileConfig:
     rtol: float = 1.0e-4
     cache_hit_gate: bool = False
     setup_gate: str = "strict"
+    direct_closure_check: bool = False
     cache_policy: str = "repeat_only"
     min_repeats: int = 2
     break_even_expected_remaining_hits: int = 0
@@ -2893,6 +2894,44 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 )
             log_phase_done("gate_reference", phase_start)
 
+            direct_closure_comparison = None
+            if self.config.direct_closure_check:
+                phase_start = log_phase_start("gate_direct_closure_candidate")
+                if self.config.parity_check_gradients:
+                    direct_closure_candidate = _edge_force_snapshot_from_executable(
+                        model=self.model,
+                        batch=batch,
+                        loss_fn=loss_fn,
+                        executable=closure,
+                        input_names=input_names,
+                        bucket_sizes=bucket_sizes,
+                        param_names=param_names,
+                        loss_input_names=loss_input_names,
+                        force_gradient_mode=self.config.force_gradient_mode,
+                        output_names=output_names,
+                        clone_parameter_inputs=self.config.compile_graph,
+                    )
+                else:
+                    direct_closure_candidate = _edge_force_value_snapshot_from_executable(
+                        model=self.model,
+                        batch=batch,
+                        loss_fn=loss_fn,
+                        executable=closure,
+                        input_names=input_names,
+                        bucket_sizes=bucket_sizes,
+                        param_names=param_names,
+                        loss_input_names=loss_input_names,
+                        force_gradient_mode=self.config.force_gradient_mode,
+                        output_names=output_names,
+                    )
+                direct_closure_comparison = _compare_edge_force_snapshots(
+                    reference,
+                    direct_closure_candidate,
+                    atol=self.config.atol,
+                    rtol=self.config.rtol,
+                )
+                log_phase_done("gate_direct_closure_candidate", phase_start)
+
             phase_start = log_phase_start("gate_candidate")
             if self.config.parity_check_gradients:
                 candidate = _edge_force_snapshot_from_executable(
@@ -2929,6 +2968,8 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 atol=self.config.atol,
                 rtol=self.config.rtol,
             )
+            if direct_closure_comparison is not None:
+                comparison["direct_closure_comparison"] = direct_closure_comparison
             gate_result = edge_force_compile_result_from_trace(
                 trace_result=trace_result,
                 comparison=comparison,

@@ -491,6 +491,7 @@ def test_edge_force_compile_config_defaults_to_disabled():
     assert config.atol == 1.0e-5
     assert config.rtol == 1.0e-4
     assert config.cache_hit_gate is False
+    assert config.direct_closure_check is False
     assert config.refresh_executable_each_step is False
     assert config.reuse_executable_across_steps is False
     assert config.max_executable_reuse_steps == 0
@@ -3678,6 +3679,7 @@ def test_arg_parser_accepts_edge_force_compile_flags():
             "--edge_force_compile_strip_detach",
             "--edge_force_compile_setup_gate",
             "none",
+            "--edge_force_compile_direct_closure_check",
             "--no-edge_force_compile_cache_hit_gate",
             "--edge_force_compile_atol",
             "5e-5",
@@ -3722,6 +3724,7 @@ def test_arg_parser_accepts_edge_force_compile_flags():
     assert args.edge_force_compile_force_gradient_mode == "positions"
     assert args.edge_force_compile_strip_detach is True
     assert args.edge_force_compile_setup_gate == "none"
+    assert args.edge_force_compile_direct_closure_check is True
     assert args.edge_force_compile_cache_hit_gate is False
     assert args.edge_force_compile_atol == 5e-5
     assert args.edge_force_compile_rtol == 2e-4
@@ -3752,13 +3755,16 @@ def test_arg_parser_edge_force_diagnostic_flags_default_to_off():
             "edge-force-diagnostic",
             "--edge_force_compile_cache_hit_gate",
             "--edge_force_compile_strip_detach",
+            "--edge_force_compile_direct_closure_check",
         ]
     )
 
     assert default_args.edge_force_compile_cache_hit_gate is False
     assert default_args.edge_force_compile_strip_detach is False
+    assert default_args.edge_force_compile_direct_closure_check is False
     assert enabled_args.edge_force_compile_cache_hit_gate is True
     assert enabled_args.edge_force_compile_strip_detach is True
+    assert enabled_args.edge_force_compile_direct_closure_check is True
 
 
 def test_arg_parser_accepts_training_shuffle_flag():
@@ -4582,7 +4588,9 @@ def test_edge_force_compile_graph_setup_gate_can_check_parameter_grads(
         training_compile, "rebuild_fx_graph_module", lambda graph_module: graph_module
     )
     monkeypatch.setattr(
-        training_compile, "_position_force_snapshot", lambda **kwargs: snapshot_payload(0.0)
+        training_compile,
+        "_position_force_snapshot",
+        lambda **kwargs: snapshot_payload(0.0),
     )
     monkeypatch.setattr(
         training_compile,
@@ -4621,6 +4629,97 @@ def test_edge_force_compile_graph_setup_gate_can_check_parameter_grads(
             output_args={"forces": True, "virials": False, "stress": False},
         )
 
+
+def test_edge_force_compile_direct_closure_check_reports_pre_trace_parity(
+    monkeypatch,
+):
+    import types
+
+    import pytest
+
+    from mace.modules import WeightedEnergyForcesLoss
+    from mace.tools import training_compile
+
+    model = create_tiny_mace("cpu")
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    first_param_name = next(
+        name for name, param in model.named_parameters() if param.requires_grad
+    )
+    captured = {}
+    graph_executable = object()
+
+    def fake_trace_force_closure(fn, example_inputs, **kwargs):
+        del example_inputs, kwargs
+        captured["closure"] = fn
+        return types.SimpleNamespace(
+            graph_module=types.SimpleNamespace(
+                graph=types.SimpleNamespace(nodes=[object()])
+            ),
+            detach_nodes_before=0,
+            detach_nodes_after=0,
+        )
+
+    def fake_compile_fx_graph_module(*args, **kwargs):
+        del args, kwargs
+        return graph_executable, {"compile_graph": True}
+
+    def snapshot_payload(grad_value):
+        return {
+            "energy": torch.zeros(1),
+            "forces": torch.zeros_like(batch.positions),
+            "loss": torch.zeros(()),
+            "grads": {
+                first_param_name: torch.full_like(
+                    dict(model.named_parameters())[first_param_name], grad_value
+                )
+            },
+        }
+
+    def fake_candidate_snapshot(*, executable, **kwargs):
+        del kwargs
+        return snapshot_payload(0.0 if executable is captured["closure"] else 1.0)
+
+    monkeypatch.setattr(
+        training_compile, "trace_force_closure", fake_trace_force_closure
+    )
+    monkeypatch.setattr(
+        training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "rebuild_fx_graph_module", lambda graph_module: graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "_position_force_snapshot", lambda **kwargs: snapshot_payload(0.0)
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_edge_force_snapshot_from_executable",
+        fake_candidate_snapshot,
+    )
+
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        model,
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=True,
+            cache_hit_gate=False,
+            cache_policy="shape",
+            allow_fallback=False,
+            refresh_executable_each_step=False,
+            force_gradient_mode="positions",
+            setup_gate="strict",
+            parity_check_gradients=True,
+            direct_closure_check=True,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="direct_closure_comparison"):
+        wrapper._compile_step(
+            batch=batch,
+            loss_fn=WeightedEnergyForcesLoss(),
+            cache_key=("shape",),
+            output_args={"forces": True, "virials": False, "stress": False},
+        )
 
 def test_edge_force_position_mode_uncompiled_graph_preserves_force_loss_parameter_grads():
     from mace.modules import WeightedEnergyForcesLoss

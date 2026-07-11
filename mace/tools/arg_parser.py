@@ -227,6 +227,16 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=False,
     )
     parser.add_argument(
+        "--edge_force_compile_direct_closure_check",
+        help=(
+            "During the strict setup gate, compare the raw force-training "
+            "closure against eager before comparing the traced/compiled FX "
+            "executable. Diagnostic only; does not change gate semantics."
+        ),
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
         "--edge_force_compile_atol",
         help="Absolute tolerance for edge-force compile equivalence gates",
         type=float,

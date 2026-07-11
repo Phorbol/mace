@@ -953,6 +953,7 @@ def run(args) -> None:
                 allow_fallback=args.edge_force_compile_allow_fallback,
                 cache_hit_gate=args.edge_force_compile_cache_hit_gate,
                 setup_gate=args.edge_force_compile_setup_gate,
+                direct_closure_check=args.edge_force_compile_direct_closure_check,
                 atol=args.edge_force_compile_atol,
                 rtol=args.edge_force_compile_rtol,
                 cache_policy=args.edge_force_compile_cache_policy,
