@@ -3264,7 +3264,6 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 "edge_force_release_executable_after_step": release_executable_after_step,
             }
             if self.config.compile_graph:
-                metrics["_retain_graph_for_backward"] = True
                 metrics["_compiled_param_grad_tensors"] = compiled_param_grad_tensors
             if bucket_sizes is not None:
                 metrics["edge_force_bucket_atoms"] = bucket_sizes[0]

@@ -2386,7 +2386,7 @@ def test_edge_force_compiled_loss_can_use_position_gradient_mode():
     assert any(param.grad is not None for param in model.parameters())
 
 
-def test_edge_force_compiled_tensor_loss_compile_graph_requests_outer_retain_graph(monkeypatch):
+def test_edge_force_compiled_tensor_loss_compile_graph_copies_parameter_grads(monkeypatch):
     import types
 
     from mace.modules import WeightedEnergyForcesLoss
@@ -2460,7 +2460,7 @@ def test_edge_force_compiled_tensor_loss_compile_graph_requests_outer_retain_gra
     assert loss.requires_grad is True
     assert metrics["edge_force_compile"] is True
     assert metrics["edge_force_compile_loss"] is False
-    assert metrics["_retain_graph_for_backward"] is True
+    assert "_retain_graph_for_backward" not in metrics
     assert metrics["edge_force_release_executable_after_step"] is True
 
 
@@ -3127,7 +3127,7 @@ def test_edge_force_cache_hit_refreshes_runtime_executable(monkeypatch):
     assert next(iter(wrapper.cache.values())).executable is None
 
 
-def test_edge_force_compile_graph_can_opt_in_to_executable_reuse(
+def test_edge_force_compile_graph_can_opt_in_to_executable_reuse_without_outer_retain_graph(
     monkeypatch,
 ):
     import types
@@ -3219,12 +3219,12 @@ def test_edge_force_compile_graph_can_opt_in_to_executable_reuse(
         output_args={"forces": True, "virials": False, "stress": False},
     )
 
-    assert first_metrics["_retain_graph_for_backward"] is True
+    assert "_retain_graph_for_backward" not in first_metrics
     assert first_metrics["edge_force_release_executable_after_step"] is False
     cached = next(iter(wrapper.cache.values()))
     assert cached.executable is not None
     assert hit_metrics["edge_force_cache_hit"] is True
-    assert hit_metrics["_retain_graph_for_backward"] is True
+    assert "_retain_graph_for_backward" not in hit_metrics
     assert hit_metrics["edge_force_runtime_recompile"] is False
     assert hit_metrics["edge_force_release_executable_after_step"] is False
     assert cached.executable is not None
