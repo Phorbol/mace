@@ -345,6 +345,38 @@ def test_replace_module_parameters_clones_e3nn_linear_weight_for_compile_graph()
         training_compile._restore_module_parameters(saved)
 
 
+def test_edge_force_snapshot_from_executable_can_collect_cloned_parameter_grads():
+    from mace.modules import WeightedEnergyForcesLoss
+    from mace.tools import training_compile
+
+    model = torch.nn.Linear(1, 1, bias=False)
+    model.weight.data.fill_(0.5)
+    batch = _BatchDictAdapter(create_batch("cpu"))
+
+    def executable(positions, *inputs):
+        del positions
+        parameter, ref_forces, ref_energy = inputs
+        scale = parameter.reshape(())
+        return ref_energy * 0.0, ref_forces * scale
+
+    snapshot = training_compile._edge_force_snapshot_from_executable(
+        model=model,
+        batch=batch,
+        loss_fn=WeightedEnergyForcesLoss(energy_weight=0.0, forces_weight=1.0),
+        executable=executable,
+        input_names=("forces", "energy"),
+        param_names=("weight",),
+        force_gradient_mode="positions",
+        output_names=("energy", "forces"),
+        clone_parameter_inputs=True,
+    )
+
+    assert model.weight.grad is None
+    assert set(snapshot["grads"]) == {"weight"}
+    assert snapshot["grads"]["weight"] is not None
+    assert snapshot["grads"]["weight"].shape == model.weight.shape
+
+
 def test_training_compile_helper_noop_cpu():
     from mace.tools.training_compile import prepare_model_for_training_compile
 

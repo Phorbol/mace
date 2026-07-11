@@ -2076,6 +2076,7 @@ def _edge_force_snapshot_from_executable(
     loss_input_names: tuple[str, ...] = (),
     force_gradient_mode: str = "edge",
     output_names: tuple[str, ...] | None = None,
+    clone_parameter_inputs: bool = False,
 ) -> dict[str, Any]:
     model.zero_grad(set_to_none=True)
     if bucket_sizes is None:
@@ -2097,6 +2098,17 @@ def _edge_force_snapshot_from_executable(
         loss_input_names=loss_input_names,
         loss_fn=loss_fn,
     )
+    cloned_param_inputs: tuple[tuple[str, torch.Tensor], ...] = ()
+    if clone_parameter_inputs and param_names:
+        param_count = len(param_names)
+        cloned_param_inputs = tuple(
+            (name, tensor.detach().clone().requires_grad_(True))
+            for name, tensor in zip(param_names, inputs[:param_count], strict=True)
+        )
+        inputs = [
+            *(tensor for _, tensor in cloned_param_inputs),
+            *inputs[param_count:],
+        ]
     executable_outputs = executable(gradient_input, *inputs)
     energy, forces, loss, stress, virials = _parse_edge_force_executable_outputs(
         executable_outputs=executable_outputs,
@@ -2116,11 +2128,19 @@ def _edge_force_snapshot_from_executable(
     loss.backward()
     if hasattr(batch, "forces") and forces.shape[0] != batch.forces.shape[0]:
         forces = forces[: batch.forces.shape[0]]
+    grads = (
+        {
+            name: None if tensor.grad is None else tensor.grad.detach().clone()
+            for name, tensor in cloned_param_inputs
+        }
+        if cloned_param_inputs
+        else _named_parameter_grads(model)
+    )
     return {
         "energy": energy.detach().clone(),
         "forces": forces.detach().clone(),
         "loss": loss.detach().clone(),
-        "grads": _named_parameter_grads(model),
+        "grads": grads,
     }
 
 
@@ -2361,6 +2381,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     loss_input_names=compiled.loss_input_names,
                     force_gradient_mode=compiled.force_gradient_mode,
                     output_names=compiled.output_names,
+                    clone_parameter_inputs=self.config.compile_graph,
                 )
             else:
                 reference = _position_force_value_snapshot(
@@ -2422,6 +2443,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     loss_input_names=compiled.loss_input_names,
                     force_gradient_mode=compiled.force_gradient_mode,
                     output_names=compiled.output_names,
+                    clone_parameter_inputs=self.config.compile_graph,
                 )
             else:
                 reference = _position_force_value_snapshot(
