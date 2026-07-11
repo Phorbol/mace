@@ -2970,15 +2970,14 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     )
                 self.model.zero_grad(set_to_none=True)
             runtime_recompile_seconds: float | None = None
-            release_cached_executable = (
+            runtime_executable = compiled.executable
+            rebuild_runtime_executable = runtime_executable is None or (
                 cache_hit
                 and self.config.compile_graph
                 and self.config.refresh_executable_each_step
             )
-            if release_cached_executable:
+            if rebuild_runtime_executable:
                 compiled.executable = None
-            runtime_executable = compiled.executable
-            if release_cached_executable:
                 runtime_recompile_start = time.perf_counter()
                 runtime_graph_module = rebuild_fx_graph_module(compiled.graph_module)
                 runtime_executable, _ = compile_fx_graph_module(
@@ -3052,6 +3051,10 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     energy=energy,
                     forces=forces,
                 )
+            release_executable_after_step = bool(self.config.compile_graph)
+            if release_executable_after_step:
+                compiled.executable = None
+
             self.cache_policy_state.record_step_time(
                 cache_key,
                 compiled=True,
@@ -3089,7 +3092,10 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 "edge_force_eager_step_seconds_ema": stats.eager_step_seconds_ema,
                 "edge_force_runtime_recompile": runtime_recompile_seconds is not None,
                 "edge_force_runtime_recompile_seconds": runtime_recompile_seconds,
+                "edge_force_release_executable_after_step": release_executable_after_step,
             }
+            if self.config.compile_graph:
+                metrics["_retain_graph_for_backward"] = True
             if bucket_sizes is not None:
                 metrics["edge_force_bucket_atoms"] = bucket_sizes[0]
                 metrics["edge_force_bucket_edges"] = bucket_sizes[1]

@@ -2362,7 +2362,7 @@ def test_edge_force_compiled_loss_can_use_position_gradient_mode():
     assert any(param.grad is not None for param in model.parameters())
 
 
-def test_edge_force_compiled_tensor_loss_compile_graph_does_not_request_outer_retain_graph(monkeypatch):
+def test_edge_force_compiled_tensor_loss_compile_graph_requests_outer_retain_graph(monkeypatch):
     import types
 
     from mace.modules import WeightedEnergyForcesLoss
@@ -2436,7 +2436,8 @@ def test_edge_force_compiled_tensor_loss_compile_graph_does_not_request_outer_re
     assert loss.requires_grad is True
     assert metrics["edge_force_compile"] is True
     assert metrics["edge_force_compile_loss"] is False
-    assert "_retain_graph_for_backward" not in metrics
+    assert metrics["_retain_graph_for_backward"] is True
+    assert metrics["edge_force_release_executable_after_step"] is True
 
 
 def test_edge_force_compiled_loss_bucket_policy_compiles_padded_inputs():
@@ -3062,6 +3063,8 @@ def test_edge_force_cache_hit_refreshes_runtime_executable(monkeypatch):
     )
 
     model = create_tiny_mace("cpu")
+    from mace.modules import WeightedEnergyForcesLoss
+
     wrapper = training_compile.EdgeForceCompiledLossModule(
         model,
         config=training_compile.EdgeForceCompileConfig(
@@ -3071,20 +3074,21 @@ def test_edge_force_cache_hit_refreshes_runtime_executable(monkeypatch):
             cache_policy="shape",
             allow_fallback=False,
             refresh_executable_each_step=True,
+            force_gradient_mode="positions",
         ),
     )
     batch = _BatchDictAdapter(create_batch("cpu"))
 
     wrapper.compiled_force_training_loss(
         batch=batch,
-        loss_fn=EnergyOnlyLoss(),
+        loss_fn=WeightedEnergyForcesLoss(),
         output_args={"forces": True, "virials": False, "stress": False},
     )
     used_labels.clear()
 
     loss, metrics = wrapper.compiled_force_training_loss(
         batch=batch,
-        loss_fn=EnergyOnlyLoss(),
+        loss_fn=WeightedEnergyForcesLoss(),
         output_args={"forces": True, "virials": False, "stress": False},
     )
 
@@ -3099,10 +3103,15 @@ def test_edge_force_cache_hit_refreshes_runtime_executable(monkeypatch):
     assert next(iter(wrapper.cache.values())).executable is None
 
 
-def test_edge_force_cache_hit_does_not_request_outer_retain_graph(monkeypatch):
+def test_edge_force_compile_graph_releases_executable_and_requests_outer_retain_graph(
+    monkeypatch,
+):
     import types
 
     from mace.tools import training_compile
+
+    compiled_labels = []
+    used_labels = []
 
     def fake_trace_force_closure(*args, **kwargs):
         return types.SimpleNamespace(
@@ -3114,9 +3123,15 @@ def test_edge_force_cache_hit_does_not_request_outer_retain_graph(monkeypatch):
         )
 
     def fake_compile_fx_graph_module(*args, **kwargs):
+        label = f"exec{len(compiled_labels)}"
+        compiled_labels.append(label)
+
         def executable(positions, *input_tensors):
             del input_tensors
-            energy = torch.ones(1, dtype=positions.dtype, device=positions.device, requires_grad=True)
+            used_labels.append(label)
+            energy = torch.ones(
+                1, dtype=positions.dtype, device=positions.device, requires_grad=True
+            )
             forces = torch.zeros_like(positions)
             return energy, forces
 
@@ -3162,6 +3177,8 @@ def test_edge_force_cache_hit_does_not_request_outer_retain_graph(monkeypatch):
             cache_policy="shape",
             allow_fallback=False,
             refresh_executable_each_step=False,
+            force_gradient_mode="positions",
+            setup_gate="none",
         ),
     )
     batch = _BatchDictAdapter(create_batch("cpu"))
@@ -3177,9 +3194,14 @@ def test_edge_force_cache_hit_does_not_request_outer_retain_graph(monkeypatch):
         output_args={"forces": True, "virials": False, "stress": False},
     )
 
-    assert "_retain_graph_for_backward" not in first_metrics
+    assert first_metrics["_retain_graph_for_backward"] is True
+    assert first_metrics["edge_force_release_executable_after_step"] is True
+    assert next(iter(wrapper.cache.values())).executable is None
     assert hit_metrics["edge_force_cache_hit"] is True
-    assert "_retain_graph_for_backward" not in hit_metrics
+    assert hit_metrics["_retain_graph_for_backward"] is True
+    assert hit_metrics["edge_force_release_executable_after_step"] is True
+    assert used_labels == ["exec1", "exec2"]
+    assert len(compiled_labels) == 3
 
 
 def test_edge_force_compile_periodic_parity_check_records_gradient_diffs(monkeypatch):
@@ -4370,6 +4392,45 @@ def test_take_step_does_not_retain_outer_graph_for_compiled_force_loss(monkeypat
     )
 
     assert backward_retain_graph_values == [False]
+    assert "_retain_graph_for_backward" not in metrics
+    assert metrics["edge_force_compile"] is True
+
+
+def test_take_step_consumes_compiled_force_retain_graph_metric(monkeypatch):
+    from mace.tools.train import take_step
+
+    class CompiledForceLossModel(_CompiledForceLossModel):
+        def compiled_force_training_loss(self, *, batch, loss_fn, output_args):
+            loss, metrics = super().compiled_force_training_loss(
+                batch=batch, loss_fn=loss_fn, output_args=output_args
+            )
+            metrics["_retain_graph_for_backward"] = True
+            return loss, metrics
+
+    backward_retain_graph_values = []
+    original_backward = torch.Tensor.backward
+
+    def recording_backward(self, *args, **kwargs):
+        backward_retain_graph_values.append(kwargs.get("retain_graph", False))
+        return original_backward(self, *args, **kwargs)
+
+    monkeypatch.setattr(torch.Tensor, "backward", recording_backward)
+
+    model = CompiledForceLossModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+
+    _, metrics = take_step(
+        model=model,
+        loss_fn=_MiniLoss(),
+        batch=_MiniBatch(),
+        optimizer=optimizer,
+        ema=None,
+        output_args={"forces": True, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+
+    assert backward_retain_graph_values == [True]
     assert "_retain_graph_for_backward" not in metrics
     assert metrics["edge_force_compile"] is True
 

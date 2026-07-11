@@ -741,6 +741,12 @@ def take_step(
                         compute_stress=output_args["stress"],
                     )
                     loss = loss_fn(pred=output, ref=batch)
+        retain_graph_for_backward = False
+        if compile_metrics is not None:
+            retain_graph_for_backward = bool(
+                compile_metrics.pop("_retain_graph_for_backward", False)
+            )
+
         skip_result = None
         grad_norm = None
         if guard_config.loss_skip and loss_skip_controller is not None:
@@ -748,7 +754,7 @@ def take_step(
             if skip_result.skip:
                 return loss, skip_result, grad_norm, compile_metrics
 
-        loss.backward()
+        loss.backward(retain_graph=retain_graph_for_backward)
         if max_grad_norm is not None:
             grad_norm = stable_clip_grad_norm_(
                 model.parameters(),
