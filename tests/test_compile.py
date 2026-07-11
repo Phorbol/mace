@@ -4481,6 +4481,39 @@ def test_take_step_disables_functorch_donated_buffer_for_retained_backward(
         functorch_config.donated_buffer = previous
 
 
+def test_take_step_enables_train_detect_anomaly_during_compiled_loss_forward(monkeypatch):
+    from mace.tools.train import take_step
+
+    class AnomalyRecordingModel(_CompiledForceLossModel):
+        def __init__(self):
+            super().__init__()
+            self.forward_anomaly_enabled = None
+
+        def compiled_force_training_loss(self, *, batch, loss_fn, output_args):
+            self.forward_anomaly_enabled = torch.is_anomaly_enabled()
+            return super().compiled_force_training_loss(
+                batch=batch, loss_fn=loss_fn, output_args=output_args
+            )
+
+    monkeypatch.setenv("MACE_TRAIN_DETECT_ANOMALY", "1")
+
+    model = AnomalyRecordingModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+
+    take_step(
+        model=model,
+        loss_fn=_MiniLoss(),
+        batch=_MiniBatch(),
+        optimizer=optimizer,
+        ema=None,
+        output_args={"forces": True, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+
+    assert model.forward_anomaly_enabled is True
+
+
 def test_take_step_honors_train_detect_anomaly_env(monkeypatch):
     from mace.tools.train import take_step
 

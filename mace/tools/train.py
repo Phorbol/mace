@@ -726,7 +726,18 @@ def take_step(
         can_use_compiled_force_loss = bool(
             has_compiled_force_loss and output_args["forces"]
         )
-        with get_float32_matmul_precision_context(precision_config):
+        detect_anomaly = os.environ.get("MACE_TRAIN_DETECT_ANOMALY", "").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        forward_anomaly_context = (
+            torch.autograd.detect_anomaly(check_nan=False)
+            if detect_anomaly
+            else nullcontext()
+        )
+        with forward_anomaly_context, get_float32_matmul_precision_context(precision_config):
             if can_use_compiled_force_loss:
                 loss, compile_metrics = compiled_force_loss(
                     batch=batch,
@@ -767,8 +778,7 @@ def take_step(
         )
         anomaly_context = (
             torch.autograd.detect_anomaly(check_nan=False)
-            if os.environ.get("MACE_TRAIN_DETECT_ANOMALY", "").lower()
-            in {"1", "true", "yes", "on"}
+            if detect_anomaly
             else nullcontext()
         )
         with anomaly_context, backward_context:
