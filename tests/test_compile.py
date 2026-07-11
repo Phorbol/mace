@@ -620,6 +620,39 @@ def test_position_force_compile_input_names_include_shifts():
     )
 
 
+def test_position_force_compile_input_names_include_cell_for_stress():
+    from mace.tools.training_compile import edge_force_compile_input_names
+
+    names = edge_force_compile_input_names(
+        {
+            "positions",
+            "edge_index",
+            "node_attrs",
+            "batch",
+            "ptr",
+            "head",
+            "shifts",
+            "cell",
+            "energy",
+            "forces",
+            "stress",
+            "virials",
+        },
+        force_gradient_mode="positions",
+    )
+
+    assert names == (
+        "positions",
+        "edge_index",
+        "shifts",
+        "cell",
+        "node_attrs",
+        "batch",
+        "ptr",
+        "head",
+    )
+
+
 def test_select_by_node_heads_matches_advanced_indexing():
     from mace.tools.training_compile import _select_by_node_heads
 

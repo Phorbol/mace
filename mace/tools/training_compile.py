@@ -319,6 +319,7 @@ _POSITION_FORCE_INPUT_KEYS = (
     "positions",
     "edge_index",
     "shifts",
+    "cell",
     "node_attrs",
     "batch",
     "ptr",
