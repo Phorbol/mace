@@ -176,6 +176,16 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default="edge",
     )
     parser.add_argument(
+        "--edge_force_compile_strip_detach",
+        help=(
+            "Strip aten.detach nodes from the traced edge-force FX graph. "
+            "This is disabled by default because broad detach removal can "
+            "change higher-order force-training autograd semantics."
+        ),
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
         "--edge_force_compile_setup_gate",
         help=(
             "Initial setup equivalence gate for edge-force compile. "
@@ -213,7 +223,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         "--edge_force_compile_cache_policy",
         help="Cache policy for edge-force compile",
         type=str,
-        choices=["shape", "repeat_only", "bucket", "dynamic"],
+        choices=["shape", "repeat_only", "bucket", "dynamic", "break_even"],
         default="repeat_only",
     )
     parser.add_argument(
@@ -221,6 +231,24 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         help="Minimum exact-shape repeats before repeat_only policy compiles",
         type=int,
         default=2,
+    )
+    parser.add_argument(
+        "--edge_force_compile_break_even_expected_remaining_hits",
+        help=(
+            "Expected remaining hits for a bucket when using the break_even "
+            "edge-force compile cache policy"
+        ),
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--edge_force_compile_max_cache_entries",
+        help=(
+            "Maximum number of compiled edge-force executables to retain. "
+            "Set to 0 to disable executable caching."
+        ),
+        type=int,
+        default=32,
     )
     parser.add_argument(
         "--edge_force_compile_disable_negative_speedup",
@@ -1166,11 +1194,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "HybridMuon parameter coverage policy. 'mace' keeps conservative "
             "MACE-safe routing; 'tace' follows TACE/DPA4-style broad matrix "
             "routing with MACE hard exclusions for embeddings, atomic heads, "
-            "biases, norms, and scales."
+            "biases, norms, and scales; 'module' uses OptimSpec declarations "
+            "on owning modules."
         ),
         type=str,
         default="mace",
-        choices=["mace", "tace"],
+        choices=["mace", "tace", "module"],
     )
     parser.add_argument(
         "--hybrid_muon_magma_lite",
@@ -1178,6 +1207,52 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "Enable DPA4/TACE-style Magma-lite damping for Muon-routed matrix "
             "updates based on momentum-gradient alignment."
         ),
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--hybrid_muon_adam_variant",
+        help=(
+            "Optimizer variant for HybridMuon fallback parameters. 'adamw' uses "
+            "decoupled weight decay; 'adam' uses coupled L2 weight decay."
+        ),
+        type=str,
+        default="adamw",
+        choices=["adam", "adamw"],
+    )
+    parser.add_argument(
+        "--hybrid_muon_lr_scale_mode",
+        help=(
+            "Muon update scaling mode. 'original' preserves the existing "
+            "sqrt(max(1, rows / cols)) scale; 'match_rms' uses "
+            "hybrid_muon_match_rms_coeff * sqrt(max(rows, cols)); 'none' "
+            "disables shape scaling."
+        ),
+        type=str,
+        default="original",
+        choices=["original", "match_rms", "none"],
+    )
+    parser.add_argument(
+        "--hybrid_muon_match_rms_coeff",
+        help="Coefficient used by --hybrid_muon_lr_scale_mode=match_rms",
+        type=float,
+        default=0.18,
+    )
+    parser.add_argument(
+        "--hybrid_muon_magma_initial_score",
+        help="Initial Magma-lite EMA score for new Muon matrix blocks",
+        type=float,
+        default=0.5,
+    )
+    parser.add_argument(
+        "--hybrid_muon_magma_warmup_steps",
+        help="Number of Muon steps to update Magma-lite EMA without damping",
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--hybrid_muon_magma_bypass_first_step",
+        help="Bypass Magma-lite damping on the first update for each matrix block",
         action="store_true",
         default=False,
     )

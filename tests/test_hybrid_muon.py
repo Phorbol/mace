@@ -1,4 +1,5 @@
 import argparse
+import math
 
 import torch
 
@@ -58,6 +59,47 @@ def test_hybrid_muon_routes_only_safe_dense_mace_weights():
     assert sum(len(group["params"]) for group in groups) == len(list(model.parameters()))
     assert next(group for group in groups if group["route"] == "muon")["lr"] == 1.0e-4
     assert next(group for group in groups if group["route"] == "adam")["lr"] == 1.0e-3
+
+
+def test_hybrid_muon_rejects_duplicate_trainable_parameter_routes():
+    param = torch.nn.Parameter(torch.ones(4, 4))
+
+    try:
+        build_hybrid_muon_param_groups(
+            [
+                ("radial_embedding.0.weight", param),
+                ("radial_embedding.1.weight", param),
+            ],
+            lr=1.0e-3,
+            weight_decay=1.0e-4,
+            muon_weight_decay=0.0,
+            muon_lr_factor=0.1,
+        )
+    except ValueError as exc:
+        assert "appears more than once" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_hybrid_muon_rejects_duplicate_parameter_names():
+    first = torch.nn.Parameter(torch.ones(4, 4))
+    second = torch.nn.Parameter(torch.ones(4, 4))
+
+    try:
+        build_hybrid_muon_param_groups(
+            [
+                ("radial_embedding.0.weight", first),
+                ("radial_embedding.0.weight", second),
+            ],
+            lr=1.0e-3,
+            weight_decay=1.0e-4,
+            muon_weight_decay=0.0,
+            muon_lr_factor=0.1,
+        )
+    except ValueError as exc:
+        assert "Duplicate parameter name" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
 
 
 def test_hybrid_muon_routes_singleton_matrix_views_to_adam():
@@ -160,6 +202,210 @@ def test_hybrid_muon_tace_routing_recovers_flattened_e3nn_linear_blocks(monkeypa
     optimizer.step()
 
     assert calls == [(2, 4, 4)]
+
+
+def test_hybrid_muon_tace_flat_specs_survive_optimizer_resume(monkeypatch):
+    class FakeInstruction:
+        path_shape = (2, 3)
+
+    class FakeLinear(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.arange(6.0))
+            self.instructions = [FakeInstruction()]
+
+    def fake_orthogonalize(update, steps=None):
+        return torch.ones_like(update)
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon._orthogonalize_newton_schulz",
+        fake_orthogonalize,
+    )
+
+    first = FakeLinear()
+    first.weight.grad = torch.ones_like(first.weight)
+    first_groups, _ = build_hybrid_muon_param_groups(
+        [("interactions.0.linear.weight", first.weight)],
+        lr=1.0,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=1.0,
+        muon_mode="slice",
+        routing="tace",
+        module_map={"interactions.0.linear": first},
+    )
+    first_optimizer = HybridMuon(first_groups, lr=1.0)
+    first_optimizer.step()
+
+    resumed = FakeLinear()
+    resumed_groups, _ = build_hybrid_muon_param_groups(
+        [("interactions.0.linear.weight", resumed.weight)],
+        lr=1.0,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=1.0,
+        muon_mode="slice",
+        routing="tace",
+        module_map={"interactions.0.linear": resumed},
+    )
+    resumed_optimizer = HybridMuon(resumed_groups, lr=1.0)
+    resumed_optimizer.load_state_dict(first_optimizer.state_dict())
+
+    before = resumed.weight.detach().clone()
+    resumed.weight.grad = torch.ones_like(resumed.weight)
+    resumed_optimizer.step()
+
+    assert not torch.allclose(resumed.weight, before)
+    state_dict = resumed_optimizer.state_dict()
+    muon_group = next(
+        group for group in state_dict["param_groups"] if group["route"] == "muon"
+    )
+    assert "matrix_specs" not in muon_group
+    assert muon_group["param_names"] == ["interactions.0.linear.weight"]
+
+
+def test_hybrid_muon_state_dict_does_not_remove_runtime_matrix_specs(monkeypatch):
+    class FakeInstruction:
+        path_shape = (2, 3)
+
+    class FakeLinear(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.arange(6.0))
+            self.instructions = [FakeInstruction()]
+
+    def fake_orthogonalize(update, steps=None):
+        return torch.ones_like(update)
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon._orthogonalize_newton_schulz",
+        fake_orthogonalize,
+    )
+
+    module = FakeLinear()
+    groups, _ = build_hybrid_muon_param_groups(
+        [("interactions.0.linear.weight", module.weight)],
+        lr=1.0,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=1.0,
+        muon_mode="slice",
+        routing="tace",
+        module_map={"interactions.0.linear": module},
+    )
+    optimizer = HybridMuon(groups, lr=1.0)
+
+    state_dict = optimizer.state_dict()
+
+    assert "matrix_specs" not in next(
+        group for group in state_dict["param_groups"] if group["route"] == "muon"
+    )
+    runtime_group = next(
+        group for group in optimizer.param_groups if group["route"] == "muon"
+    )
+    assert "matrix_specs" in runtime_group
+
+    before = module.weight.detach().clone()
+    module.weight.grad = torch.ones_like(module.weight)
+    optimizer.step()
+
+    assert not torch.allclose(module.weight, before)
+
+
+def test_hybrid_muon_load_state_ignores_serialized_matrix_specs(monkeypatch):
+    class FakeInstruction:
+        path_shape = (2, 3)
+
+    class FakeLinear(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.arange(6.0))
+            self.instructions = [FakeInstruction()]
+
+    def fake_orthogonalize(update, steps=None):
+        return torch.ones_like(update)
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon._orthogonalize_newton_schulz",
+        fake_orthogonalize,
+    )
+
+    first = FakeLinear()
+    first_groups, _ = build_hybrid_muon_param_groups(
+        [("interactions.0.linear.weight", first.weight)],
+        lr=1.0,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=1.0,
+        muon_mode="slice",
+        routing="tace",
+        module_map={"interactions.0.linear": first},
+    )
+    first_optimizer = HybridMuon(first_groups, lr=1.0)
+    checkpoint = first_optimizer.state_dict()
+    muon_group = next(
+        group for group in checkpoint["param_groups"] if group["route"] == "muon"
+    )
+    muon_group["matrix_specs"] = {
+        "interactions.0.linear.weight": [
+            {"offset": 0, "numel": 6, "matrix_view_shape": (1, 1, 6)}
+        ]
+    }
+
+    resumed = FakeLinear()
+    resumed_groups, _ = build_hybrid_muon_param_groups(
+        [("interactions.0.linear.weight", resumed.weight)],
+        lr=1.0,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=1.0,
+        muon_mode="slice",
+        routing="tace",
+        module_map={"interactions.0.linear": resumed},
+    )
+    resumed_optimizer = HybridMuon(resumed_groups, lr=1.0)
+    resumed_optimizer.load_state_dict(checkpoint)
+
+    runtime_group = next(
+        group for group in resumed_optimizer.param_groups if group["route"] == "muon"
+    )
+    assert runtime_group["matrix_specs"]["interactions.0.linear.weight"][0][
+        "matrix_view_shape"
+    ] == (1, 2, 3)
+
+    before = resumed.weight.detach().clone()
+    resumed.weight.grad = torch.ones_like(resumed.weight)
+    resumed_optimizer.step()
+
+    assert not torch.allclose(resumed.weight, before)
+
+
+def test_hybrid_muon_routed_param_without_matrix_view_raises():
+    param = torch.nn.Parameter(torch.ones(4))
+    param.grad = torch.ones_like(param)
+    optimizer = HybridMuon(
+        [
+            {
+                "params": [param],
+                "route": "muon",
+                "lr": 1.0,
+                "weight_decay": 0.0,
+                "beta": 0.9,
+                "muon_mode": "slice",
+                "matrix_specs": {},
+                "param_names": ["flat.weight"],
+            }
+        ],
+        lr=1.0,
+    )
+
+    try:
+        optimizer.step()
+    except RuntimeError as exc:
+        assert "flat.weight" in str(exc)
+        assert "no valid MatrixSpec or matrix view" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
 
 
 def test_hybrid_muon_tace_routing_recovers_skip_tp_species_blocks(monkeypatch):
@@ -332,6 +578,76 @@ def test_batched_newton_schulz_matches_per_tensor_helper():
         assert torch.allclose(batched, looped, atol=1.0e-6, rtol=1.0e-6)
 
 
+def test_hybrid_muon_muon_lr_scale_modes(monkeypatch):
+    def fake_orthogonalize(update, steps=None):
+        return torch.ones_like(update)
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon._orthogonalize_newton_schulz",
+        fake_orthogonalize,
+    )
+
+    cases = (
+        ("original", 0.18, math.sqrt(4.0)),
+        ("none", 0.18, 1.0),
+        ("match_rms", 0.25, 0.25 * math.sqrt(8.0)),
+    )
+    for mode, coeff, expected_scale in cases:
+        param = torch.nn.Parameter(torch.zeros(8, 2))
+        param.grad = torch.ones_like(param)
+        groups, _ = build_hybrid_muon_param_groups(
+            [("interactions.0.conv_tp_weights.layer0.weight", param)],
+            lr=1.0,
+            weight_decay=0.0,
+            muon_weight_decay=0.0,
+            muon_lr_factor=1.0,
+            muon_lr_scale_mode=mode,
+            muon_match_rms_coeff=coeff,
+        )
+        optimizer = HybridMuon(groups, lr=1.0)
+
+        optimizer.step()
+
+        assert torch.allclose(param, torch.full_like(param, -expected_scale))
+        muon_group = next(
+            group for group in optimizer.param_groups if group["route"] == "muon"
+        )
+        assert muon_group["muon_lr_scale_mode"] == mode
+        assert muon_group["muon_match_rms_coeff"] == coeff
+
+
+def test_hybrid_muon_rejects_invalid_muon_lr_scale_options():
+    param = torch.nn.Parameter(torch.zeros(8, 2))
+
+    try:
+        build_hybrid_muon_param_groups(
+            [("interactions.0.conv_tp_weights.layer0.weight", param)],
+            lr=1.0,
+            weight_decay=0.0,
+            muon_weight_decay=0.0,
+            muon_lr_factor=1.0,
+            muon_lr_scale_mode="bad",
+        )
+    except ValueError as exc:
+        assert "hybrid_muon_lr_scale_mode" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+    try:
+        build_hybrid_muon_param_groups(
+            [("interactions.0.conv_tp_weights.layer0.weight", param)],
+            lr=1.0,
+            weight_decay=0.0,
+            muon_weight_decay=0.0,
+            muon_lr_factor=1.0,
+            muon_match_rms_coeff=0.0,
+        )
+    except ValueError as exc:
+        assert "muon_match_rms_coeff must be positive" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
 def test_hybrid_muon_batches_same_shape_muon_updates(monkeypatch):
     params = [torch.nn.Parameter(torch.randn(4, 8)) for _ in range(3)]
     for param in params:
@@ -362,6 +678,37 @@ def test_hybrid_muon_batches_same_shape_muon_updates(monkeypatch):
 
     assert calls == [(3, 4, 8)]
 
+
+def test_hybrid_muon_batches_same_short_side_with_column_padding(monkeypatch):
+    wide = torch.nn.Parameter(torch.randn(2, 4))
+    tall = torch.nn.Parameter(torch.randn(6, 2))
+    wide.grad = torch.randn_like(wide)
+    tall.grad = torch.randn_like(tall)
+    groups, _ = build_hybrid_muon_param_groups(
+        [
+            ("interactions.0.conv_tp_weights.wide.weight", wide),
+            ("interactions.0.conv_tp_weights.tall.weight", tall),
+        ],
+        lr=1.0e-3,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+    )
+    optimizer = HybridMuon(groups, lr=1.0e-3)
+    calls = []
+
+    def fake_batched(updates, steps=None):
+        calls.append(tuple(updates.shape))
+        return torch.zeros_like(updates)
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon._orthogonalize_newton_schulz_batched",
+        fake_batched,
+    )
+
+    optimizer.step()
+
+    assert calls == [(2, 2, 6)]
 
 
 def test_hybrid_muon_keeps_momentum_buffer_separate_from_nesterov_update(monkeypatch):
@@ -422,6 +769,66 @@ def test_hybrid_muon_magma_lite_damps_misaligned_muon_update(monkeypatch):
     expected_scale = 0.1 + 0.9 * magma_score.item()
     assert torch.allclose(param, torch.full_like(param, -expected_scale))
 
+def test_hybrid_muon_magma_lite_initial_score_is_configurable(monkeypatch):
+    param = torch.nn.Parameter(torch.zeros(2, 2))
+    param.grad = torch.ones_like(param)
+    groups, _ = build_hybrid_muon_param_groups(
+        [("interactions.0.conv_tp_weights.layer0.weight", param)],
+        lr=1.0,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=1.0,
+        beta=0.9,
+        magma_lite=True,
+        magma_initial_score=0.0,
+    )
+    optimizer = HybridMuon(groups, lr=1.0)
+
+    def fake_orthogonalize(update, steps=None):
+        return torch.ones_like(update)
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon._orthogonalize_newton_schulz",
+        fake_orthogonalize,
+    )
+
+    optimizer.step()
+
+    expected_score = 0.1
+    expected_scale = 0.1 + 0.9 * expected_score
+    assert torch.allclose(optimizer.state[param]["magma_score"], torch.tensor([expected_score]))
+    assert torch.allclose(param, torch.full_like(param, -expected_scale))
+
+
+def test_hybrid_muon_magma_lite_can_bypass_first_step(monkeypatch):
+    param = torch.nn.Parameter(torch.zeros(2, 2))
+    param.grad = torch.ones_like(param)
+    groups, _ = build_hybrid_muon_param_groups(
+        [("interactions.0.conv_tp_weights.layer0.weight", param)],
+        lr=1.0,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=1.0,
+        beta=0.9,
+        magma_lite=True,
+        magma_bypass_first_step=True,
+    )
+    optimizer = HybridMuon(groups, lr=1.0)
+
+    def fake_orthogonalize(update, steps=None):
+        return torch.ones_like(update)
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon._orthogonalize_newton_schulz",
+        fake_orthogonalize,
+    )
+
+    optimizer.step()
+
+    assert "magma_score" in optimizer.state[param]
+    assert torch.allclose(param, torch.full_like(param, -1.0))
+
+
 def test_hybrid_muon_adam_route_uses_torch_functional_adam(monkeypatch):
     param = torch.nn.Parameter(torch.ones(1, 8))
     param.grad = torch.ones_like(param)
@@ -469,7 +876,42 @@ def test_hybrid_muon_adam_route_uses_torch_functional_adam(monkeypatch):
     assert call["kwargs"]["beta2"] == 0.97
     assert call["kwargs"]["lr"] == 1.0e-3
     assert call["kwargs"]["weight_decay"] == 1.0e-4
+    assert call["kwargs"]["decoupled_weight_decay"] is True
     assert call["kwargs"]["eps"] == 1.0e-7
+
+
+def test_hybrid_muon_adam_variant_can_use_coupled_adam(monkeypatch):
+    param = torch.nn.Parameter(torch.ones(1, 8))
+    param.grad = torch.ones_like(param)
+    calls = []
+
+    def fake_adam(
+        params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps, **kwargs
+    ):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(
+        "mace.tools.hybrid_muon.optim_functional.adam",
+        fake_adam,
+    )
+    groups, _ = build_hybrid_muon_param_groups(
+        [("readouts.0.linear.weight", param)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        adam_variant="adam",
+    )
+    optimizer = HybridMuon(groups, lr=1.0e-3)
+
+    optimizer.step()
+
+    assert len(calls) == 1
+    assert calls[0]["decoupled_weight_decay"] is False
+    adam_group = next(
+        group for group in optimizer.param_groups if group["route"] == "adam"
+    )
+    assert adam_group["adam_variant"] == "adam"
 
 
 def test_hybrid_muon_adam_route_converts_legacy_integer_step_for_foreach():
@@ -494,7 +936,7 @@ def test_hybrid_muon_adam_route_converts_legacy_integer_step_for_foreach():
     assert optimizer.state[param]["step"].item() == 4.0
 
 
-def test_hybrid_muon_adam_route_matches_torch_adam_with_amsgrad():
+def test_hybrid_muon_adam_route_matches_torch_adamw_with_amsgrad():
     torch.manual_seed(12)
     initial = torch.randn(1, 8)
     hybrid_param = torch.nn.Parameter(initial.clone())
@@ -515,7 +957,7 @@ def test_hybrid_muon_adam_route_matches_torch_adam_with_amsgrad():
         amsgrad=True,
     )
     hybrid_optimizer = HybridMuon(groups, lr=lr)
-    torch_optimizer = torch.optim.Adam(
+    torch_optimizer = torch.optim.AdamW(
         [torch_param],
         lr=lr,
         betas=betas,
@@ -609,11 +1051,28 @@ def test_arg_parser_accepts_hybrid_muon_magma_lite_flag():
             "--optimizer",
             "hybrid_muon",
             "--hybrid_muon_magma_lite",
+            "--hybrid_muon_adam_variant",
+            "adam",
+            "--hybrid_muon_lr_scale_mode",
+            "match_rms",
+            "--hybrid_muon_match_rms_coeff",
+            "0.25",
+            "--hybrid_muon_magma_initial_score",
+            "0.25",
+            "--hybrid_muon_magma_warmup_steps",
+            "3",
+            "--hybrid_muon_magma_bypass_first_step",
         ]
     )
 
     assert args.optimizer == "hybrid_muon"
     assert args.hybrid_muon_magma_lite is True
+    assert args.hybrid_muon_adam_variant == "adam"
+    assert args.hybrid_muon_lr_scale_mode == "match_rms"
+    assert args.hybrid_muon_match_rms_coeff == 0.25
+    assert args.hybrid_muon_magma_initial_score == 0.25
+    assert args.hybrid_muon_magma_warmup_steps == 3
+    assert args.hybrid_muon_magma_bypass_first_step is True
 
 
 def test_get_optimizer_builds_hybrid_muon():

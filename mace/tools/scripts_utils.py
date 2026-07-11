@@ -969,11 +969,19 @@ def get_optimizer(
             muon_lr_factor=args.hybrid_muon_lr_factor,
             beta=args.beta,
             adam_betas=(args.beta, 0.999),
+            adam_variant=getattr(args, "hybrid_muon_adam_variant", "adamw"),
+            muon_lr_scale_mode=getattr(args, "hybrid_muon_lr_scale_mode", "original"),
+            muon_match_rms_coeff=getattr(args, "hybrid_muon_match_rms_coeff", 0.18),
             amsgrad=args.amsgrad,
             muon_mode=getattr(args, "hybrid_muon_mode", "2d"),
             routing=getattr(args, "hybrid_muon_routing", "mace"),
             module_map=dict(named_modules) if named_modules is not None else None,
             magma_lite=bool(getattr(args, "hybrid_muon_magma_lite", False)),
+            magma_initial_score=getattr(args, "hybrid_muon_magma_initial_score", 0.5),
+            magma_warmup_steps=getattr(args, "hybrid_muon_magma_warmup_steps", 0),
+            magma_bypass_first_step=bool(
+                getattr(args, "hybrid_muon_magma_bypass_first_step", False)
+            ),
             adam_param_options_by_id=adam_param_options_by_id,
         )
         logging.info(summarize_hybrid_muon_routes(route_summary))

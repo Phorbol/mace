@@ -937,6 +937,7 @@ def run(args) -> None:
             config=EdgeForceCompileConfig(
                 enabled=args.edge_force_compile,
                 tracing_mode=args.edge_force_compile_tracing_mode,
+                strip_detach=args.edge_force_compile_strip_detach,
                 compile_graph=args.edge_force_compile_graph,
                 compile_mode=args.edge_force_compile_mode,
                 compile_dynamic=args.edge_force_compile_dynamic,
@@ -953,6 +954,10 @@ def run(args) -> None:
                 rtol=args.edge_force_compile_rtol,
                 cache_policy=args.edge_force_compile_cache_policy,
                 min_repeats=args.edge_force_compile_min_repeats,
+                break_even_expected_remaining_hits=(
+                    args.edge_force_compile_break_even_expected_remaining_hits
+                ),
+                max_cache_entries=args.edge_force_compile_max_cache_entries,
                 disable_negative_speedup=args.edge_force_compile_disable_negative_speedup,
                 bucket_atoms=parse_edge_force_bucket_sizes(
                     args.edge_force_compile_bucket_atoms

@@ -11,28 +11,62 @@ from mace.tools.scatter import scatter_sum
 
 
 
-def patch_inductor_force_int64_indexing() -> None:
+def _noop_restore() -> None:
+    return
+
+
+def patch_inductor_force_int64_indexing() -> Callable[[], None]:
     try:
         from torch._inductor.codegen.simd import SIMDScheduling
     except Exception:
-        return
+        return _noop_restore
 
     if getattr(SIMDScheduling, "_mace_force_int64_patched", False):
-        return
+        return _noop_restore
+
+    original_can_use_32bit_indexing = SIMDScheduling.can_use_32bit_indexing
+    marker_was_present = hasattr(SIMDScheduling, "_mace_force_int64_patched")
+    original_marker = getattr(SIMDScheduling, "_mace_force_int64_patched", None)
     SIMDScheduling.can_use_32bit_indexing = staticmethod(lambda numel, buffers: False)
     SIMDScheduling._mace_force_int64_patched = True
 
+    def restore() -> None:
+        SIMDScheduling.can_use_32bit_indexing = original_can_use_32bit_indexing
+        if marker_was_present:
+            SIMDScheduling._mace_force_int64_patched = original_marker
+        elif hasattr(SIMDScheduling, "_mace_force_int64_patched"):
+            delattr(SIMDScheduling, "_mace_force_int64_patched")
 
-def apply_force_compile_global_patches() -> None:
+    return restore
+
+
+def apply_force_compile_global_patches() -> Callable[[], None]:
     os.environ.setdefault("TORCHINDUCTOR_MAX_AUTOTUNE_REPORT_CHOICES_STATS", "0")
     os.environ.setdefault("TRITON_PRINT_AUTOTUNING", "0")
+    dynamo_config = None
+    previous_optimize_ddp = None
     try:
         import torch._dynamo.config as dynamo_config
 
+        previous_optimize_ddp = dynamo_config.optimize_ddp
         dynamo_config.optimize_ddp = False
     except Exception:
-        pass
-    patch_inductor_force_int64_indexing()
+        dynamo_config = None
+    maybe_restore_inductor_patches = patch_inductor_force_int64_indexing()
+    restore_inductor_patches = (
+        maybe_restore_inductor_patches
+        if callable(maybe_restore_inductor_patches)
+        else _noop_restore
+    )
+
+    def restore() -> None:
+        try:
+            restore_inductor_patches()
+        finally:
+            if dynamo_config is not None and previous_optimize_ddp is not None:
+                dynamo_config.optimize_ddp = previous_optimize_ddp
+
+    return restore
 
 
 def build_force_compile_inductor_options(
@@ -171,38 +205,44 @@ def compile_fx_graph_module(
 ) -> tuple[Callable[..., Any], dict[str, Any] | None]:
     if not compile_graph:
         return graph_module, None
-    apply_force_compile_global_patches()
-    compile_kwargs: dict[str, Any] = {
-        "backend": "inductor",
-        "dynamic": compile_dynamic,
-        "options": build_force_compile_inductor_options(
-            shape_padding=shape_padding, max_fusion_size=max_fusion_size
-        ),
-    }
-    if compile_mode != "default":
-        compile_kwargs["mode"] = compile_mode
 
+    dynamo_config = None
+    previous_optimize_ddp = None
     try:
-        import torch._functorch.config as functorch_config
-    except (ImportError, AttributeError):
-        return torch.compile(graph_module, **compile_kwargs), compile_kwargs
+        import torch._dynamo.config as dynamo_config
 
-    previous_donated_buffer = functorch_config.donated_buffer
-    functorch_config.donated_buffer = False
+        previous_optimize_ddp = dynamo_config.optimize_ddp
+    except Exception:
+        dynamo_config = None
+
+    restore_global_patches: Callable[[], None] = _noop_restore
     try:
-        executable = torch.compile(graph_module, **compile_kwargs)
+        maybe_restore = apply_force_compile_global_patches()
+        if callable(maybe_restore):
+            restore_global_patches = maybe_restore
+        compile_kwargs: dict[str, Any] = {
+            "backend": "inductor",
+            "dynamic": compile_dynamic,
+            "options": build_force_compile_inductor_options(
+                shape_padding=shape_padding, max_fusion_size=max_fusion_size
+            ),
+        }
+        if compile_mode != "default":
+            compile_kwargs["mode"] = compile_mode
+
+        try:
+            import torch._functorch.config as functorch_config
+        except (ImportError, AttributeError):
+            return torch.compile(graph_module, **compile_kwargs), compile_kwargs
+
+        previous_donated_buffer = functorch_config.donated_buffer
+        functorch_config.donated_buffer = False
+        try:
+            executable = torch.compile(graph_module, **compile_kwargs)
+        finally:
+            functorch_config.donated_buffer = previous_donated_buffer
+        return executable, compile_kwargs
     finally:
-        functorch_config.donated_buffer = previous_donated_buffer
-    return executable, compile_kwargs
-
-
-def disable_functorch_donated_buffer() -> bool:
-    try:
-        import torch._functorch.config as functorch_config
-    except (ImportError, AttributeError):
-        return False
-
-    if not functorch_config.donated_buffer:
-        return False
-    functorch_config.donated_buffer = False
-    return True
+        restore_global_patches()
+        if dynamo_config is not None and previous_optimize_ddp is not None:
+            dynamo_config.optimize_ddp = previous_optimize_ddp

@@ -23,6 +23,24 @@ _MAGMA_SIGMOID_MAX = 1.0 / (1.0 + math.exp(-1.0 / _MAGMA_TAU))
 
 
 @dataclass(frozen=True)
+class OptimSpec:
+    route: str
+    matrix_axes: tuple[int, int] | None = None
+    batch_axes: tuple[int, ...] = ()
+    slice_specs: tuple[dict, ...] = ()
+    lr_scale: float = 1.0
+    weight_decay: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.route not in {"muon", "adam", "adamw"}:
+            raise ValueError("OptimSpec.route must be 'muon', 'adam', or 'adamw'")
+        if self.lr_scale <= 0.0:
+            raise ValueError("OptimSpec.lr_scale must be positive")
+        if self.weight_decay is not None and self.weight_decay < 0.0:
+            raise ValueError("OptimSpec.weight_decay must be non-negative")
+
+
+@dataclass(frozen=True)
 class RouteRecord:
     name: str
     shape: tuple[int, ...]
@@ -80,7 +98,9 @@ _EQUIVARIANT_SLICE_TOKENS = (
 )
 
 _MUON_MODES = {"2d", "slice"}
-_ROUTINGS = {"mace", "tace"}
+_ROUTINGS = {"mace", "tace", "module"}
+_ADAM_VARIANTS = {"adam", "adamw"}
+_MUON_LR_SCALE_MODES = {"original", "match_rms", "none"}
 _MACE_HARD_ADAM_NAME_TOKENS = (
     "bias",
     "norm",
@@ -117,6 +137,153 @@ def _matrix_view_shape(
         batch = math.prod(effective_shape[:-2]) if len(effective_shape) > 2 else 1
         return (int(batch), effective_shape[-2], effective_shape[-1])
     raise ValueError(f"unknown HybridMuon mode: {muon_mode}")
+
+
+def _is_sharded_or_distributed_parameter(
+    param: torch.nn.Parameter | torch.Tensor,
+) -> bool:
+    if bool(getattr(param, "_is_sharded", False)):
+        return True
+    tensor = getattr(param, "data", param)
+    if bool(getattr(tensor, "_is_sharded", False)):
+        return True
+    try:
+        from torch.distributed.tensor import DTensor
+    except Exception:
+        DTensor = None
+    if DTensor is not None and (isinstance(param, DTensor) or isinstance(tensor, DTensor)):
+        return True
+    for attr in ("_dtensor_spec", "_local_tensor", "device_mesh", "placements"):
+        if hasattr(param, attr) or hasattr(tensor, attr):
+            return True
+    class_names = {type(param).__name__, type(tensor).__name__}
+    return bool(class_names & {"DTensor", "ShardedTensor"})
+
+
+def _normalize_axis(axis: int, ndim: int, *, label: str) -> int:
+    axis = int(axis)
+    if axis < 0:
+        axis += ndim
+    if axis < 0 or axis >= ndim:
+        raise ValueError(f"{label} axis {axis} out of bounds for rank-{ndim} tensor")
+    return axis
+
+
+def _optim_spec_matrix_layout(
+    name: str, param: torch.nn.Parameter, optim_spec: OptimSpec
+) -> dict | None:
+    if optim_spec.slice_specs:
+        raise NotImplementedError(
+            "OptimSpec.slice_specs are not implemented yet; use e3nn flat spec "
+            "routing or declare matrix_axes for full tensor parameters"
+        )
+    if optim_spec.matrix_axes is None:
+        if optim_spec.batch_axes:
+            raise ValueError(
+                f"OptimSpec.batch_axes for {name!r} require matrix_axes"
+            )
+        return None
+    if optim_spec.route != "muon":
+        raise ValueError(
+            f"OptimSpec.matrix_axes for {name!r} are only valid for route='muon'"
+        )
+    ndim = int(param.ndim)
+    matrix_axes = tuple(
+        _normalize_axis(axis, ndim, label="matrix_axes")
+        for axis in optim_spec.matrix_axes
+    )
+    if len(matrix_axes) != 2 or len(set(matrix_axes)) != 2:
+        raise ValueError(
+            f"OptimSpec.matrix_axes for {name!r} must contain exactly two unique axes"
+        )
+    batch_axes = tuple(
+        _normalize_axis(axis, ndim, label="batch_axes")
+        for axis in optim_spec.batch_axes
+    )
+    if len(set(batch_axes)) != len(batch_axes):
+        raise ValueError(f"OptimSpec.batch_axes for {name!r} must be unique")
+    if set(matrix_axes) & set(batch_axes):
+        raise ValueError(
+            f"OptimSpec.matrix_axes and batch_axes for {name!r} must not overlap"
+        )
+    covered_axes = set(matrix_axes) | set(batch_axes)
+    missing_axes = tuple(axis for axis in range(ndim) if axis not in covered_axes)
+    non_singleton_missing = [axis for axis in missing_axes if int(param.shape[axis]) != 1]
+    if non_singleton_missing:
+        raise ValueError(
+            f"OptimSpec for {name!r} leaves non-singleton axes "
+            f"{tuple(non_singleton_missing)} outside matrix_axes/batch_axes"
+        )
+    permute = batch_axes + tuple(missing_axes) + matrix_axes
+    inverse_permute = tuple(permute.index(axis) for axis in range(ndim))
+    source_shape = tuple(int(dim) for dim in param.shape)
+    permuted_shape = tuple(source_shape[axis] for axis in permute)
+    batch = math.prod(permuted_shape[:-2]) if len(permuted_shape) > 2 else 1
+    rows = int(permuted_shape[-2])
+    cols = int(permuted_shape[-1])
+    if rows <= 0 or cols <= 0 or batch <= 0:
+        raise ValueError(f"OptimSpec for {name!r} produced an empty matrix view")
+    return {
+        "source_shape": source_shape,
+        "permute": permute,
+        "inverse_permute": inverse_permute,
+        "permuted_shape": permuted_shape,
+        "matrix_view_shape": (int(batch), rows, cols),
+    }
+
+
+def _tensor_to_matrix_layout_view(tensor: torch.Tensor, layout: dict) -> torch.Tensor:
+    return tensor.permute(tuple(layout["permute"])).reshape(
+        tuple(layout["matrix_view_shape"])
+    )
+
+
+def _matrix_layout_view_to_tensor(
+    matrix_update: torch.Tensor, layout: dict
+) -> torch.Tensor:
+    return (
+        matrix_update.reshape(tuple(layout["permuted_shape"]))
+        .permute(tuple(layout["inverse_permute"]))
+        .reshape(tuple(layout["source_shape"]))
+    )
+
+
+def _module_declared_optim_spec(
+    name: str,
+    param: torch.nn.Parameter,
+    module_map: dict[str, torch.nn.Module] | None,
+) -> OptimSpec:
+    if module_map is None:
+        raise RuntimeError(
+            "HybridMuon routing='module' requires a module_map with owning modules"
+        )
+    module_name, _, local_name = name.rpartition(".")
+    if not module_name:
+        raise RuntimeError(
+            f"HybridMuon routing='module' cannot resolve owner module for {name!r}"
+        )
+    module = module_map.get(module_name)
+    if module is None or getattr(module, local_name, None) is not param:
+        raise RuntimeError(
+            f"HybridMuon routing='module' requires owner module {module_name!r} "
+            f"for parameter {name!r}"
+        )
+
+    spec = None
+    getter = getattr(module, "hybrid_muon_optim_spec", None)
+    if callable(getter):
+        spec = getter(local_name, param)
+    if spec is None:
+        specs = getattr(module, "hybrid_muon_optim_specs", None)
+        if specs is not None:
+            spec = specs.get(local_name)
+    if isinstance(spec, dict):
+        spec = OptimSpec(**spec)
+    if not isinstance(spec, OptimSpec):
+        raise RuntimeError(
+            f"HybridMuon routing='module' requires OptimSpec for parameter {name!r}"
+        )
+    return spec
 
 
 def _is_equivariant_slice_candidate(name: str) -> bool:
@@ -210,6 +377,29 @@ def _matrix_view_to_flat_spec(matrix_update: torch.Tensor, spec: dict) -> torch.
     )
 
 
+def _muon_lr_scale(
+    rows: int,
+    cols: int,
+    *,
+    mode: str,
+    match_rms_coeff: float,
+) -> float:
+    if mode == "original":
+        return math.sqrt(max(1.0, rows / max(cols, 1)))
+    if mode == "match_rms":
+        return float(match_rms_coeff) * math.sqrt(max(rows, cols))
+    if mode == "none":
+        return 1.0
+    raise ValueError(f"hybrid_muon_lr_scale_mode must be one of {sorted(_MUON_LR_SCALE_MODES)}")
+
+
+def _canonical_wide_matrix_view(matrix_update: torch.Tensor) -> tuple[torch.Tensor, bool]:
+    transposed = matrix_update.shape[-2] > matrix_update.shape[-1]
+    if transposed:
+        return matrix_update.transpose(-2, -1), True
+    return matrix_update, False
+
+
 def _spec_summary_shape(specs: list[dict]) -> tuple[int, tuple[int, int] | None]:
     matrix_shapes = {tuple(spec["matrix_view_shape"][-2:]) for spec in specs}
     matrix_batch = sum(int(spec["matrix_view_shape"][0]) for spec in specs)
@@ -267,12 +457,18 @@ def build_hybrid_muon_param_groups(
     muon_lr_factor: float = 0.1,
     beta: float = 0.9,
     adam_betas: tuple[float, float] = (0.9, 0.999),
+    adam_variant: str = "adamw",
+    muon_lr_scale_mode: str = "original",
+    muon_match_rms_coeff: float = 0.18,
     eps: float = 1.0e-8,
     amsgrad: bool = False,
     muon_mode: str = "2d",
     routing: str = "mace",
     module_map: dict[str, torch.nn.Module] | None = None,
     magma_lite: bool = False,
+    magma_initial_score: float = 0.5,
+    magma_warmup_steps: int = 0,
+    magma_bypass_first_step: bool = False,
     adam_param_options_by_id: dict[int, dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     if muon_lr_factor <= 0.0:
@@ -281,51 +477,122 @@ def build_hybrid_muon_param_groups(
         raise ValueError(f"hybrid_muon_mode must be one of {sorted(_MUON_MODES)}")
     if routing not in _ROUTINGS:
         raise ValueError(f"hybrid_muon_routing must be one of {sorted(_ROUTINGS)}")
+    if adam_variant not in _ADAM_VARIANTS:
+        raise ValueError(
+            f"hybrid_muon_adam_variant must be one of {sorted(_ADAM_VARIANTS)}"
+        )
+    if muon_lr_scale_mode not in _MUON_LR_SCALE_MODES:
+        raise ValueError(
+            f"hybrid_muon_lr_scale_mode must be one of {sorted(_MUON_LR_SCALE_MODES)}"
+        )
+    if muon_match_rms_coeff <= 0.0:
+        raise ValueError("muon_match_rms_coeff must be positive")
+    if not 0.0 <= magma_initial_score <= 1.0:
+        raise ValueError("magma_initial_score must be in [0, 1]")
+    if magma_warmup_steps < 0:
+        raise ValueError("magma_warmup_steps must be non-negative")
 
     muon_params: list[torch.nn.Parameter] = []
+    muon_param_names: list[str] = []
+    muon_param_lr_scales: dict[str, float] = {}
+    muon_param_weight_decays: dict[str, float] = {}
+    muon_param_matrix_layouts: dict[str, dict] = {}
     adam_group_buckets: dict[tuple, dict] = {}
-    muon_matrix_specs: dict[int, list[dict]] = {}
+    muon_matrix_specs: dict[str, list[dict]] = {}
     summary: list[dict] = []
+    seen_names: set[str] = set()
+    seen_param_ids: dict[int, str] = {}
     for name, param in named_parameters:
+        if name in seen_names:
+            raise ValueError(f"Duplicate parameter name in HybridMuon routing: {name!r}")
+        seen_names.add(name)
+        if param.requires_grad:
+            param_id = id(param)
+            previous_name = seen_param_ids.get(param_id)
+            if previous_name is not None:
+                raise ValueError(
+                    f"Trainable parameter {name!r} appears more than once in "
+                    f"HybridMuon routing; first seen as {previous_name!r}"
+                )
+            seen_param_ids[param_id] = name
         flat_specs = None
         flat_reason = None
+        adam_variant_override = None
+        optim_spec = None
+        matrix_layout = None
         lower_name = name.lower()
-        if routing == "tace" and not any(
-            token in lower_name for token in _MACE_HARD_ADAM_NAME_TOKENS
-        ):
-            flat_spec_result = _flat_e3nn_linear_matrix_specs(name, param, module_map)
-            if flat_spec_result is not None:
-                flat_specs, flat_reason = flat_spec_result
-        if flat_specs is not None:
-            route, reason = "muon", flat_reason
-            muon_matrix_specs[id(param)] = flat_specs
+        if routing == "module":
+            if not param.requires_grad:
+                route, reason = "frozen", "requires_grad=False"
+            else:
+                optim_spec = _module_declared_optim_spec(name, param, module_map)
+                route, reason = optim_spec.route, "module-declared"
+                matrix_layout = _optim_spec_matrix_layout(name, param, optim_spec)
+                if optim_spec.route in _ADAM_VARIANTS:
+                    adam_variant_override = optim_spec.route
         else:
-            route, reason = _route_parameter(
-                name, param, muon_mode=muon_mode, routing=routing
-            )
+            if routing == "tace" and not any(
+                token in lower_name for token in _MACE_HARD_ADAM_NAME_TOKENS
+            ):
+                flat_spec_result = _flat_e3nn_linear_matrix_specs(name, param, module_map)
+                if flat_spec_result is not None:
+                    flat_specs, flat_reason = flat_spec_result
+            if flat_specs is not None:
+                route, reason = "muon", flat_reason
+                muon_matrix_specs[name] = flat_specs
+            else:
+                route, reason = _route_parameter(
+                    name, param, muon_mode=muon_mode, routing=routing
+                )
         if route == "frozen":
             continue
+        if route == "muon" and _is_sharded_or_distributed_parameter(param):
+            raise RuntimeError(
+                f"HybridMuon cannot safely route sharded/DTensor parameter {name!r} "
+                "to Muon. Route it to AdamW or use a full-matrix/distributed Gram "
+                "Muon implementation."
+            )
         if route == "muon":
             muon_params.append(param)
+            muon_param_names.append(name)
+            if optim_spec is not None:
+                if optim_spec.lr_scale != 1.0:
+                    muon_param_lr_scales[name] = float(optim_spec.lr_scale)
+                if optim_spec.weight_decay is not None:
+                    muon_param_weight_decays[name] = float(optim_spec.weight_decay)
+                if matrix_layout is not None:
+                    muon_param_matrix_layouts[name] = matrix_layout
         else:
             adam_options = (adam_param_options_by_id or {}).get(id(param), {})
             group_lr = adam_options.get("lr", lr)
             group_weight_decay = adam_options.get("weight_decay", weight_decay)
+            if optim_spec is not None and optim_spec.weight_decay is not None:
+                group_weight_decay = float(optim_spec.weight_decay)
             group_betas = tuple(adam_options.get("betas", adam_betas))
             group_eps = adam_options.get("eps", eps)
             group_amsgrad = bool(adam_options.get("amsgrad", amsgrad))
+            group_adam_variant = adam_variant_override or adam_options.get(
+                "adam_variant", adam_variant
+            )
+            if group_adam_variant not in _ADAM_VARIANTS:
+                raise ValueError(
+                    f"hybrid_muon_adam_variant must be one of {sorted(_ADAM_VARIANTS)}"
+                )
             key = (
                 float(group_lr),
                 float(group_weight_decay),
                 group_betas,
                 float(group_eps),
                 group_amsgrad,
+                group_adam_variant,
             )
             bucket = adam_group_buckets.setdefault(
                 key,
                 {
                     "params": [],
+                    "param_names": [],
                     "route": "adam",
+                    "adam_variant": group_adam_variant,
                     "lr": group_lr,
                     "weight_decay": group_weight_decay,
                     "betas": group_betas,
@@ -334,9 +601,13 @@ def build_hybrid_muon_param_groups(
                 },
             )
             bucket["params"].append(param)
+            bucket["param_names"].append(name)
         matrix_view = _matrix_view_shape(tuple(int(dim) for dim in param.shape), muon_mode)
         matrix_batch = matrix_view[0] if route == "muon" and matrix_view else None
         matrix_shape = matrix_view[-2:] if route == "muon" and matrix_view else None
+        if route == "muon" and matrix_layout is not None:
+            matrix_batch = matrix_layout["matrix_view_shape"][0]
+            matrix_shape = matrix_layout["matrix_view_shape"][-2:]
         if route == "muon" and flat_specs is not None:
             matrix_batch, matrix_shape = _spec_summary_shape(flat_specs)
         summary.append(
@@ -364,7 +635,16 @@ def build_hybrid_muon_param_groups(
                 "muon_mode": muon_mode,
                 "routing": routing,
                 "matrix_specs": muon_matrix_specs,
+                "param_names": muon_param_names,
+                "param_lr_scales": muon_param_lr_scales,
+                "param_weight_decays": muon_param_weight_decays,
+                "param_matrix_layouts": muon_param_matrix_layouts,
+                "muon_lr_scale_mode": muon_lr_scale_mode,
+                "muon_match_rms_coeff": float(muon_match_rms_coeff),
                 "magma_lite": bool(magma_lite),
+                "magma_initial_score": float(magma_initial_score),
+                "magma_warmup_steps": int(magma_warmup_steps),
+                "magma_bypass_first_step": bool(magma_bypass_first_step),
             }
         )
     groups.extend(adam_group_buckets.values())
@@ -373,7 +653,7 @@ def build_hybrid_muon_param_groups(
 
 def summarize_hybrid_muon_routes(summary: list[dict]) -> str:
     muon = [item for item in summary if item["route"] == "muon"]
-    adam = [item for item in summary if item["route"] == "adam"]
+    adam = [item for item in summary if item["route"] in {"adam", "adamw"}]
     lines = [
         "HybridMuon parameter routing",
         f"Muon tensors: {len(muon)} ({sum(item['numel'] for item in muon)} parameters)",
@@ -400,20 +680,25 @@ def _magma_lite_scale(
     score_key: str,
     grad_matrix: torch.Tensor,
     momentum_matrix: torch.Tensor,
+    *,
+    initial_score: float = 0.5,
+    force_scale_one: bool = False,
+    bypass_first_step: bool = False,
 ) -> torch.Tensor:
     batch = int(grad_matrix.shape[0])
     grad_view = grad_matrix.reshape(batch, -1).to(dtype=torch.float32)
     momentum_view = momentum_matrix.reshape(batch, -1).to(dtype=torch.float32)
     score = state.get(score_key)
-    if (
+    is_new_score = (
         score is None
         or not torch.is_tensor(score)
         or score.ndim != 1
         or score.numel() != batch
         or score.device != grad_matrix.device
-    ):
+    )
+    if is_new_score:
         score = torch.full(
-            (batch,), 0.5, dtype=torch.float32, device=grad_matrix.device
+            (batch,), float(initial_score), dtype=torch.float32, device=grad_matrix.device
         )
     elif score.dtype != torch.float32:
         score = score.to(dtype=torch.float32, device=grad_matrix.device)
@@ -425,7 +710,10 @@ def _magma_lite_scale(
     raw = raw.clamp(min=0.0, max=1.0)
     score.mul_(_MAGMA_EMA_DECAY).add_(raw, alpha=1.0 - _MAGMA_EMA_DECAY)
     state[score_key] = score
-    return _MAGMA_MIN_SCALE + (1.0 - _MAGMA_MIN_SCALE) * score
+    scale = _MAGMA_MIN_SCALE + (1.0 - _MAGMA_MIN_SCALE) * score
+    if force_scale_one or (bypass_first_step and is_new_score):
+        return torch.ones_like(scale)
+    return scale
 
 def _orthogonalize_newton_schulz(update: torch.Tensor, steps: int | None = None) -> torch.Tensor:
     original_dtype = update.dtype
@@ -476,6 +764,14 @@ def _orthogonalize_newton_schulz_batched(
     return x.to(dtype=original_dtype)
 
 
+_RUNTIME_PARAM_GROUP_METADATA_KEYS = (
+    "matrix_specs",
+    "param_lr_scales",
+    "param_weight_decays",
+    "param_matrix_layouts",
+)
+
+
 class HybridMuon(Optimizer):
     def __init__(
         self,
@@ -497,6 +793,35 @@ class HybridMuon(Optimizer):
         }
         super().__init__(params, defaults)
 
+    def state_dict(self):
+        state_dict = super().state_dict()
+        for group in state_dict.get("param_groups", []):
+            for key in _RUNTIME_PARAM_GROUP_METADATA_KEYS:
+                group.pop(key, None)
+        return state_dict
+
+    def load_state_dict(self, state_dict):
+        runtime_metadata = [
+            {key: group.get(key) for key in _RUNTIME_PARAM_GROUP_METADATA_KEYS}
+            for group in self.param_groups
+        ]
+        sanitized_state_dict = dict(state_dict)
+        sanitized_groups = []
+        for group in state_dict.get("param_groups", []):
+            sanitized_group = dict(group)
+            for key in _RUNTIME_PARAM_GROUP_METADATA_KEYS:
+                sanitized_group.pop(key, None)
+            sanitized_groups.append(sanitized_group)
+        sanitized_state_dict["param_groups"] = sanitized_groups
+        result = super().load_state_dict(sanitized_state_dict)
+        for group, metadata in zip(
+            self.param_groups, runtime_metadata, strict=False
+        ):
+            for key, value in metadata.items():
+                if value is not None:
+                    group[key] = value
+        return result
+
     @torch.no_grad()
     def step(self, closure=None):
         loss = None
@@ -517,21 +842,64 @@ class HybridMuon(Optimizer):
         weight_decay = group.get("weight_decay", 0.0)
         muon_mode = group.get("muon_mode", "2d")
         matrix_specs = group.get("matrix_specs", {})
+        muon_lr_scale_mode = group.get("muon_lr_scale_mode", "original")
+        muon_match_rms_coeff = float(group.get("muon_match_rms_coeff", 0.18))
+        if muon_lr_scale_mode not in _MUON_LR_SCALE_MODES:
+            raise ValueError(
+                f"hybrid_muon_lr_scale_mode must be one of {sorted(_MUON_LR_SCALE_MODES)}"
+            )
+        if muon_match_rms_coeff <= 0.0:
+            raise ValueError("muon_match_rms_coeff must be positive")
+        param_names = group.get("param_names")
+        if not isinstance(param_names, (list, tuple)) or len(param_names) != len(
+            group["params"]
+        ):
+            param_names = [
+                f"<unnamed parameter {index}>"
+                for index, _ in enumerate(group["params"])
+            ]
+        param_lr_scales = group.get("param_lr_scales", {})
+        if not isinstance(param_lr_scales, dict):
+            param_lr_scales = {}
+        param_weight_decays = group.get("param_weight_decays", {})
+        if not isinstance(param_weight_decays, dict):
+            param_weight_decays = {}
+        param_matrix_layouts = group.get("param_matrix_layouts", {})
+        if not isinstance(param_matrix_layouts, dict):
+            param_matrix_layouts = {}
         magma_lite = bool(group.get("magma_lite", False))
+        magma_initial_score = float(group.get("magma_initial_score", 0.5))
+        magma_warmup_steps = int(group.get("magma_warmup_steps", 0))
+        magma_bypass_first_step = bool(group.get("magma_bypass_first_step", False))
+        if not 0.0 <= magma_initial_score <= 1.0:
+            raise ValueError("magma_initial_score must be in [0, 1]")
+        if magma_warmup_steps < 0:
+            raise ValueError("magma_warmup_steps must be non-negative")
         updates_by_shape = {}
-        for param in group["params"]:
+        for param_index, param in enumerate(group["params"]):
+            param_name = str(param_names[param_index])
             if param.grad is None:
                 continue
             grad = param.grad
-            if weight_decay:
-                param.mul_(1.0 - lr * weight_decay)
+            param_weight_decay = float(param_weight_decays.get(param_name, weight_decay))
+            param_lr_scale = float(param_lr_scales.get(param_name, 1.0))
+            if param_weight_decay:
+                param.mul_(1.0 - lr * param_weight_decay)
             state = self.state[param]
             if "momentum" not in state:
                 state["momentum"] = torch.zeros_like(param)
+            magma_step = int(state.get("muon_step", 0))
+            magma_force_scale_one = magma_lite and magma_step < magma_warmup_steps
             momentum = state["momentum"]
             momentum.mul_(beta).add_(grad, alpha=1.0 - beta)
             update = momentum.mul(beta).add(grad, alpha=1.0 - beta)
-            specs = matrix_specs.get(id(param))
+            specs = matrix_specs.get(param_name)
+            matrix_layout = param_matrix_layouts.get(param_name)
+            if specs and matrix_layout is not None:
+                raise RuntimeError(
+                    f"Muon-routed parameter {param_name!r} has both MatrixSpec "
+                    "and OptimSpec matrix_axes layout"
+                )
             if specs:
                 flat_update = update.reshape(-1)
                 for spec in specs:
@@ -539,7 +907,12 @@ class HybridMuon(Optimizer):
                     grad_matrix = _flat_spec_to_matrix_view(grad.reshape(-1), spec)
                     momentum_matrix = _flat_spec_to_matrix_view(momentum.reshape(-1), spec)
                     rows, cols = matrix_update.shape[-2:]
-                    scale = math.sqrt(max(1, rows / max(cols, 1)))
+                    scale = param_lr_scale * _muon_lr_scale(
+                        rows,
+                        cols,
+                        mode=muon_lr_scale_mode,
+                        match_rms_coeff=muon_match_rms_coeff,
+                    )
                     magma_scale = None
                     if magma_lite:
                         magma_scale = _magma_lite_scale(
@@ -547,68 +920,169 @@ class HybridMuon(Optimizer):
                             f"magma_score_{int(spec['offset'])}",
                             grad_matrix,
                             momentum_matrix,
+                            initial_score=magma_initial_score,
+                            force_scale_one=magma_force_scale_one,
+                            bypass_first_step=magma_bypass_first_step,
                         )
-                    key = ((rows, cols), matrix_update.device, matrix_update.dtype)
-                    updates_by_shape.setdefault(key, []).append(
-                        (param, matrix_update, scale, spec, magma_scale)
+                    canonical_update, transposed = _canonical_wide_matrix_view(
+                        matrix_update
                     )
+                    key = (
+                        canonical_update.shape[-2],
+                        matrix_update.device,
+                        matrix_update.dtype,
+                    )
+                    updates_by_shape.setdefault(key, []).append(
+                        (param, canonical_update, scale, spec, magma_scale, transposed)
+                    )
+                if magma_lite:
+                    state["muon_step"] = magma_step + 1
+                continue
+            if matrix_layout is not None:
+                matrix_update = _tensor_to_matrix_layout_view(update, matrix_layout)
+                grad_matrix = _tensor_to_matrix_layout_view(grad, matrix_layout)
+                momentum_matrix = _tensor_to_matrix_layout_view(momentum, matrix_layout)
+                rows, cols = matrix_update.shape[-2:]
+                scale = param_lr_scale * _muon_lr_scale(
+                    rows,
+                    cols,
+                    mode=muon_lr_scale_mode,
+                    match_rms_coeff=muon_match_rms_coeff,
+                )
+                magma_scale = None
+                if magma_lite:
+                    magma_scale = _magma_lite_scale(
+                        state,
+                        "magma_score",
+                        grad_matrix,
+                        momentum_matrix,
+                        initial_score=magma_initial_score,
+                        force_scale_one=magma_force_scale_one,
+                        bypass_first_step=magma_bypass_first_step,
+                    )
+                canonical_update, transposed = _canonical_wide_matrix_view(matrix_update)
+                key = (
+                    canonical_update.shape[-2],
+                    matrix_update.device,
+                    matrix_update.dtype,
+                )
+                updates_by_shape.setdefault(key, []).append(
+                    (param, canonical_update, scale, matrix_layout, magma_scale, transposed)
+                )
+                if magma_lite:
+                    state["muon_step"] = magma_step + 1
                 continue
             matrix_view_shape = _matrix_view_shape(
                 tuple(int(dim) for dim in update.shape), muon_mode
             )
             if matrix_view_shape is None:
-                continue
+                raise RuntimeError(
+                    f"Muon-routed parameter {param_name!r} has no valid MatrixSpec "
+                    f"or matrix view for shape {tuple(int(dim) for dim in param.shape)}"
+                )
             matrix_update = update.reshape(matrix_view_shape)
             grad_matrix = grad.reshape(matrix_view_shape)
             momentum_matrix = momentum.reshape(matrix_view_shape)
             rows, cols = matrix_update.shape[-2:]
-            scale = math.sqrt(max(1, rows / max(cols, 1)))
+            scale = param_lr_scale * _muon_lr_scale(
+                rows,
+                cols,
+                mode=muon_lr_scale_mode,
+                match_rms_coeff=muon_match_rms_coeff,
+            )
             magma_scale = None
             if magma_lite:
                 magma_scale = _magma_lite_scale(
-                    state, "magma_score", grad_matrix, momentum_matrix
+                    state,
+                    "magma_score",
+                    grad_matrix,
+                    momentum_matrix,
+                    initial_score=magma_initial_score,
+                    force_scale_one=magma_force_scale_one,
+                    bypass_first_step=magma_bypass_first_step,
                 )
-            key = ((rows, cols), matrix_update.device, matrix_update.dtype)
-            updates_by_shape.setdefault(key, []).append(
-                (param, matrix_update, scale, None, magma_scale)
+            canonical_update, transposed = _canonical_wide_matrix_view(matrix_update)
+            key = (
+                canonical_update.shape[-2],
+                matrix_update.device,
+                matrix_update.dtype,
             )
+            updates_by_shape.setdefault(key, []).append(
+                (param, canonical_update, scale, None, magma_scale, transposed)
+            )
+            if magma_lite:
+                state["muon_step"] = magma_step + 1
 
         flat_deltas: dict[torch.nn.Parameter, torch.Tensor] = {}
         for records in updates_by_shape.values():
             total_batch = sum(record[1].shape[0] for record in records)
-            if total_batch == 1:
-                param, matrix_update, scale, spec, magma_scale = records[0]
+            short_side = int(records[0][1].shape[-2])
+            max_long_side = max(int(record[1].shape[-1]) for record in records)
+            needs_padding = any(
+                int(record[1].shape[-1]) != max_long_side for record in records
+            )
+            if total_batch == 1 and not needs_padding:
+                param, matrix_update, scale, spec, magma_scale, transposed = records[0]
                 ortho = _orthogonalize_newton_schulz(matrix_update[0])
                 if magma_scale is not None:
                     ortho = ortho * magma_scale.reshape(()).to(
                         dtype=ortho.dtype, device=ortho.device
                     )
+                if transposed:
+                    ortho = ortho.transpose(-2, -1)
                 if spec is None:
                     param.add_(ortho.reshape_as(param), alpha=-lr * scale)
-                else:
-                    delta = flat_deltas.setdefault(param, torch.zeros_like(param).reshape(-1))
+                elif "offset" in spec:
+                    delta = flat_deltas.setdefault(
+                        param, torch.zeros_like(param).reshape(-1)
+                    )
                     delta[spec["offset"] : spec["offset"] + spec["numel"]].add_(
                         _matrix_view_to_flat_spec(ortho, spec), alpha=scale
                     )
+                else:
+                    param.add_(
+                        _matrix_layout_view_to_tensor(ortho, spec),
+                        alpha=-lr * scale,
+                    )
                 continue
 
-            stacked_updates = torch.cat([record[1] for record in records], dim=0)
+            stacked_updates = records[0][1].new_zeros(
+                (total_batch, short_side, max_long_side)
+            )
+            offset = 0
+            for _, matrix_update, _, _, _, _ in records:
+                batch = matrix_update.shape[0]
+                long_side = matrix_update.shape[-1]
+                stacked_updates[offset : offset + batch, :, :long_side].copy_(
+                    matrix_update
+                )
+                offset += batch
             orthogonalized = _orthogonalize_newton_schulz_batched(stacked_updates)
             offset = 0
-            for param, matrix_update, scale, spec, magma_scale in records:
+            for param, matrix_update, scale, spec, magma_scale, transposed in records:
                 batch = matrix_update.shape[0]
-                ortho = orthogonalized[offset : offset + batch]
+                long_side = matrix_update.shape[-1]
+                ortho = orthogonalized[offset : offset + batch, :, :long_side]
                 offset += batch
                 if magma_scale is not None:
                     ortho = ortho * magma_scale.view(batch, 1, 1).to(
                         dtype=ortho.dtype, device=ortho.device
                     )
+                if transposed:
+                    ortho = ortho.transpose(-2, -1)
                 if spec is None:
                     param.add_(ortho.reshape_as(param), alpha=-lr * scale)
-                else:
-                    delta = flat_deltas.setdefault(param, torch.zeros_like(param).reshape(-1))
+                elif "offset" in spec:
+                    delta = flat_deltas.setdefault(
+                        param, torch.zeros_like(param).reshape(-1)
+                    )
                     delta[spec["offset"] : spec["offset"] + spec["numel"]].add_(
                         _matrix_view_to_flat_spec(ortho, spec), alpha=scale
+                    )
+                else:
+                    param.add_(
+                        _matrix_layout_view_to_tensor(ortho, spec),
+                        alpha=-lr * scale,
                     )
         for param, delta in flat_deltas.items():
             param.add_(delta.reshape_as(param), alpha=-lr)
@@ -653,6 +1127,11 @@ class HybridMuon(Optimizer):
         if not params:
             return
         beta1, beta2 = group.get("betas", (0.9, 0.999))
+        adam_variant = group.get("adam_variant", "adamw")
+        if adam_variant not in _ADAM_VARIANTS:
+            raise ValueError(
+                f"hybrid_muon_adam_variant must be one of {sorted(_ADAM_VARIANTS)}"
+            )
         optim_functional.adam(
             params,
             grads,
@@ -667,7 +1146,7 @@ class HybridMuon(Optimizer):
             grad_scale=None,
             found_inf=None,
             has_complex=False,
-            decoupled_weight_decay=False,
+            decoupled_weight_decay=(adam_variant == "adamw"),
             amsgrad=amsgrad,
             beta1=beta1,
             beta2=beta2,

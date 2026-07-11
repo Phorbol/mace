@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import dataclasses
+import importlib.metadata as importlib_metadata
 import logging
 import math
 import time
 from typing import Any
 
 import torch
-from mace import modules
-from mace.modules.utils import get_edge_vectors_and_lengths, get_outputs, prepare_graph
+from mace.cache_utils import BoundedLRUCache
 from mace.tools import compile as mace_compile
 from mace.tools.force_compile import (
     compile_fx_graph_module,
-    disable_functorch_donated_buffer,
     edge_gradient_to_atomic_forces,
     rebuild_fx_graph_module,
     trace_force_closure,
@@ -20,11 +19,30 @@ from mace.tools.force_compile import (
 from mace.tools.scatter import scatter_sum
 
 
+_COMPILE_FALLBACK_DENYLIST_PATTERNS = (
+    "out of memory",
+    "cuda error",
+    "device-side assert",
+    "cublas",
+    "cudnn",
+    "non-finite",
+    "nonfinite",
+    "nan",
+)
+
+
+def _is_safe_compile_fallback_exception(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return not any(
+        pattern in message for pattern in _COMPILE_FALLBACK_DENYLIST_PATTERNS
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class EdgeForceCompileConfig:
     enabled: bool = False
     tracing_mode: str = "real"
-    strip_detach: bool = True
+    strip_detach: bool = False
     compile_graph: bool = True
     compile_mode: str = "default"
     compile_dynamic: bool = True
@@ -39,6 +57,8 @@ class EdgeForceCompileConfig:
     setup_gate: str = "strict"
     cache_policy: str = "repeat_only"
     min_repeats: int = 2
+    break_even_expected_remaining_hits: int = 0
+    max_cache_entries: int = 32
     disable_negative_speedup: bool = True
     negative_speedup_min_steps: int = 4
     bucket_atoms: tuple[int, ...] = ()
@@ -59,12 +79,32 @@ class EdgeForceCompileConfig:
             raise ValueError(
                 "edge-force compile force_gradient_mode must be 'edge' or 'positions'"
             )
-        if self.refresh_executable_each_step is None:
-            object.__setattr__(
-                self,
-                "refresh_executable_each_step",
-                self.tracing_mode != "symbolic",
+        if self.cache_policy not in {
+            "shape",
+            "repeat_only",
+            "bucket",
+            "dynamic",
+            "break_even",
+        }:
+            raise ValueError(
+                "edge-force compile cache_policy must be one of 'shape', "
+                "'repeat_only', 'bucket', 'dynamic', or 'break_even'"
             )
+        if self.min_repeats < 0:
+            raise ValueError(
+                "edge-force compile min_repeats must be non-negative"
+            )
+        if self.break_even_expected_remaining_hits < 0:
+            raise ValueError(
+                "edge-force compile break_even_expected_remaining_hits must be "
+                "non-negative"
+            )
+        if self.max_cache_entries < 0:
+            raise ValueError(
+                "edge-force compile max_cache_entries must be non-negative"
+            )
+        if self.refresh_executable_each_step is None:
+            object.__setattr__(self, "refresh_executable_each_step", False)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -90,6 +130,9 @@ class EdgeForceCachePolicyDecision:
     compile_count: int
     cache_hit_count: int
     disabled: bool = False
+    break_even_hits: float | None = None
+    break_even_speedup: float | None = None
+    expected_remaining_hits: int | None = None
 
 
 @dataclasses.dataclass
@@ -101,6 +144,23 @@ class EdgeForceCacheEntryStats:
     compile_setup_seconds: float = 0.0
     compiled_step_seconds_ema: float | None = None
     eager_step_seconds_ema: float | None = None
+
+
+def _break_even_policy_metrics(
+    policy_decision: EdgeForceCachePolicyDecision,
+) -> dict[str, float | int]:
+    metrics: dict[str, float | int] = {}
+    if policy_decision.break_even_speedup is not None:
+        metrics["edge_force_break_even_speedup_seconds"] = float(
+            policy_decision.break_even_speedup
+        )
+    if policy_decision.break_even_hits is not None:
+        metrics["edge_force_break_even_hits"] = float(policy_decision.break_even_hits)
+    if policy_decision.expected_remaining_hits is not None:
+        metrics["edge_force_break_even_expected_remaining_hits"] = int(
+            policy_decision.expected_remaining_hits
+        )
+    return metrics
 
 
 @dataclasses.dataclass
@@ -119,6 +179,7 @@ class EdgeForceCachePolicyState:
         policy: str,
         min_repeats: int,
         cache_hit: bool = False,
+        break_even_expected_remaining_hits: int = 0,
     ) -> EdgeForceCachePolicyDecision:
         stats = self.stats_for(cache_key)
         stats.seen_count += 1
@@ -134,6 +195,9 @@ class EdgeForceCachePolicyState:
                 cache_hit_count=stats.cache_hit_count,
                 disabled=True,
             )
+        break_even_hits = None
+        break_even_speedup = None
+        expected_remaining_hits = None
         if policy == "shape":
             allowed = True
             reason = None
@@ -143,6 +207,24 @@ class EdgeForceCachePolicyState:
         elif policy in ("bucket", "dynamic"):
             allowed = True
             reason = None
+        elif policy == "break_even":
+            allowed = stats.seen_count >= max(1, int(min_repeats))
+            reason = None if allowed else "min_repeats"
+            if allowed and (
+                stats.compile_setup_seconds > 0.0
+                and stats.eager_step_seconds_ema is not None
+                and stats.compiled_step_seconds_ema is not None
+            ):
+                speedup = stats.eager_step_seconds_ema - stats.compiled_step_seconds_ema
+                break_even_speedup = float(speedup)
+                expected_remaining_hits = int(break_even_expected_remaining_hits)
+                if speedup <= 0.0:
+                    allowed = False
+                    reason = "break_even_no_speedup"
+                else:
+                    break_even_hits = stats.compile_setup_seconds / speedup
+                    allowed = expected_remaining_hits >= math.ceil(break_even_hits)
+                    reason = None if allowed else "break_even"
         else:
             raise ValueError(f"unknown edge-force cache policy: {policy}")
         return EdgeForceCachePolicyDecision(
@@ -153,6 +235,9 @@ class EdgeForceCachePolicyState:
             compile_count=stats.compile_count,
             cache_hit_count=stats.cache_hit_count,
             disabled=False,
+            break_even_hits=break_even_hits,
+            break_even_speedup=break_even_speedup,
+            expected_remaining_hits=expected_remaining_hits,
         )
 
     def record_compile(self, cache_key: tuple, *, setup_seconds: float) -> None:
@@ -272,8 +357,114 @@ def edge_force_compile_loss_input_names(data_keys) -> tuple[str, ...]:
     return _EDGE_FORCE_LOSS_INPUT_KEYS
 
 
+@dataclasses.dataclass(frozen=True)
+class LossOutputCapability:
+    required_outputs: tuple[str, ...]
+    edge_force_supported: bool
+    compiled_tensor_loss_supported: bool = False
+    unsupported_reason: str | None = None
+
+
+_LOSS_OUTPUT_CAPABILITY_BY_TYPE_NAME = {
+    "WeightedEnergyForcesLoss": LossOutputCapability(
+        required_outputs=("energy", "forces"),
+        edge_force_supported=True,
+        compiled_tensor_loss_supported=True,
+    ),
+    "WeightedForcesLoss": LossOutputCapability(
+        required_outputs=("forces",),
+        edge_force_supported=True,
+    ),
+    "WeightedEnergyForcesL1L2Loss": LossOutputCapability(
+        required_outputs=("energy", "forces"),
+        edge_force_supported=True,
+    ),
+    "WeightedEnergyForcesStressLoss": LossOutputCapability(
+        required_outputs=("energy", "forces", "stress"),
+        edge_force_supported=False,
+        unsupported_reason="unsupported_loss",
+    ),
+    "WeightedHuberEnergyForcesStressLoss": LossOutputCapability(
+        required_outputs=("energy", "forces", "stress"),
+        edge_force_supported=False,
+        unsupported_reason="unsupported_loss",
+    ),
+    "UniversalLoss": LossOutputCapability(
+        required_outputs=("energy", "forces", "stress"),
+        edge_force_supported=False,
+        unsupported_reason="unsupported_loss",
+    ),
+    "WeightedEnergyForcesVirialsLoss": LossOutputCapability(
+        required_outputs=("energy", "forces", "virials"),
+        edge_force_supported=False,
+        unsupported_reason="unsupported_loss",
+    ),
+    "DipoleSingleLoss": LossOutputCapability(
+        required_outputs=("dipole",),
+        edge_force_supported=False,
+        unsupported_reason="unsupported_loss",
+    ),
+    "DipolePolarLoss": LossOutputCapability(
+        required_outputs=("dipole", "polarizability"),
+        edge_force_supported=False,
+        unsupported_reason="unsupported_loss",
+    ),
+    "WeightedEnergyForcesDipoleLoss": LossOutputCapability(
+        required_outputs=("energy", "forces", "dipole"),
+        edge_force_supported=False,
+        unsupported_reason="unsupported_loss",
+    ),
+}
+
+
+def _is_instance_of_named_type(obj: object, type_names: tuple[str, ...]) -> bool:
+    return any(cls.__name__ in type_names for cls in type(obj).__mro__)
+
+
+def _loss_type_names(loss_fn: torch.nn.Module) -> tuple[str, ...]:
+    return tuple(cls.__name__ for cls in type(loss_fn).__mro__)
+
+
+def edge_force_loss_output_capability(
+    loss_fn: torch.nn.Module,
+) -> LossOutputCapability:
+    for type_name in _loss_type_names(loss_fn):
+        capability = _LOSS_OUTPUT_CAPABILITY_BY_TYPE_NAME.get(type_name)
+        if capability is not None:
+            return capability
+    return LossOutputCapability(
+        required_outputs=(),
+        edge_force_supported=False,
+        unsupported_reason="unknown_loss",
+    )
+
+
+def _is_weighted_energy_forces_loss(loss_fn: torch.nn.Module) -> bool:
+    return _is_instance_of_named_type(loss_fn, ("WeightedEnergyForcesLoss",))
+
+
+def _is_scale_shift_mace(model: torch.nn.Module) -> bool:
+    return _is_instance_of_named_type(model, ("ScaleShiftMACE",))
+
+
+def _edge_force_can_use_energy_force_outputs(loss_fn: torch.nn.Module) -> bool:
+    capability = edge_force_loss_output_capability(loss_fn)
+    return capability.edge_force_supported and all(
+        output in {"energy", "forces"} for output in capability.required_outputs
+    )
+
+
+def _edge_force_requires_non_energy_force_outputs(loss_fn: torch.nn.Module) -> bool:
+    capability = edge_force_loss_output_capability(loss_fn)
+    return (
+        capability.unsupported_reason == "unsupported_loss"
+        and not capability.edge_force_supported
+    )
+
+
 def _edge_force_can_compile_loss(loss_fn: torch.nn.Module, data_keys) -> bool:
-    return isinstance(loss_fn, modules.WeightedEnergyForcesLoss) and bool(
+    capability = edge_force_loss_output_capability(loss_fn)
+    return capability.compiled_tensor_loss_supported and bool(
         edge_force_compile_loss_input_names(data_keys)
     )
 
@@ -287,15 +478,132 @@ def parse_edge_force_bucket_sizes(value: str | None) -> tuple[int, ...]:
     return tuple(sorted(set(sizes)))
 
 
-def edge_force_compile_shape_cache_key(
-    *, num_atoms: int, num_edges: int, input_shapes: dict[str, tuple[int, ...]]
-) -> tuple:
+_EDGE_FORCE_COMPILE_DEPENDENCY_PACKAGES = (
+    "triton",
+    "e3nn",
+    "cuequivariance",
+    "cuequivariance-torch",
+)
+
+
+def _edge_force_dependency_abi_signature() -> tuple:
+    versions: list[tuple[str, str | None]] = []
+    for package_name in _EDGE_FORCE_COMPILE_DEPENDENCY_PACKAGES:
+        try:
+            package_version = importlib_metadata.version(package_name)
+        except importlib_metadata.PackageNotFoundError:
+            package_version = None
+        versions.append((package_name, package_version))
+    return ("deps", *versions)
+
+
+def _edge_force_distributed_abi_signature() -> tuple:
+    dist = getattr(torch, "distributed", None)
+    if dist is None:
+        return (
+            "distributed",
+            ("available", False),
+            ("initialized", False),
+            ("backend", None),
+            ("world_size", None),
+            ("rank", None),
+        )
+    try:
+        available = bool(dist.is_available())
+    except Exception:  # pragma: no cover - defensive for unusual torch builds
+        available = False
+    try:
+        initialized = bool(dist.is_initialized()) if available else False
+    except Exception:  # pragma: no cover - defensive for unusual torch builds
+        initialized = False
+    backend = None
+    world_size = None
+    rank = None
+    if initialized:
+        try:
+            backend = str(dist.get_backend())
+        except Exception:  # pragma: no cover - defensive for distributed teardown
+            backend = None
+        try:
+            world_size = int(dist.get_world_size())
+        except Exception:  # pragma: no cover - defensive for distributed teardown
+            world_size = None
+        try:
+            rank = int(dist.get_rank())
+        except Exception:  # pragma: no cover - defensive for distributed teardown
+            rank = None
     return (
+        "distributed",
+        ("available", available),
+        ("initialized", initialized),
+        ("backend", backend),
+        ("world_size", world_size),
+        ("rank", rank),
+    )
+
+
+def _edge_force_autocast_abi_signature() -> tuple:
+    entries: list[tuple[str, bool, str | None]] = []
+    for device_type in ("cpu", "cuda"):
+        try:
+            enabled = bool(torch.is_autocast_enabled(device_type))
+        except TypeError:  # pragma: no cover - compatibility with older torch
+            enabled = bool(torch.is_autocast_enabled())
+        except Exception:  # pragma: no cover - defensive for unusual runtimes
+            enabled = False
+        try:
+            dtype = str(torch.get_autocast_dtype(device_type))
+        except Exception:  # pragma: no cover - defensive for unsupported devices
+            dtype = None
+        entries.append((device_type, enabled, dtype))
+    return ("autocast", *entries)
+
+
+def _edge_force_device_abi_signature(device: torch.device | str) -> tuple:
+    resolved_device = torch.device(device)
+    device_index = resolved_device.index
+    if resolved_device.type == "cuda" and device_index is None:
+        try:
+            device_index = int(torch.cuda.current_device())
+        except Exception:  # pragma: no cover - defensive for broken CUDA runtimes
+            device_index = None
+
+    signature: list[Any] = ["device", resolved_device.type, device_index]
+    if resolved_device.type == "cuda" and device_index is not None:
+        try:
+            capability = torch.cuda.get_device_capability(device_index)
+            signature.append(("capability", int(capability[0]), int(capability[1])))
+        except Exception:  # pragma: no cover - depends on CUDA runtime availability
+            signature.append(("capability", None))
+        try:
+            signature.append(("name", str(torch.cuda.get_device_name(device_index))))
+        except Exception:  # pragma: no cover - depends on CUDA runtime availability
+            signature.append(("name", None))
+    return tuple(signature)
+
+
+def _with_cache_abi_signature(
+    cache_key: tuple, abi_signature: tuple | None
+) -> tuple:
+    if abi_signature is None:
+        return cache_key
+    return (*cache_key[:-1], abi_signature, cache_key[-1])
+
+
+def edge_force_compile_shape_cache_key(
+    *,
+    num_atoms: int,
+    num_edges: int,
+    input_shapes: dict[str, tuple[int, ...]],
+    abi_signature: tuple | None = None,
+) -> tuple:
+    cache_key = (
         "shape",
         int(num_atoms),
         int(num_edges),
         tuple((name, tuple(shape)) for name, shape in sorted(input_shapes.items())),
     )
+    return _with_cache_abi_signature(cache_key, abi_signature)
 
 
 def _select_edge_force_bucket(
@@ -396,15 +704,18 @@ def _dynamic_edge_force_shape(name: str, shape: tuple[int, ...]) -> tuple[int, .
 
 
 def edge_force_compile_dynamic_cache_key(
-    *, input_shapes: dict[str, tuple[int, ...]]
+    *,
+    input_shapes: dict[str, tuple[int, ...]],
+    abi_signature: tuple | None = None,
 ) -> tuple:
-    return (
+    cache_key = (
         "dynamic",
         tuple(
             (name, _dynamic_edge_force_shape(name, tuple(shape)))
             for name, shape in sorted(input_shapes.items())
         ),
     )
+    return _with_cache_abi_signature(cache_key, abi_signature)
 
 
 def edge_force_compile_bucket_cache_key(
@@ -415,6 +726,7 @@ def edge_force_compile_bucket_cache_key(
     bucket_atoms: tuple[int, ...],
     bucket_edges: tuple[int, ...],
     bucket_margin: float,
+    abi_signature: tuple | None = None,
 ) -> tuple | None:
     atom_bucket = _select_edge_force_bucket(
         int(num_atoms), bucket_atoms, bucket_margin=float(bucket_margin)
@@ -437,12 +749,13 @@ def edge_force_compile_bucket_cache_key(
         )
         bucketed_shapes[name] = bucketed_shape
 
-    return (
+    cache_key = (
         "bucket",
         atom_bucket,
         edge_bucket,
         tuple((name, tuple(shape)) for name, shape in sorted(bucketed_shapes.items())),
     )
+    return _with_cache_abi_signature(cache_key, abi_signature)
 
 
 def _edge_force_bucket_sizes_from_cache_key(cache_key: tuple) -> tuple[int, int] | None:
@@ -571,7 +884,7 @@ def _edge_force_executable_inputs(
 ) -> list[torch.Tensor]:
     loss_weight_tensors: tuple[torch.Tensor, ...] = ()
     if loss_input_names:
-        if not isinstance(loss_fn, modules.WeightedEnergyForcesLoss):
+        if not _is_weighted_energy_forces_loss(loss_fn):
             raise TypeError("compiled tensor loss requires WeightedEnergyForcesLoss")
         loss_weight_tensors = (loss_fn.energy_weight, loss_fn.forces_weight)
     return [
@@ -814,7 +1127,7 @@ def _mace_energy_from_edge_vectors(
     lengths: torch.Tensor,
     use_e3nn_spherical_harmonics: bool = False,
 ) -> dict[str, torch.Tensor]:
-    if not isinstance(model, modules.ScaleShiftMACE):
+    if not _is_scale_shift_mace(model):
         raise TypeError("edge-force compiled loss currently supports ScaleShiftMACE only")
 
     num_graphs = int(data["ptr"].numel() - 1)
@@ -971,6 +1284,8 @@ def _position_force_energy_and_forces(
     positions = positions.detach().requires_grad_(True)
     current_data = dict(data_dict)
     current_data["positions"] = positions
+    from mace.modules.utils import get_edge_vectors_and_lengths
+
     vectors, lengths = get_edge_vectors_and_lengths(
         positions=positions,
         edge_index=current_data["edge_index"],
@@ -1092,6 +1407,8 @@ def _edge_vector_inputs(
         )
     positions = data["positions"].detach()
     edge_index = data["edge_index"]
+    from mace.modules.utils import get_edge_vectors_and_lengths
+
     vectors, _ = get_edge_vectors_and_lengths(
         positions=positions,
         edge_index=edge_index,
@@ -1278,19 +1595,30 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         super().__init__()
         self.model = model
         self.config = config
-        self.cache: dict[tuple, _CompiledEdgeForceStep] = {}
+        self.cache: BoundedLRUCache[tuple, _CompiledEdgeForceStep] = BoundedLRUCache(
+            max_entries=config.max_cache_entries
+        )
         self.cache_policy_state = EdgeForceCachePolicyState()
         self.parity_check_step = 0
         self.fixed_probe_step = 0
         self.fixed_probe_batch: _EdgeForceFrozenBatch | None = None
         self.fixed_probe_cache_key: tuple | None = None
         self.disabled = False
-        self.functorch_donated_buffer_disabled = (
-            disable_functorch_donated_buffer() if config.compile_graph else False
-        )
+        self.functorch_donated_buffer_disabled = False
+
+
+    def _cached_compiled_step(self, cache_key: tuple) -> _CompiledEdgeForceStep | None:
+        return self.cache.get_lru(cache_key)
+
+    def _store_compiled_step(
+        self, cache_key: tuple, compiled: _CompiledEdgeForceStep
+    ) -> None:
+        self.cache.store(cache_key, compiled)
 
     def disable_compile_fallback(self, exc: Exception) -> bool:
-        if not self.config.allow_fallback:
+        if not self.config.allow_fallback or not _is_safe_compile_fallback_exception(
+            exc
+        ):
             return False
         logging.warning(
             "edge-force compiled loss failed; disabling compiled force loss and "
@@ -1308,15 +1636,18 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         *,
         batch,
         loss_fn,
+        output_args: dict[str, bool] | None = None,
         disabled_reason: str = "disabled",
         policy_decision: EdgeForceCachePolicyDecision | None = None,
     ):
+        if output_args is None:
+            output_args = {"forces": True, "virials": False, "stress": False}
         output = self.model(
             batch.to_dict(),
             training=True,
-            compute_force=True,
-            compute_virials=False,
-            compute_stress=False,
+            compute_force=bool(output_args.get("forces", True)),
+            compute_virials=bool(output_args.get("virials", False)),
+            compute_stress=bool(output_args.get("stress", False)),
         )
         metrics = {
             "edge_force_compile": False,
@@ -1332,6 +1663,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     "edge_force_cache_seen_count": policy_decision.seen_count,
                     "edge_force_cache_compile_count": policy_decision.compile_count,
                     "edge_force_cache_hit_count": policy_decision.cache_hit_count,
+                    **_break_even_policy_metrics(policy_decision),
                 }
             )
         return loss_fn(pred=output, ref=batch), metrics
@@ -1508,6 +1840,48 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         }
 
 
+    def _cache_abi_signature(self) -> tuple:
+        parameter_signature = tuple(
+            (
+                name,
+                tuple(int(dim) for dim in param.shape),
+                str(param.dtype),
+                bool(param.requires_grad),
+            )
+            for name, param in self.model.named_parameters()
+        )
+        buffer_signature = tuple(
+            (
+                name,
+                tuple(int(dim) for dim in buffer.shape),
+                str(buffer.dtype),
+            )
+            for name, buffer in self.model.named_buffers()
+        )
+        return (
+            "abi",
+            ("model_type", type(self.model).__module__, type(self.model).__qualname__),
+            ("torch", str(torch.__version__)),
+            ("cuda", str(getattr(torch.version, "cuda", None))),
+            _edge_force_dependency_abi_signature(),
+            _edge_force_distributed_abi_signature(),
+            _edge_force_autocast_abi_signature(),
+            ("deterministic", bool(torch.are_deterministic_algorithms_enabled())),
+            ("compile_graph", bool(self.config.compile_graph)),
+            ("compile_mode", self.config.compile_mode),
+            ("compile_dynamic", bool(self.config.compile_dynamic)),
+            ("compile_shape_padding", bool(self.config.compile_shape_padding)),
+            ("compile_max_fusion_size", int(self.config.compile_max_fusion_size)),
+            ("strip_detach", bool(self.config.strip_detach)),
+            (
+                "use_e3nn_spherical_harmonics",
+                bool(self.config.use_e3nn_spherical_harmonics),
+            ),
+            ("force_gradient_mode", self.config.force_gradient_mode),
+            ("parameters", parameter_signature),
+            ("buffers", buffer_signature),
+        )
+
     @staticmethod
     def _parity_metrics_from_comparison(comparison: dict[str, Any]) -> dict[str, Any]:
         grad_diffs = comparison.get("param_grad_max_abs_diff", {}) or {}
@@ -1545,6 +1919,19 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         data_dict: dict[str, torch.Tensor],
     ) -> tuple | None:
         input_shapes = {name: tuple(data_dict[name].shape) for name in input_names}
+        input_abi_signature = (
+            "inputs",
+            tuple(
+                (
+                    name,
+                    str(data_dict[name].dtype),
+                    _edge_force_device_abi_signature(data_dict[name].device),
+                    bool(data_dict[name].requires_grad),
+                )
+                for name in input_names
+            ),
+        )
+        abi_signature = (*self._cache_abi_signature(), input_abi_signature)
         if self.config.cache_policy == "bucket":
             return edge_force_compile_bucket_cache_key(
                 num_atoms=batch.positions.shape[0],
@@ -1553,13 +1940,18 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 bucket_atoms=self.config.bucket_atoms,
                 bucket_edges=self.config.bucket_edges,
                 bucket_margin=self.config.bucket_margin,
+                abi_signature=abi_signature,
             )
         if self.config.cache_policy == "dynamic":
-            return edge_force_compile_dynamic_cache_key(input_shapes=input_shapes)
+            return edge_force_compile_dynamic_cache_key(
+                input_shapes=input_shapes,
+                abi_signature=abi_signature,
+            )
         return edge_force_compile_shape_cache_key(
             num_atoms=batch.positions.shape[0],
             num_edges=batch.edge_index.shape[1],
             input_shapes=input_shapes,
+            abi_signature=abi_signature,
         )
 
     def _compile_step(self, *, batch, loss_fn, cache_key: tuple) -> _CompiledEdgeForceStep:
@@ -1799,9 +2191,27 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         )
 
     def compiled_force_training_loss(self, *, batch, loss_fn, output_args):
-        del output_args
         if self.disabled:
-            return self._eager_force_loss(batch=batch, loss_fn=loss_fn)
+            return self._eager_force_loss(
+                batch=batch, loss_fn=loss_fn, output_args=output_args
+            )
+        if bool(output_args.get("virials", False)) or bool(
+            output_args.get("stress", False)
+        ):
+            return self._eager_force_loss(
+                batch=batch,
+                loss_fn=loss_fn,
+                output_args=output_args,
+                disabled_reason="unsupported_outputs",
+            )
+        loss_capability = edge_force_loss_output_capability(loss_fn)
+        if not loss_capability.edge_force_supported:
+            return self._eager_force_loss(
+                batch=batch,
+                loss_fn=loss_fn,
+                output_args=output_args,
+                disabled_reason=loss_capability.unsupported_reason or "unsupported_loss",
+            )
         try:
             data_dict, _, _, vectors = _edge_vector_inputs(batch)
             input_names = edge_force_compile_input_names(
@@ -1817,12 +2227,14 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     return self._eager_force_loss(
                         batch=batch,
                         loss_fn=loss_fn,
+                        output_args=output_args,
                         disabled_reason="no_bucket",
                     )
                 if cache_key is None:
                     return self._eager_force_loss(
                         batch=batch,
                         loss_fn=loss_fn,
+                        output_args=output_args,
                         disabled_reason="no_bucket_match",
                     )
                 bucket_sizes = _edge_force_bucket_sizes_from_cache_key(cache_key)
@@ -1843,7 +2255,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     data_dict=data_dict,
                 )
             expected_returns_loss = _edge_force_can_compile_loss(loss_fn, data_dict.keys())
-            compiled = self.cache.get(cache_key)
+            compiled = self._cached_compiled_step(cache_key)
             if compiled is not None and compiled.returns_loss != expected_returns_loss:
                 self.cache.pop(cache_key, None)
                 compiled = None
@@ -1853,12 +2265,16 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 policy=self.config.cache_policy,
                 min_repeats=self.config.min_repeats,
                 cache_hit=cache_hit,
+                break_even_expected_remaining_hits=(
+                    self.config.break_even_expected_remaining_hits
+                ),
             )
             if not policy_decision.compile_allowed:
                 eager_start = time.perf_counter()
                 loss, metrics = self._eager_force_loss(
                     batch=batch,
                     loss_fn=loss_fn,
+                    output_args=output_args,
                     disabled_reason=policy_decision.reason or "policy_disabled",
                     policy_decision=policy_decision,
                 )
@@ -1893,7 +2309,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     cache_key,
                     setup_seconds=setup_seconds,
                 )
-                self.cache[cache_key] = compiled
+                self._store_compiled_step(cache_key, compiled)
             if self.fixed_probe_batch is None and int(self.config.fixed_probe_interval) > 0:
                 self.fixed_probe_batch = _freeze_edge_force_batch(batch)
                 self.fixed_probe_cache_key = cache_key
@@ -2063,6 +2479,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 "edge_force_cache_seen_count": policy_decision.seen_count,
                 "edge_force_cache_compile_count": stats.compile_count,
                 "edge_force_cache_hit_count": stats.cache_hit_count,
+                **_break_even_policy_metrics(policy_decision),
                 "edge_force_compile_setup_seconds": stats.compile_setup_seconds,
                 **{
                     f"edge_force_compile_{phase_name}_seconds": phase_seconds
@@ -2088,7 +2505,9 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         except Exception as exc:
             if not self.disable_compile_fallback(exc):
                 raise
-            return self._eager_force_loss(batch=batch, loss_fn=loss_fn)
+            return self._eager_force_loss(
+                batch=batch, loss_fn=loss_fn, output_args=output_args
+            )
 
 
 class RuntimeFallbackCompiledModule(torch.nn.Module):
@@ -2106,7 +2525,7 @@ class RuntimeFallbackCompiledModule(torch.nn.Module):
         self.disabled = False
 
     def disable_compile_fallback(self, exc: Exception) -> bool:
-        if not self.allow_fallback:
+        if not self.allow_fallback or not _is_safe_compile_fallback_exception(exc):
             return False
         logging.warning(
             "training torch.compile failed during backward; disabling compiled "
@@ -2130,11 +2549,13 @@ class RuntimeFallbackCompiledModule(torch.nn.Module):
 class EnergyOnlyForceCompiledModule(RuntimeFallbackCompiledModule):
     def forward(self, data, *args, **kwargs):
         compute_force = kwargs.get("compute_force", True)
+        full_compiled_outputs = bool(
+            kwargs.get("compute_virials", False)
+            or kwargs.get("compute_stress", False)
+        )
         unsupported_force_outputs = any(
             kwargs.get(name, False)
             for name in (
-                "compute_virials",
-                "compute_stress",
                 "compute_displacement",
                 "compute_hessian",
                 "compute_edge_forces",
@@ -2146,7 +2567,7 @@ class EnergyOnlyForceCompiledModule(RuntimeFallbackCompiledModule):
             return self.eager_model(data, *args, **kwargs)
 
         try:
-            if not compute_force:
+            if full_compiled_outputs or not compute_force:
                 return self.compiled_model(data, *args, **kwargs)
             if "positions" in data:
                 data["positions"].requires_grad_(True)
@@ -2163,6 +2584,8 @@ class EnergyOnlyForceCompiledModule(RuntimeFallbackCompiledModule):
                 }
             )
             output = self.compiled_model(data, *args, **energy_kwargs)
+            from mace.modules.utils import get_outputs, prepare_graph
+
             ctx = prepare_graph(data)
             forces, _, _, _, _ = get_outputs(
                 energy=output["energy"],
@@ -2199,7 +2622,7 @@ def prepare_edge_force_compiled_loss(
 ) -> torch.nn.Module:
     if not config.enabled:
         return model
-    if not isinstance(model, modules.ScaleShiftMACE):
+    if not _is_scale_shift_mace(model):
         message = (
             "edge-force compiled loss currently supports ScaleShiftMACE only; "
             f"got {type(model).__name__}"
