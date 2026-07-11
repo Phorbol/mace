@@ -156,6 +156,15 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=False,
     )
     parser.add_argument(
+        "--edge_force_compile_max_executable_reuse_steps",
+        help=(
+            "Maximum number of graph-compiled edge-force calls to run before "
+            "refreshing a reused executable. Use 0 for no age limit."
+        ),
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
         "--edge_force_compile_shape_padding",
         help="Allow Inductor shape_padding for the edge-force FX graph compile",
         action=argparse.BooleanOptionalAction,

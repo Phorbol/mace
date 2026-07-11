@@ -943,6 +943,7 @@ def run(args) -> None:
                 compile_mode=args.edge_force_compile_mode,
                 compile_dynamic=args.edge_force_compile_dynamic,
                 reuse_executable_across_steps=args.edge_force_compile_reuse_executable,
+                max_executable_reuse_steps=args.edge_force_compile_max_executable_reuse_steps,
                 compile_shape_padding=args.edge_force_compile_shape_padding,
                 compile_max_fusion_size=args.edge_force_compile_max_fusion_size,
                 use_e3nn_spherical_harmonics=(

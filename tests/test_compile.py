@@ -435,6 +435,7 @@ def test_edge_force_compile_config_defaults_to_disabled():
     assert config.cache_hit_gate is False
     assert config.refresh_executable_each_step is False
     assert config.reuse_executable_across_steps is False
+    assert config.max_executable_reuse_steps == 0
 
 
 def test_edge_force_symbolic_config_reuses_cached_executable_by_default():
@@ -444,6 +445,7 @@ def test_edge_force_symbolic_config_reuses_cached_executable_by_default():
 
     assert config.refresh_executable_each_step is False
     assert config.reuse_executable_across_steps is False
+    assert config.max_executable_reuse_steps == 0
 
 
 def test_edge_force_compile_gate_rejects_disabled_config():
@@ -2460,7 +2462,7 @@ def test_edge_force_compiled_tensor_loss_compile_graph_copies_parameter_grads(mo
     assert loss.requires_grad is True
     assert metrics["edge_force_compile"] is True
     assert metrics["edge_force_compile_loss"] is False
-    assert "_retain_graph_for_backward" not in metrics
+    assert metrics["_retain_graph_for_backward"] is True
     assert metrics["edge_force_release_executable_after_step"] is True
 
 
@@ -3127,7 +3129,7 @@ def test_edge_force_cache_hit_refreshes_runtime_executable(monkeypatch):
     assert next(iter(wrapper.cache.values())).executable is None
 
 
-def test_edge_force_compile_graph_can_opt_in_to_executable_reuse_without_outer_retain_graph(
+def test_edge_force_compile_graph_can_opt_in_to_executable_reuse_with_retained_backward_graph(
     monkeypatch,
 ):
     import types
@@ -3219,17 +3221,124 @@ def test_edge_force_compile_graph_can_opt_in_to_executable_reuse_without_outer_r
         output_args={"forces": True, "virials": False, "stress": False},
     )
 
-    assert "_retain_graph_for_backward" not in first_metrics
+    assert first_metrics["_retain_graph_for_backward"] is True
     assert first_metrics["edge_force_release_executable_after_step"] is False
     cached = next(iter(wrapper.cache.values()))
     assert cached.executable is not None
     assert hit_metrics["edge_force_cache_hit"] is True
-    assert "_retain_graph_for_backward" not in hit_metrics
+    assert hit_metrics["_retain_graph_for_backward"] is True
     assert hit_metrics["edge_force_runtime_recompile"] is False
     assert hit_metrics["edge_force_release_executable_after_step"] is False
     assert cached.executable is not None
     assert used_labels == ["exec1", "exec1"]
     assert len(compiled_labels) == 2
+
+
+def test_edge_force_compile_graph_refreshes_reused_executable_after_age_limit(
+    monkeypatch,
+):
+    import types
+
+    from mace.modules import WeightedEnergyForcesLoss
+    from mace.tools import training_compile
+
+    compiled_labels = []
+    used_labels = []
+
+    def fake_trace_force_closure(*args, **kwargs):
+        return types.SimpleNamespace(
+            graph_module=types.SimpleNamespace(
+                graph=types.SimpleNamespace(nodes=[object()])
+            ),
+            detach_nodes_before=0,
+            detach_nodes_after=0,
+        )
+
+    def fake_compile_fx_graph_module(*args, **kwargs):
+        label = f"exec{len(compiled_labels)}"
+        compiled_labels.append(label)
+
+        def executable(positions, *input_tensors):
+            del input_tensors
+            used_labels.append(label)
+            energy = torch.ones(
+                1, dtype=positions.dtype, device=positions.device, requires_grad=True
+            )
+            forces = torch.zeros_like(positions)
+            return energy, forces
+
+        return executable, {"compile_graph": kwargs["compile_graph"]}
+
+    def snapshot_payload():
+        return {
+            "energy": torch.zeros(1),
+            "forces": torch.zeros(1, 3),
+            "loss": torch.zeros(()),
+            "grads": {},
+        }
+
+    monkeypatch.setattr(
+        training_compile, "trace_force_closure", fake_trace_force_closure
+    )
+    monkeypatch.setattr(
+        training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "rebuild_fx_graph_module", lambda graph_module: graph_module
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_position_force_value_snapshot",
+        lambda **kwargs: snapshot_payload(),
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_edge_force_value_snapshot_from_executable",
+        lambda **kwargs: snapshot_payload(),
+    )
+
+    model = create_tiny_mace("cpu")
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        model,
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=True,
+            cache_hit_gate=False,
+            cache_policy="shape",
+            allow_fallback=False,
+            refresh_executable_each_step=False,
+            reuse_executable_across_steps=True,
+            max_executable_reuse_steps=2,
+            force_gradient_mode="positions",
+            setup_gate="none",
+        ),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+
+    wrapper.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=WeightedEnergyForcesLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+    _, second_metrics = wrapper.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=WeightedEnergyForcesLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+    _, third_metrics = wrapper.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=WeightedEnergyForcesLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert second_metrics["edge_force_runtime_recompile"] is False
+    assert second_metrics["edge_force_executable_reuse_count_before"] == 1
+    assert third_metrics["edge_force_runtime_recompile"] is True
+    assert third_metrics["edge_force_executable_reuse_expired"] is True
+    assert third_metrics["edge_force_executable_reuse_count_at_decision"] == 2
+    assert third_metrics["edge_force_executable_reuse_count_before"] == 0
+    assert used_labels == ["exec1", "exec1", "exec2"]
+    assert len(compiled_labels) == 3
 
 
 def test_edge_force_compile_periodic_parity_check_records_gradient_diffs(monkeypatch):
@@ -4290,6 +4399,7 @@ def test_edge_force_compile_graph_uses_returned_stress_for_builtin_stress_loss(
         del kwargs
         return training_compile._CompiledEdgeForceStep(
             executable=executable,
+            executable_reuse_count=0,
             graph_module=torch.fx.GraphModule(torch.nn.Module(), torch.fx.Graph()),
             gate_result=training_compile.EdgeForceCompileGateResult(
                 enabled=True,
@@ -4359,6 +4469,7 @@ def test_edge_force_compile_graph_uses_returned_virials_for_builtin_virials_loss
         del kwargs
         return training_compile._CompiledEdgeForceStep(
             executable=executable,
+            executable_reuse_count=0,
             graph_module=torch.fx.GraphModule(torch.nn.Module(), torch.fx.Graph()),
             gate_result=training_compile.EdgeForceCompileGateResult(
                 enabled=True,

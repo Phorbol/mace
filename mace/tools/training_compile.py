@@ -67,6 +67,7 @@ class EdgeForceCompileConfig:
     bucket_margin: float = 1.0
     refresh_executable_each_step: bool | None = None
     reuse_executable_across_steps: bool = False
+    max_executable_reuse_steps: int = 0
     parity_check_interval: int = 0
     parity_check_gradients: bool = True
     parity_check_strict: bool = True
@@ -104,6 +105,10 @@ class EdgeForceCompileConfig:
         if self.max_cache_entries < 0:
             raise ValueError(
                 "edge-force compile max_cache_entries must be non-negative"
+            )
+        if self.max_executable_reuse_steps < 0:
+            raise ValueError(
+                "edge-force compile max_executable_reuse_steps must be non-negative"
             )
         if self.refresh_executable_each_step is None:
             object.__setattr__(self, "refresh_executable_each_step", False)
@@ -2224,6 +2229,7 @@ def _position_force_value_snapshot(
 @dataclasses.dataclass
 class _CompiledEdgeForceStep:
     executable: Any
+    executable_reuse_count: int
     graph_module: torch.fx.GraphModule
     gate_result: EdgeForceCompileGateResult
     cache_key: tuple
@@ -2894,6 +2900,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         self.model.zero_grad(set_to_none=True)
         return _CompiledEdgeForceStep(
             executable=training_executable,
+            executable_reuse_count=0,
             graph_module=cached_graph_module,
             gate_result=gate_result,
             cache_key=cache_key,
@@ -3119,13 +3126,28 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 self.model.zero_grad(set_to_none=True)
             runtime_recompile_seconds: float | None = None
             runtime_executable = compiled.executable
+            executable_reuse_count_before = int(compiled.executable_reuse_count)
+            executable_reuse_count_at_decision = executable_reuse_count_before
+            executable_reuse_limit = int(self.config.max_executable_reuse_steps)
+            executable_reuse_expired = bool(
+                cache_hit
+                and self.config.compile_graph
+                and runtime_executable is not None
+                and self.config.reuse_executable_across_steps
+                and executable_reuse_limit > 0
+                and executable_reuse_count_before >= executable_reuse_limit
+            )
             rebuild_runtime_executable = runtime_executable is None or (
                 cache_hit
                 and self.config.compile_graph
-                and self.config.refresh_executable_each_step
+                and (
+                    self.config.refresh_executable_each_step
+                    or executable_reuse_expired
+                )
             )
             if rebuild_runtime_executable:
                 compiled.executable = None
+                compiled.executable_reuse_count = 0
                 runtime_recompile_start = time.perf_counter()
                 runtime_graph_module = rebuild_fx_graph_module(compiled.graph_module)
                 runtime_executable, _ = compile_fx_graph_module(
@@ -3137,6 +3159,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     max_fusion_size=self.config.compile_max_fusion_size,
                 )
                 runtime_recompile_seconds = time.perf_counter() - runtime_recompile_start
+                executable_reuse_count_before = 0
             if runtime_executable is None:
                 raise RuntimeError("edge-force compiled executable is unavailable")
 
@@ -3222,6 +3245,9 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             )
             if release_executable_after_step:
                 compiled.executable = None
+                compiled.executable_reuse_count = 0
+            else:
+                compiled.executable_reuse_count = executable_reuse_count_before + 1
 
             self.cache_policy_state.record_step_time(
                 cache_key,
@@ -3261,10 +3287,15 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 "edge_force_eager_step_seconds_ema": stats.eager_step_seconds_ema,
                 "edge_force_runtime_recompile": runtime_recompile_seconds is not None,
                 "edge_force_runtime_recompile_seconds": runtime_recompile_seconds,
+                "edge_force_executable_reuse_count_before": executable_reuse_count_before,
+                "edge_force_executable_reuse_count_at_decision": executable_reuse_count_at_decision,
+                "edge_force_executable_reuse_limit": executable_reuse_limit,
+                "edge_force_executable_reuse_expired": executable_reuse_expired,
                 "edge_force_release_executable_after_step": release_executable_after_step,
             }
             if self.config.compile_graph:
                 metrics["_compiled_param_grad_tensors"] = compiled_param_grad_tensors
+                metrics["_retain_graph_for_backward"] = True
             if bucket_sizes is not None:
                 metrics["edge_force_bucket_atoms"] = bucket_sizes[0]
                 metrics["edge_force_bucket_edges"] = bucket_sizes[1]
