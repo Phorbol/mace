@@ -2362,6 +2362,38 @@ def test_edge_force_compiled_loss_can_use_position_gradient_mode():
     assert any(param.grad is not None for param in model.parameters())
 
 
+def test_edge_force_compiled_tensor_loss_compile_graph_requests_retain_graph():
+    from mace.modules import WeightedEnergyForcesLoss
+    from mace.tools.training_compile import (
+        EdgeForceCompileConfig,
+        prepare_edge_force_compiled_loss,
+    )
+
+    model = create_tiny_mace("cpu")
+    prepared = prepare_edge_force_compiled_loss(
+        model,
+        config=EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=True,
+            cache_policy="dynamic",
+            setup_gate="none",
+            cache_hit_gate=False,
+            force_gradient_mode="positions",
+            allow_fallback=False,
+        ),
+    )
+    loss, metrics = prepared.compiled_force_training_loss(
+        batch=_BatchDictAdapter(create_batch("cpu")),
+        loss_fn=WeightedEnergyForcesLoss(energy_weight=1.0, forces_weight=100.0),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert loss.requires_grad is True
+    assert metrics["edge_force_compile"] is True
+    assert metrics["edge_force_compile_loss"] is True
+    assert metrics["_retain_graph_for_backward"] is True
+
+
 def test_edge_force_compiled_loss_bucket_policy_compiles_padded_inputs():
     from mace.modules import WeightedEnergyForcesLoss
     from mace.tools.train import take_step
