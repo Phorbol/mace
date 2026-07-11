@@ -23,7 +23,8 @@ if str(SCRIPT_DIR) not in sys.path:
 from prepare_fullcase200_fps_extxyz import (
     DEFAULT_DATA_ROOT,
     DEFAULT_MANIFEST,
-    collect_labeled_frames,
+    CandidateFrame,
+    iter_labeled_frames,
 )
 
 DEFAULT_MODEL = Path("/home/gengjianrui/.cache/mace/mace-mh-1.model")
@@ -37,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--head", default="oc20_usemppbe")
     parser.add_argument("--output", type=Path, default=Path("runs/oc20neb_fullcase200_fps_extxyz/mace_mh1_node_feats_features.npz"))
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--chunk-size", type=int, default=256)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--default-dtype", choices=("float32", "float64"), default="float32")
     parser.add_argument("--descriptor-key", default="node_feats")
@@ -152,6 +154,29 @@ def forward_features(
     return np.concatenate(features, axis=0).astype(np.float32)
 
 
+def _forward_feature_chunk(
+    candidates: list[CandidateFrame],
+    *,
+    head: str,
+    model,
+    z_table,
+    heads,
+    device,
+    batch_size: int,
+    descriptor_key: str,
+) -> np.ndarray:
+    atoms_list = [atoms_with_head(candidate.atoms, head) for candidate in candidates]
+    return forward_features(
+        atoms_list,
+        model=model,
+        z_table=z_table,
+        heads=heads,
+        device=device,
+        batch_size=batch_size,
+        descriptor_key=descriptor_key,
+    )
+
+
 def export_features(
     *,
     manifest: Path,
@@ -160,6 +185,7 @@ def export_features(
     head: str,
     output: Path,
     batch_size: int,
+    chunk_size: int,
     device_name: str,
     default_dtype: str,
     descriptor_key: str,
@@ -169,37 +195,68 @@ def export_features(
 ) -> dict:
     if output.exists() and not overwrite:
         raise FileExistsError(f"{output} already exists; pass --overwrite")
-    candidates = collect_labeled_frames(manifest, data_root)
-    if limit_frames is not None:
-        candidates = candidates[: int(limit_frames)]
-    if not candidates:
-        raise ValueError("no labeled frames found for feature extraction")
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
     model, z_table, heads, device = load_model(
         model_path,
         device_name=device_name,
         default_dtype=default_dtype,
         enable_cueq=enable_cueq,
     )
-    atoms_list = [atoms_with_head(candidate.atoms, head) for candidate in candidates]
-    features = forward_features(
-        atoms_list,
-        model=model,
-        z_table=z_table,
-        heads=heads,
-        device=device,
-        batch_size=batch_size,
-        descriptor_key=descriptor_key,
-    )
-    source_keys = np.asarray([candidate.source_key for candidate in candidates])
-    case_ids = np.asarray([candidate.case_id for candidate in candidates])
-    frame_indices = np.asarray([candidate.frame_index for candidate in candidates], dtype=np.int32)
+    feature_chunks: list[np.ndarray] = []
+    source_keys: list[str] = []
+    case_ids: list[str] = []
+    frame_indices: list[int] = []
+    chunk: list[CandidateFrame] = []
+    seen = 0
+
+    def flush_chunk() -> None:
+        nonlocal chunk, seen
+        if not chunk:
+            return
+        features = _forward_feature_chunk(
+            chunk,
+            head=head,
+            model=model,
+            z_table=z_table,
+            heads=heads,
+            device=device,
+            batch_size=batch_size,
+            descriptor_key=descriptor_key,
+        )
+        feature_chunks.append(features)
+        source_keys.extend(candidate.source_key for candidate in chunk)
+        case_ids.extend(candidate.case_id for candidate in chunk)
+        frame_indices.extend(int(candidate.frame_index) for candidate in chunk)
+        seen += len(chunk)
+        print(
+            f"[extract_fullcase200_mace_features] processed {seen} frames",
+            file=sys.stderr,
+            flush=True,
+        )
+        chunk = []
+
+    for candidate in iter_labeled_frames(manifest, data_root):
+        if limit_frames is not None and seen + len(chunk) >= int(limit_frames):
+            break
+        chunk.append(candidate)
+        if len(chunk) >= chunk_size:
+            flush_chunk()
+    flush_chunk()
+
+    if not feature_chunks:
+        raise ValueError("no labeled frames found for feature extraction")
+    features = np.concatenate(feature_chunks, axis=0).astype(np.float32)
+    source_keys_array = np.asarray(source_keys)
+    case_ids_array = np.asarray(case_ids)
+    frame_indices_array = np.asarray(frame_indices, dtype=np.int32)
     output.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         output,
         features=features,
-        source_keys=source_keys,
-        case_ids=case_ids,
-        frame_indices=frame_indices,
+        source_keys=source_keys_array,
+        case_ids=case_ids_array,
+        frame_indices=frame_indices_array,
     )
     summary = {
         "output": str(output.resolve()),
@@ -208,8 +265,9 @@ def export_features(
         "model": str(model_path.resolve()),
         "head": head,
         "descriptor_key": descriptor_key,
-        "frames": int(len(candidates)),
+        "frames": int(features.shape[0]),
         "feature_dim": int(features.shape[1]),
+        "chunk_size": int(chunk_size),
         "device": str(device),
         "default_dtype": default_dtype,
         "enable_cueq": bool(enable_cueq),
@@ -227,6 +285,7 @@ def main() -> None:
         head=args.head,
         output=args.output,
         batch_size=args.batch_size,
+        chunk_size=args.chunk_size,
         device_name=args.device,
         default_dtype=args.default_dtype,
         descriptor_key=args.descriptor_key,

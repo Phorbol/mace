@@ -69,10 +69,9 @@ def _exportable_atoms(atoms: Atoms, *, source_key: str, case_id: str, frame_inde
     return out
 
 
-def collect_labeled_frames(manifest_path: Path, data_root: Path) -> list[CandidateFrame]:
+def iter_labeled_frames(manifest_path: Path, data_root: Path):
     manifest_path = manifest_path.resolve()
     data_root = data_root.resolve()
-    candidates: list[CandidateFrame] = []
     for row in read_jsonl(manifest_path):
         case_id = str(row["case_id"])
         traj_path = resolve_traj_path(row, manifest_path, data_root)
@@ -83,20 +82,21 @@ def collect_labeled_frames(manifest_path: Path, data_root: Path) -> list[Candida
             if "energy" not in results or "forces" not in results:
                 continue
             source_key = f"{case_id}:{frame_index}"
-            candidates.append(
-                CandidateFrame(
+            yield CandidateFrame(
+                source_key=source_key,
+                case_id=case_id,
+                frame_index=frame_index,
+                atoms=_exportable_atoms(
+                    atoms,
                     source_key=source_key,
                     case_id=case_id,
                     frame_index=frame_index,
-                    atoms=_exportable_atoms(
-                        atoms,
-                        source_key=source_key,
-                        case_id=case_id,
-                        frame_index=frame_index,
-                    ),
-                )
+                ),
             )
-    return candidates
+
+
+def collect_labeled_frames(manifest_path: Path, data_root: Path) -> list[CandidateFrame]:
+    return list(iter_labeled_frames(manifest_path, data_root))
 
 
 def load_feature_table(features_npz: Path) -> tuple[np.ndarray, np.ndarray]:

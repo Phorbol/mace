@@ -173,6 +173,67 @@ def test_extract_fullcase200_mace_features_mean_pools_by_graph():
     )
 
 
+def test_extract_fullcase200_mace_features_streams_candidates_by_chunk(tmp_path, monkeypatch):
+    extractor = load_script("extract_fullcase200_mace_features.py")
+    candidates = [
+        type(
+            "Candidate",
+            (),
+            {
+                "source_key": f"case_a:{idx}",
+                "case_id": "case_a",
+                "frame_index": idx,
+                "atoms": Atoms("H", positions=[[float(idx), 0.0, 0.0]]),
+            },
+        )()
+        for idx in range(5)
+    ]
+    observed_chunk_sizes = []
+
+    monkeypatch.setattr(
+        extractor,
+        "iter_labeled_frames",
+        lambda _manifest, _data_root: iter(candidates),
+    )
+    monkeypatch.setattr(
+        extractor,
+        "load_model",
+        lambda *_args, **_kwargs: (object(), object(), None, "cpu"),
+    )
+
+    def fake_forward_features(atoms_list, **_kwargs):
+        observed_chunk_sizes.append(len(atoms_list))
+        start = sum(observed_chunk_sizes[:-1])
+        return np.asarray([[float(start + offset), 1.0] for offset in range(len(atoms_list))], dtype=np.float32)
+
+    monkeypatch.setattr(extractor, "forward_features", fake_forward_features)
+
+    summary = extractor.export_features(
+        manifest=tmp_path / "manifest.jsonl",
+        data_root=tmp_path / "data",
+        model_path=tmp_path / "model.pt",
+        head="oc20_usemppbe",
+        output=tmp_path / "features.npz",
+        batch_size=4,
+        chunk_size=2,
+        device_name="cpu",
+        default_dtype="float32",
+        descriptor_key="node_feats",
+        enable_cueq=False,
+        limit_frames=None,
+        overwrite=False,
+    )
+
+    payload = np.load(tmp_path / "features.npz", allow_pickle=False)
+    assert observed_chunk_sizes == [2, 2, 1]
+    assert summary["frames"] == 5
+    np.testing.assert_allclose(
+        payload["features"],
+        np.asarray([[0.0, 1.0], [1.0, 1.0], [2.0, 1.0], [3.0, 1.0], [4.0, 1.0]], dtype=np.float32),
+    )
+    assert payload["source_keys"].astype(str).tolist() == [f"case_a:{idx}" for idx in range(5)]
+
+
 def test_prepare_fullcase200_fps_sbatch_extracts_mace_features_before_fps():
     sbatch = SCRIPT_ROOT / "prepare-fullcase200-fps-extxyz.sbatch"
     text = sbatch.read_text()
@@ -184,6 +245,8 @@ def test_prepare_fullcase200_fps_sbatch_extracts_mace_features_before_fps():
     assert "/home/gengjianrui/.cache/mace/mace-mh-1.model" in text
     assert "extract_fullcase200_mace_features.py" in text
     assert "prepare_fullcase200_fps_extxyz.py" in text
+    assert "MACE_OC20NEB_PREP_CHUNK_SIZE:-256" in text
+    assert "--chunk-size" in text
     assert "--features-npz" in text
 
 
