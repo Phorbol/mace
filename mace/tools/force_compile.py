@@ -180,7 +180,53 @@ def rebuild_fx_graph_module(gm: torch.fx.GraphModule) -> torch.fx.GraphModule:
     for node in gm.graph.nodes:
         value_map[node] = new_graph.node_copy(node, lambda old: value_map[old])
     new_graph.lint()
-    return torch.fx.GraphModule(copy.deepcopy(gm), new_graph)
+    root = torch.nn.Module()
+    for node in gm.graph.nodes:
+        if node.op != "get_attr":
+            continue
+        target = str(node.target)
+        _set_nested_attr(root, target, _clone_fx_attr(gm, target))
+    return torch.fx.GraphModule(root, new_graph)
+
+
+def _clone_fx_attr(gm: torch.fx.GraphModule, target: str) -> Any:
+    value = gm
+    for atom in target.split("."):
+        value = getattr(value, atom)
+    return _clone_fx_value(value)
+
+
+def _clone_fx_value(value: Any) -> Any:
+    if isinstance(value, torch.nn.Parameter):
+        return torch.nn.Parameter(
+            value.detach().clone(memory_format=torch.preserve_format),
+            requires_grad=value.requires_grad,
+        )
+    if isinstance(value, torch.Tensor):
+        cloned = value.detach().clone(memory_format=torch.preserve_format)
+        if value.requires_grad:
+            cloned.requires_grad_(True)
+        return cloned
+    if isinstance(value, tuple):
+        return tuple(_clone_fx_value(item) for item in value)
+    if isinstance(value, list):
+        return [_clone_fx_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            _clone_fx_value(key): _clone_fx_value(item)
+            for key, item in value.items()
+        }
+    return copy.deepcopy(value)
+
+
+def _set_nested_attr(root: torch.nn.Module, target: str, value: Any) -> None:
+    atoms = target.split(".")
+    parent = root
+    for atom in atoms[:-1]:
+        if not hasattr(parent, atom):
+            setattr(parent, atom, torch.nn.Module())
+        parent = getattr(parent, atom)
+    setattr(parent, atoms[-1], value)
 
 
 def trace_force_closure(

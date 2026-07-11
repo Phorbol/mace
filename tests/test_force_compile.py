@@ -68,6 +68,31 @@ def test_rebuild_fx_graph_module_isolates_root_tensor_attributes():
     torch.testing.assert_close(rebuilt_b(torch.tensor([4.0])), torch.tensor([8.0]))
 
 
+def test_rebuild_fx_graph_module_clones_non_leaf_tensor_attributes():
+    class CapturedNonLeafTensorModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            base = torch.tensor([2.0], requires_grad=True)
+            self.scale = base * 3.0
+
+        def forward(self, x):
+            return x * self.scale
+
+    traced = torch.fx.symbolic_trace(CapturedNonLeafTensorModule())
+    assert traced.scale.grad_fn is not None
+
+    rebuilt_a = rebuild_fx_graph_module(traced)
+    rebuilt_b = rebuild_fx_graph_module(traced)
+
+    assert rebuilt_a.scale is not traced.scale
+    assert rebuilt_b.scale is not traced.scale
+    assert rebuilt_a.scale is not rebuilt_b.scale
+    assert rebuilt_a.scale.grad_fn is None
+    assert rebuilt_b.scale.grad_fn is None
+    torch.testing.assert_close(rebuilt_a(torch.tensor([3.0])), torch.tensor([18.0]))
+    torch.testing.assert_close(rebuilt_b(torch.tensor([4.0])), torch.tensor([24.0]))
+
+
 def test_trace_force_closure_repairs_detach_chain_and_preserves_outputs():
     def fn(x):
         y = x + x.detach().detach() * 2.0
