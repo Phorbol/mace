@@ -3330,6 +3330,11 @@ def test_edge_force_compile_graph_refreshes_reused_executable_after_age_limit(
         loss_fn=WeightedEnergyForcesLoss(),
         output_args={"forces": True, "virials": False, "stress": False},
     )
+    _, fourth_metrics = wrapper.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=WeightedEnergyForcesLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
 
     assert second_metrics["edge_force_runtime_recompile"] is False
     assert second_metrics["edge_force_executable_reuse_count_before"] == 1
@@ -3337,7 +3342,9 @@ def test_edge_force_compile_graph_refreshes_reused_executable_after_age_limit(
     assert third_metrics["edge_force_executable_reuse_expired"] is True
     assert third_metrics["edge_force_executable_reuse_count_at_decision"] == 2
     assert third_metrics["edge_force_executable_reuse_count_before"] == 0
-    assert used_labels == ["exec1", "exec1", "exec2"]
+    assert fourth_metrics["edge_force_runtime_recompile"] is False
+    assert fourth_metrics["edge_force_executable_reuse_count_before"] == 1
+    assert used_labels == ["exec1", "exec1", "exec2", "exec2"]
     assert len(compiled_labels) == 3
 
 

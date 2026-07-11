@@ -3159,6 +3159,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     max_fusion_size=self.config.compile_max_fusion_size,
                 )
                 runtime_recompile_seconds = time.perf_counter() - runtime_recompile_start
+                compiled.executable = runtime_executable
                 executable_reuse_count_before = 0
             if runtime_executable is None:
                 raise RuntimeError("edge-force compiled executable is unavailable")
