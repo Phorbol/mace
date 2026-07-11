@@ -1118,12 +1118,28 @@ def _restore_module_parameters(
         module._parameters[local_name] = original
 
 
+def _max_abs_value(tensor: torch.Tensor) -> float:
+    if tensor.numel() == 0:
+        return 0.0
+    return float(tensor.detach().abs().max().cpu())
+
+
 def _max_abs_diff(left: torch.Tensor, right: torch.Tensor) -> float:
     if left.shape != right.shape:
         return float("inf")
     if left.numel() == 0:
         return 0.0
     return float((left.detach() - right.detach()).abs().max().cpu())
+
+
+def _max_rel_diff(left: torch.Tensor, right: torch.Tensor) -> float:
+    diff = _max_abs_diff(left, right)
+    if not math.isfinite(diff):
+        return diff
+    denom = max(_max_abs_value(left), _max_abs_value(right))
+    if denom == 0.0:
+        return 0.0
+    return diff / denom
 
 
 def _within_tolerance(
@@ -1143,22 +1159,41 @@ def _compare_edge_force_snapshots(
             failed_checks.append(key)
 
     grad_diffs: dict[str, float] = {}
+    grad_rel_diffs: dict[str, float] = {}
+    grad_reference_max: dict[str, float] = {}
+    grad_candidate_max: dict[str, float] = {}
     left_names = set(left["grads"])
     right_names = set(right["grads"])
     for missing_name in sorted(left_names ^ right_names):
         grad_diffs[missing_name] = float("inf")
+        grad_rel_diffs[missing_name] = float("inf")
+        grad_reference_max[missing_name] = float("nan")
+        grad_candidate_max[missing_name] = float("nan")
         failed_checks.append(f"grad:{missing_name}")
     for name in sorted(left_names & right_names):
         left_grad = left["grads"][name]
         right_grad = right["grads"][name]
         if left_grad is None and right_grad is None:
             grad_diffs[name] = 0.0
+            grad_rel_diffs[name] = 0.0
+            grad_reference_max[name] = 0.0
+            grad_candidate_max[name] = 0.0
             continue
         if left_grad is None or right_grad is None:
             grad_diffs[name] = float("inf")
+            grad_rel_diffs[name] = float("inf")
+            grad_reference_max[name] = (
+                float("nan") if left_grad is None else _max_abs_value(left_grad)
+            )
+            grad_candidate_max[name] = (
+                float("nan") if right_grad is None else _max_abs_value(right_grad)
+            )
             failed_checks.append(f"grad:{name}")
             continue
         grad_diffs[name] = _max_abs_diff(left_grad, right_grad)
+        grad_rel_diffs[name] = _max_rel_diff(left_grad, right_grad)
+        grad_reference_max[name] = _max_abs_value(left_grad)
+        grad_candidate_max[name] = _max_abs_value(right_grad)
         if not _within_tolerance(left_grad, right_grad, atol=atol, rtol=rtol):
             failed_checks.append(f"grad:{name}")
 
@@ -1170,6 +1205,9 @@ def _compare_edge_force_snapshots(
         "forces_max_abs_diff": _max_abs_diff(left["forces"], right["forces"]),
         "loss_abs_diff": _max_abs_diff(left["loss"], right["loss"]),
         "param_grad_max_abs_diff": grad_diffs,
+        "param_grad_max_rel_diff": grad_rel_diffs,
+        "param_grad_reference_max_abs": grad_reference_max,
+        "param_grad_candidate_max_abs": grad_candidate_max,
         "failed_checks": failed_checks,
     }
 

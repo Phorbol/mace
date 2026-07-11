@@ -377,6 +377,32 @@ def test_edge_force_snapshot_from_executable_can_collect_cloned_parameter_grads(
     assert snapshot["grads"]["weight"].shape == model.weight.shape
 
 
+def test_compare_edge_force_snapshots_reports_grad_scale_diagnostics():
+    from mace.tools import training_compile
+
+    left = {
+        "energy": torch.zeros(1),
+        "forces": torch.zeros(2, 3),
+        "loss": torch.zeros(()),
+        "grads": {"weight": torch.tensor([1.0, 0.0])},
+    }
+    right = {
+        "energy": torch.zeros(1),
+        "forces": torch.zeros(2, 3),
+        "loss": torch.zeros(()),
+        "grads": {"weight": torch.tensor([1.5, 0.0])},
+    }
+
+    comparison = training_compile._compare_edge_force_snapshots(
+        left, right, atol=1.0e-5, rtol=1.0e-4
+    )
+
+    assert comparison["param_grad_max_abs_diff"]["weight"] == 0.5
+    assert comparison["param_grad_reference_max_abs"]["weight"] == 1.0
+    assert comparison["param_grad_candidate_max_abs"]["weight"] == 1.5
+    assert comparison["param_grad_max_rel_diff"]["weight"] == pytest.approx(1.0 / 3.0)
+
+
 def test_training_compile_helper_noop_cpu():
     from mace.tools.training_compile import prepare_model_for_training_compile
 
@@ -4594,6 +4620,37 @@ def test_edge_force_compile_graph_setup_gate_can_check_parameter_grads(
             cache_key=("shape",),
             output_args={"forces": True, "virials": False, "stress": False},
         )
+
+
+def test_edge_force_position_mode_uncompiled_graph_preserves_force_loss_parameter_grads():
+    from mace.modules import WeightedEnergyForcesLoss
+    from mace.tools import training_compile
+
+    model = create_tiny_mace("cpu")
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        model,
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_hit_gate=False,
+            cache_policy="shape",
+            allow_fallback=False,
+            refresh_executable_each_step=False,
+            force_gradient_mode="positions",
+            setup_gate="strict",
+            parity_check_gradients=True,
+        ),
+    )
+
+    compiled = wrapper._compile_step(
+        batch=batch,
+        loss_fn=WeightedEnergyForcesLoss(),
+        cache_key=("shape",),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert compiled.gate_result.accepted is True
 
 
 def test_edge_force_position_mode_bucket_policy_uses_unpadded_shape_key(
