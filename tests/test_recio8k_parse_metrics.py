@@ -51,6 +51,26 @@ def test_parse_log_reports_epoch_timestamps_and_mean_seconds_per_epoch(tmp_path)
     assert summary["timing"]["mean_seconds_per_epoch"] == pytest.approx(17.3342)
 
 
+
+def test_parse_log_reports_stress_metric_when_present(tmp_path):
+    parse_metrics = load_parse_metrics()
+    log = tmp_path / "train.log"
+    log.write_text(
+        "2026-06-29 04:07:06.930 INFO: Epoch 0: head: Default, "
+        "loss=16.75404358, MAE_E_per_atom=  302.25 meV, "
+        "MAE_F=  600.83 meV / A, MAE_stress=   12.34 meV / A^3\n"
+    )
+
+    summary = parse_metrics.parse_log(log)
+
+    assert summary["last"] == {
+        "epoch": 0,
+        "mae_e_mev_atom": 302.25,
+        "mae_f_mev_a": 600.83,
+        "mae_stress_mev_a3": 12.34,
+        "timestamp": "2026-06-29T04:07:06.930000",
+    }
+
 def test_parse_nvdmon_summarizes_gpu_memory_and_utilization(tmp_path):
     parse_metrics = load_parse_metrics()
     nvdmon = tmp_path / "nvdmon_job-123.log"

@@ -13,6 +13,7 @@ EPOCH_RE = re.compile(
     r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*"
     r"Epoch (?P<epoch>\d+):.*MAE_E_per_atom=\s*(?P<mae_e>nan|[0-9.]+) meV, "
     r"MAE_F=\s*(?P<mae_f>nan|[0-9.]+)"
+    r"(?: meV / A, MAE_stress=\s*(?P<mae_stress>nan|[0-9.]+))?"
 )
 TRAIN_COMPILE_FALLBACK_RE = re.compile(
     r"training torch\.compile failed during backward; disabling compiled "
@@ -67,14 +68,17 @@ def parse_log(path: Path) -> dict:
         match = EPOCH_RE.search(line)
         if match:
             timestamp = _parse_timestamp(match.group("timestamp"))
-            epochs.append(
-                {
-                    "epoch": int(match.group("epoch")),
-                    "mae_e_mev_atom": _parse_metric(match.group("mae_e")),
-                    "mae_f_mev_a": _parse_metric(match.group("mae_f")),
-                    "timestamp": timestamp.isoformat(),
-                }
-            )
+            epoch = {
+                "epoch": int(match.group("epoch")),
+                "mae_e_mev_atom": _parse_metric(match.group("mae_e")),
+                "mae_f_mev_a": _parse_metric(match.group("mae_f")),
+                "timestamp": timestamp.isoformat(),
+            }
+            if match.group("mae_stress") is not None:
+                epoch["mae_stress_mev_a3"] = _parse_metric(
+                    match.group("mae_stress")
+                )
+            epochs.append(epoch)
             continue
         fallback_match = TRAIN_COMPILE_FALLBACK_RE.search(line)
         if fallback_match:

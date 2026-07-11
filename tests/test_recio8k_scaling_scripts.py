@@ -33,6 +33,25 @@ def load_script(name: str):
     return module
 
 
+
+def test_dpa4_stress_20k_demo_sbatch_targets_current_env_and_stress_compile():
+    sbatch = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "benchmarks"
+        / "recio8k_accel"
+        / "dpa4-stress-20k-demo.sbatch"
+    ).read_text()
+
+    assert "MACE_DPA4_DEMO_TARGET_STEPS:-20000" in sbatch
+    assert "conda-envs/mace-dpa4-cu126/bin/python" in sbatch
+    assert "row_000060_34ee2613164a1ac6_Pd-Zn_111_-bulk1127-shift0.xyz" in sbatch
+    assert "--loss=stress" in sbatch
+    assert "--stress_key=stress" in sbatch
+    assert "--edge_force_compile_force_gradient_mode=positions" in sbatch
+    assert "--no-edge_force_compile_allow_fallback" in sbatch
+    assert "parse_metrics.py" in sbatch
+
 def test_batch_case_keeps_reference_settings_and_enables_stage_two(tmp_path):
     generator = load_script("generate_recio8k_scaling_cases.py")
 
