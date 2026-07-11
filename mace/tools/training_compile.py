@@ -3087,8 +3087,6 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             if bucket_sizes is not None:
                 metrics["edge_force_bucket_atoms"] = bucket_sizes[0]
                 metrics["edge_force_bucket_edges"] = bucket_sizes[1]
-            if self.config.compile_graph and compiled.returns_loss:
-                metrics["_retain_graph_for_backward"] = True
             if parity_comparison is not None:
                 metrics.update(self._parity_metrics_from_comparison(parity_comparison))
             if fixed_probe_comparison is not None:

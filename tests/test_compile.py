@@ -2362,21 +2362,67 @@ def test_edge_force_compiled_loss_can_use_position_gradient_mode():
     assert any(param.grad is not None for param in model.parameters())
 
 
-def test_edge_force_compiled_tensor_loss_compile_graph_requests_retain_graph():
+def test_edge_force_compiled_tensor_loss_compile_graph_does_not_request_outer_retain_graph(monkeypatch):
+    import types
+
     from mace.modules import WeightedEnergyForcesLoss
-    from mace.tools.training_compile import (
-        EdgeForceCompileConfig,
-        prepare_edge_force_compiled_loss,
+    from mace.tools import training_compile
+
+    def fake_trace_force_closure(*args, **kwargs):
+        return types.SimpleNamespace(
+            graph_module=types.SimpleNamespace(
+                graph=types.SimpleNamespace(nodes=[object()])
+            ),
+            detach_nodes_before=0,
+            detach_nodes_after=0,
+        )
+
+    def fake_compile_fx_graph_module(*args, **kwargs):
+        def executable(positions, *input_tensors):
+            del input_tensors
+            energy = positions.new_zeros(1, requires_grad=True)
+            forces = torch.zeros_like(positions)
+            loss = energy.sum()
+            return energy, forces, loss
+
+        return executable, {"compile_graph": kwargs["compile_graph"]}
+
+    def snapshot_payload():
+        return {
+            "energy": torch.zeros(1),
+            "forces": torch.zeros(1, 3),
+            "loss": torch.zeros(()),
+            "grads": {},
+        }
+
+    monkeypatch.setattr(
+        training_compile, "trace_force_closure", fake_trace_force_closure
+    )
+    monkeypatch.setattr(
+        training_compile, "compile_fx_graph_module", fake_compile_fx_graph_module
+    )
+    monkeypatch.setattr(
+        training_compile, "rebuild_fx_graph_module", lambda graph_module: graph_module
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_position_force_value_snapshot",
+        lambda **kwargs: snapshot_payload(),
+    )
+    monkeypatch.setattr(
+        training_compile,
+        "_edge_force_value_snapshot_from_executable",
+        lambda **kwargs: snapshot_payload(),
     )
 
     model = create_tiny_mace("cpu")
-    prepared = prepare_edge_force_compiled_loss(
+    prepared = training_compile.prepare_edge_force_compiled_loss(
         model,
-        config=EdgeForceCompileConfig(
+        config=training_compile.EdgeForceCompileConfig(
             enabled=True,
             compile_graph=True,
-            cache_policy="dynamic",
-            setup_gate="none",
+            cache_policy="shape",
+            setup_gate="strict",
             cache_hit_gate=False,
             force_gradient_mode="positions",
             allow_fallback=False,
@@ -2391,7 +2437,7 @@ def test_edge_force_compiled_tensor_loss_compile_graph_requests_retain_graph():
     assert loss.requires_grad is True
     assert metrics["edge_force_compile"] is True
     assert metrics["edge_force_compile_loss"] is True
-    assert metrics["_retain_graph_for_backward"] is True
+    assert "_retain_graph_for_backward" not in metrics
 
 
 def test_edge_force_compiled_loss_bucket_policy_compiles_padded_inputs():
@@ -3069,11 +3115,12 @@ def test_edge_force_cache_hit_does_not_request_outer_retain_graph(monkeypatch):
         )
 
     def fake_compile_fx_graph_module(*args, **kwargs):
-        def executable(vectors, *input_tensors):
+        def executable(positions, *input_tensors):
             del input_tensors
-            energy = torch.ones(1, dtype=vectors.dtype, device=vectors.device, requires_grad=True)
-            edge_grad = torch.zeros_like(vectors)
-            return energy, edge_grad
+            energy = torch.ones(1, dtype=positions.dtype, device=positions.device, requires_grad=True)
+            forces = torch.zeros_like(positions)
+            loss = energy.sum()
+            return energy, forces, loss
 
         return executable, {"compile_graph": kwargs["compile_graph"]}
 
@@ -3085,10 +3132,7 @@ def test_edge_force_cache_hit_does_not_request_outer_retain_graph(monkeypatch):
             "grads": {},
         }
 
-    class EnergyOnlyLoss(torch.nn.Module):
-        def forward(self, pred, ref):
-            del ref
-            return pred["energy"].sum()
+    from mace.modules import WeightedEnergyForcesLoss
 
     monkeypatch.setattr(
         training_compile, "trace_force_closure", fake_trace_force_closure
@@ -3126,12 +3170,12 @@ def test_edge_force_cache_hit_does_not_request_outer_retain_graph(monkeypatch):
 
     _, first_metrics = wrapper.compiled_force_training_loss(
         batch=batch,
-        loss_fn=EnergyOnlyLoss(),
+        loss_fn=WeightedEnergyForcesLoss(),
         output_args={"forces": True, "virials": False, "stress": False},
     )
     _, hit_metrics = wrapper.compiled_force_training_loss(
         batch=batch,
-        loss_fn=EnergyOnlyLoss(),
+        loss_fn=WeightedEnergyForcesLoss(),
         output_args={"forces": True, "virials": False, "stress": False},
     )
 
