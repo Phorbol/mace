@@ -558,6 +558,7 @@ def test_edge_force_compile_loss_input_names_are_loss_specific():
         WeightedEnergyForcesStressLoss,
         WeightedEnergyForcesVirialsLoss,
         WeightedForcesLoss,
+        WeightedHuberEnergyForcesStressLoss,
     )
     from mace.tools.training_compile import edge_force_compile_loss_input_names
 
@@ -584,6 +585,17 @@ def test_edge_force_compile_loss_input_names_are_loss_specific():
     ) == ("energy", "forces", "weight", "energy_weight")
     assert edge_force_compile_loss_input_names(
         data_keys, loss_fn=WeightedEnergyForcesStressLoss()
+    ) == (
+        "energy",
+        "forces",
+        "stress",
+        "weight",
+        "energy_weight",
+        "forces_weight",
+        "stress_weight",
+    )
+    assert edge_force_compile_loss_input_names(
+        data_keys, loss_fn=WeightedHuberEnergyForcesStressLoss()
     ) == (
         "energy",
         "forces",
@@ -1318,6 +1330,48 @@ def test_position_force_weighted_energy_forces_stress_tensor_loss_matches_loss_m
     assert_close(actual, reference)
 
 
+def test_position_force_weighted_huber_energy_forces_stress_tensor_loss_matches_loss_module():
+    from mace.modules import WeightedHuberEnergyForcesStressLoss
+    from mace.tools.training_compile import (
+        _edge_force_weighted_huber_energy_forces_stress_loss,
+        _edge_vector_inputs,
+    )
+
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    loss_fn = WeightedHuberEnergyForcesStressLoss(
+        energy_weight=1.3,
+        forces_weight=7.0,
+        stress_weight=2.5,
+        huber_delta=0.2,
+    )
+    data_dict, _, _, _ = _edge_vector_inputs(batch)
+    energy = data_dict["energy"] + 0.2
+    forces = data_dict["forces"] + 0.3
+    stress = data_dict["stress"] + 0.4
+
+    reference = loss_fn(
+        pred={
+            "energy": energy,
+            "forces": forces,
+            "stress": stress,
+            "virials": None,
+        },
+        ref=batch,
+    )
+    actual = _edge_force_weighted_huber_energy_forces_stress_loss(
+        data_dict=data_dict,
+        energy=energy,
+        forces=forces,
+        stress=stress,
+        energy_loss_weight=loss_fn.energy_weight,
+        forces_loss_weight=loss_fn.forces_weight,
+        stress_loss_weight=loss_fn.stress_weight,
+        huber_delta=torch.as_tensor(loss_fn.huber_delta, dtype=energy.dtype),
+    )
+
+    assert_close(actual, reference)
+
+
 def test_position_force_weighted_energy_forces_virials_tensor_loss_matches_loss_module():
     from mace.modules import WeightedEnergyForcesVirialsLoss
     from mace.tools.training_compile import (
@@ -1956,6 +2010,15 @@ def test_edge_force_compiled_loss_position_mode_stress_loss_passes_setup_gate():
                 energy_weight=1.0, forces_weight=10.0, virials_weight=0.5
             ),
             {"forces": True, "virials": True, "stress": False},
+        ),
+        (
+            modules.WeightedHuberEnergyForcesStressLoss(
+                energy_weight=1.0,
+                forces_weight=10.0,
+                stress_weight=0.5,
+                huber_delta=0.2,
+            ),
+            {"forces": True, "virials": False, "stress": True},
         ),
     ],
 )

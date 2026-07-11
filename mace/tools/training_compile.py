@@ -360,7 +360,9 @@ def _compiled_tensor_loss_input_names_for_loss(
         return ("forces", "weight", "forces_weight")
     if _is_weighted_energy_forces_l1l2_loss(loss_fn):
         return ("energy", "forces", "weight", "energy_weight")
-    if _is_weighted_energy_forces_stress_loss(loss_fn):
+    if _is_weighted_energy_forces_stress_loss(loss_fn) or (
+        _is_weighted_huber_energy_forces_stress_loss(loss_fn)
+    ):
         return (
             "energy",
             "forces",
@@ -426,6 +428,7 @@ _LOSS_OUTPUT_CAPABILITY_BY_TYPE_NAME = {
     "WeightedHuberEnergyForcesStressLoss": LossOutputCapability(
         required_outputs=("energy", "forces", "stress"),
         edge_force_supported=False,
+        compiled_tensor_loss_supported=True,
         unsupported_reason="unsupported_loss",
     ),
     "UniversalLoss": LossOutputCapability(
@@ -495,6 +498,12 @@ def _is_weighted_energy_forces_stress_loss(loss_fn: torch.nn.Module) -> bool:
     return _is_instance_of_named_type(loss_fn, ("WeightedEnergyForcesStressLoss",))
 
 
+def _is_weighted_huber_energy_forces_stress_loss(loss_fn: torch.nn.Module) -> bool:
+    return _is_instance_of_named_type(
+        loss_fn, ("WeightedHuberEnergyForcesStressLoss",)
+    )
+
+
 def _is_weighted_energy_forces_virials_loss(loss_fn: torch.nn.Module) -> bool:
     return _is_instance_of_named_type(loss_fn, ("WeightedEnergyForcesVirialsLoss",))
 
@@ -508,6 +517,18 @@ def _compiled_tensor_loss_weights(loss_fn: torch.nn.Module) -> tuple[torch.Tenso
         return (loss_fn.energy_weight, loss_fn.forces_weight)
     if _is_weighted_energy_forces_stress_loss(loss_fn):
         return (loss_fn.energy_weight, loss_fn.forces_weight, loss_fn.stress_weight)
+    if _is_weighted_huber_energy_forces_stress_loss(loss_fn):
+        huber_delta = torch.as_tensor(
+            loss_fn.huber_delta,
+            dtype=loss_fn.energy_weight.dtype,
+            device=loss_fn.energy_weight.device,
+        )
+        return (
+            loss_fn.energy_weight,
+            loss_fn.forces_weight,
+            loss_fn.stress_weight,
+            huber_delta,
+        )
     if _is_weighted_energy_forces_virials_loss(loss_fn):
         return (loss_fn.energy_weight, loss_fn.forces_weight, loss_fn.virials_weight)
     raise TypeError(
@@ -524,6 +545,8 @@ def _compiled_tensor_loss_kind(loss_fn: torch.nn.Module) -> str:
         return "weighted_energy_forces_l1l2"
     if _is_weighted_energy_forces_stress_loss(loss_fn):
         return "weighted_energy_forces_stress"
+    if _is_weighted_huber_energy_forces_stress_loss(loss_fn):
+        return "weighted_huber_energy_forces_stress"
     if _is_weighted_energy_forces_virials_loss(loss_fn):
         return "weighted_energy_forces_virials"
     raise TypeError(
@@ -1578,6 +1601,40 @@ def _edge_force_weighted_energy_forces_virials_loss(
     )
 
 
+def _edge_force_weighted_huber_energy_forces_stress_loss(
+    *,
+    data_dict: dict[str, torch.Tensor],
+    energy: torch.Tensor,
+    forces: torch.Tensor,
+    stress: torch.Tensor,
+    energy_loss_weight: torch.Tensor,
+    forces_loss_weight: torch.Tensor,
+    stress_loss_weight: torch.Tensor,
+    huber_delta: torch.Tensor,
+) -> torch.Tensor:
+    energy_scale = energy_loss_weight.to(device=energy.device)
+    forces_scale = forces_loss_weight.to(device=energy.device)
+    stress_scale = stress_loss_weight.to(device=energy.device)
+    delta = huber_delta.to(device=energy.device, dtype=energy.dtype)
+    num_atoms = data_dict["ptr"][1:] - data_dict["ptr"][:-1]
+
+    def huber_mean(reference: torch.Tensor, prediction: torch.Tensor) -> torch.Tensor:
+        error = reference - prediction
+        abs_error = torch.abs(error)
+        quadratic = 0.5 * torch.square(error)
+        linear = delta * (abs_error - 0.5 * delta)
+        return torch.where(abs_error <= delta, quadratic, linear).mean()
+
+    loss_energy = huber_mean(data_dict["energy"] / num_atoms, energy / num_atoms)
+    loss_forces = huber_mean(data_dict["forces"], forces)
+    loss_stress = huber_mean(data_dict["stress"], stress)
+    return (
+        energy_scale * loss_energy
+        + forces_scale * loss_forces
+        + stress_scale * loss_stress
+    )
+
+
 def _edge_force_compiled_tensor_loss(
     *,
     loss_kind: str,
@@ -1633,6 +1690,19 @@ def _edge_force_compiled_tensor_loss(
             energy_loss_weight=loss_weights[0],
             forces_loss_weight=loss_weights[1],
             virials_loss_weight=loss_weights[2],
+        )
+    if loss_kind == "weighted_huber_energy_forces_stress":
+        if stress is None:
+            raise RuntimeError("compiled Huber stress loss requires stress output")
+        return _edge_force_weighted_huber_energy_forces_stress_loss(
+            data_dict=data_dict,
+            energy=energy,
+            forces=forces,
+            stress=stress,
+            energy_loss_weight=loss_weights[0],
+            forces_loss_weight=loss_weights[1],
+            stress_loss_weight=loss_weights[2],
+            huber_delta=loss_weights[3],
         )
     raise RuntimeError(f"unsupported compiled tensor loss kind: {loss_kind}")
 
@@ -2360,7 +2430,10 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             )
             try:
                 if self.config.force_gradient_mode == "positions":
-                    compute_stress_loss = compiled_loss_kind == "weighted_energy_forces_stress"
+                    compute_stress_loss = compiled_loss_kind in {
+                        "weighted_energy_forces_stress",
+                        "weighted_huber_energy_forces_stress",
+                    }
                     compute_virials_loss = compiled_loss_kind == "weighted_energy_forces_virials"
                     if compute_stress_loss or compute_virials_loss:
                         energy, forces, stress, virials = _position_model_outputs(
