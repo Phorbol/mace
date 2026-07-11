@@ -153,6 +153,40 @@ def test_prepare_fullcase200_fps_writes_manifest_selected_extxyz(tmp_path):
     assert all(atoms.get_forces().shape == (2, 3) for atoms in train_atoms + valid_atoms)
 
 
+def test_extract_fullcase200_mace_features_mean_pools_by_graph():
+    extractor = load_script("extract_fullcase200_mace_features.py")
+    node_features = np.asarray(
+        [
+            [1.0, 3.0],
+            [3.0, 5.0],
+            [10.0, 20.0],
+        ],
+        dtype=np.float32,
+    )
+    ptr = np.asarray([0, 2, 3], dtype=np.int64)
+
+    pooled = extractor.mean_pool_node_features(node_features, ptr)
+
+    np.testing.assert_allclose(
+        pooled,
+        np.asarray([[2.0, 4.0], [10.0, 20.0]], dtype=np.float32),
+    )
+
+
+def test_prepare_fullcase200_fps_sbatch_extracts_mace_features_before_fps():
+    sbatch = SCRIPT_ROOT / "prepare-fullcase200-fps-extxyz.sbatch"
+    text = sbatch.read_text()
+
+    assert "#SBATCH --partition=16V100" in text
+    assert "#SBATCH --qos=flood-1o2gpu" in text
+    assert "MACE_OC20NEB_PREP_TRAIN_SIZE:-5000" in text
+    assert "MACE_OC20NEB_PREP_VALID_SIZE:-10000" in text
+    assert "/home/gengjianrui/.cache/mace/mace-mh-1.model" in text
+    assert "extract_fullcase200_mace_features.py" in text
+    assert "prepare_fullcase200_fps_extxyz.py" in text
+    assert "--features-npz" in text
+
+
 def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     sbatch = SCRIPT_ROOT / "fullcase200-ef-20k-demo.sbatch"
     text = sbatch.read_text()
