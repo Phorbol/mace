@@ -2067,6 +2067,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         input_names: tuple[str, ...],
         data_dict: dict[str, torch.Tensor],
         loss_fn: torch.nn.Module | None = None,
+        output_args: dict[str, bool] | None = None,
     ) -> tuple | None:
         input_shapes = {name: tuple(data_dict[name].shape) for name in input_names}
         input_abi_signature = (
@@ -2086,9 +2087,21 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             if loss_fn is not None and _edge_force_can_compile_loss(loss_fn, data_dict.keys())
             else ("compiled_loss", "none")
         )
+        requested_outputs_signature = (
+            "requested_outputs",
+            tuple(
+                (name, bool((output_args or {}).get(name, default)))
+                for name, default in (
+                    ("forces", True),
+                    ("stress", False),
+                    ("virials", False),
+                )
+            ),
+        )
         abi_signature = (
             *self._cache_abi_signature(),
             loss_abi_signature,
+            requested_outputs_signature,
             input_abi_signature,
         )
         if self.config.cache_policy == "bucket":
@@ -2386,6 +2399,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 input_names=input_names,
                 data_dict=data_dict,
                 loss_fn=loss_fn,
+                output_args=output_args,
             )
             if self.config.cache_policy == "bucket":
                 if not self.config.bucket_atoms or not self.config.bucket_edges:
@@ -2419,6 +2433,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     input_names=input_names,
                     data_dict=data_dict,
                     loss_fn=loss_fn,
+                    output_args=output_args,
                 )
             expected_returns_loss = _edge_force_can_compile_loss(loss_fn, data_dict.keys())
             compiled = self._cached_compiled_step(cache_key)
