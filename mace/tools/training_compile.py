@@ -374,10 +374,12 @@ _LOSS_OUTPUT_CAPABILITY_BY_TYPE_NAME = {
     "WeightedForcesLoss": LossOutputCapability(
         required_outputs=("forces",),
         edge_force_supported=True,
+        compiled_tensor_loss_supported=True,
     ),
     "WeightedEnergyForcesL1L2Loss": LossOutputCapability(
         required_outputs=("energy", "forces"),
         edge_force_supported=True,
+        compiled_tensor_loss_supported=True,
     ),
     "WeightedEnergyForcesStressLoss": LossOutputCapability(
         required_outputs=("energy", "forces", "stress"),
@@ -441,6 +443,38 @@ def edge_force_loss_output_capability(
 
 def _is_weighted_energy_forces_loss(loss_fn: torch.nn.Module) -> bool:
     return _is_instance_of_named_type(loss_fn, ("WeightedEnergyForcesLoss",))
+
+
+def _is_weighted_forces_loss(loss_fn: torch.nn.Module) -> bool:
+    return _is_instance_of_named_type(loss_fn, ("WeightedForcesLoss",))
+
+
+def _is_weighted_energy_forces_l1l2_loss(loss_fn: torch.nn.Module) -> bool:
+    return _is_instance_of_named_type(loss_fn, ("WeightedEnergyForcesL1L2Loss",))
+
+
+def _compiled_tensor_loss_weights(loss_fn: torch.nn.Module) -> tuple[torch.Tensor, ...]:
+    if _is_weighted_energy_forces_loss(loss_fn):
+        return (loss_fn.energy_weight, loss_fn.forces_weight)
+    if _is_weighted_forces_loss(loss_fn):
+        return (loss_fn.forces_weight,)
+    if _is_weighted_energy_forces_l1l2_loss(loss_fn):
+        return (loss_fn.energy_weight, loss_fn.forces_weight)
+    raise TypeError(
+        f"compiled tensor loss does not support {type(loss_fn).__name__}"
+    )
+
+
+def _compiled_tensor_loss_kind(loss_fn: torch.nn.Module) -> str:
+    if _is_weighted_energy_forces_loss(loss_fn):
+        return "weighted_energy_forces"
+    if _is_weighted_forces_loss(loss_fn):
+        return "weighted_forces"
+    if _is_weighted_energy_forces_l1l2_loss(loss_fn):
+        return "weighted_energy_forces_l1l2"
+    raise TypeError(
+        f"compiled tensor loss does not support {type(loss_fn).__name__}"
+    )
 
 
 def _is_scale_shift_mace(model: torch.nn.Module) -> bool:
@@ -884,9 +918,9 @@ def _edge_force_executable_inputs(
 ) -> list[torch.Tensor]:
     loss_weight_tensors: tuple[torch.Tensor, ...] = ()
     if loss_input_names:
-        if not _is_weighted_energy_forces_loss(loss_fn):
-            raise TypeError("compiled tensor loss requires WeightedEnergyForcesLoss")
-        loss_weight_tensors = (loss_fn.energy_weight, loss_fn.forces_weight)
+        if loss_fn is None:
+            raise TypeError("compiled tensor loss requires a loss_fn")
+        loss_weight_tensors = _compiled_tensor_loss_weights(loss_fn)
     return [
         *_parameter_tensors_by_name(model, param_names),
         *(data_dict[name] for name in input_names),
@@ -1310,6 +1344,58 @@ def _position_force_energy_and_forces(
     return output["energy"], forces
 
 
+def _forces_matching_reference(
+    data_dict: dict[str, torch.Tensor], forces: torch.Tensor
+) -> torch.Tensor:
+    ref_forces = data_dict["forces"]
+    if forces.shape[0] != ref_forces.shape[0]:
+        return forces[: ref_forces.shape[0]]
+    return forces
+
+
+def _weighted_energy_mse_raw(
+    data_dict: dict[str, torch.Tensor], energy: torch.Tensor
+) -> torch.Tensor:
+    num_atoms = data_dict["ptr"][1:] - data_dict["ptr"][:-1]
+    return (
+        data_dict["weight"]
+        * data_dict["energy_weight"]
+        * torch.square((data_dict["energy"] - energy) / num_atoms)
+    )
+
+
+def _weighted_energy_mae_raw(
+    data_dict: dict[str, torch.Tensor], energy: torch.Tensor
+) -> torch.Tensor:
+    num_atoms = data_dict["ptr"][1:] - data_dict["ptr"][:-1]
+    return (
+        data_dict["weight"]
+        * data_dict["energy_weight"]
+        * torch.abs((data_dict["energy"] - energy) / num_atoms)
+    )
+
+
+def _weighted_forces_mse_raw(
+    data_dict: dict[str, torch.Tensor], forces: torch.Tensor
+) -> torch.Tensor:
+    ref_forces = data_dict["forces"]
+    forces = _forces_matching_reference(data_dict, forces)
+    num_atoms = data_dict["ptr"][1:] - data_dict["ptr"][:-1]
+    configs_weight = torch.repeat_interleave(data_dict["weight"], num_atoms).unsqueeze(-1)
+    configs_forces_weight = torch.repeat_interleave(
+        data_dict["forces_weight"], num_atoms
+    ).unsqueeze(-1)
+    return configs_weight * configs_forces_weight * torch.square(ref_forces - forces)
+
+
+def _forces_norm_raw(
+    data_dict: dict[str, torch.Tensor], forces: torch.Tensor
+) -> torch.Tensor:
+    ref_forces = data_dict["forces"]
+    forces = _forces_matching_reference(data_dict, forces)
+    return torch.linalg.vector_norm(ref_forces - forces, ord=2, dim=-1)
+
+
 def _edge_force_weighted_energy_forces_loss(
     *,
     data_dict: dict[str, torch.Tensor],
@@ -1318,23 +1404,71 @@ def _edge_force_weighted_energy_forces_loss(
     energy_loss_weight: torch.Tensor,
     forces_loss_weight: torch.Tensor,
 ) -> torch.Tensor:
-    ref_forces = data_dict["forces"]
-    if forces.shape[0] != ref_forces.shape[0]:
-        forces = forces[: ref_forces.shape[0]]
-    num_atoms = data_dict["ptr"][1:] - data_dict["ptr"][:-1]
-    energy_raw = (
-        data_dict["weight"]
-        * data_dict["energy_weight"]
-        * torch.square((data_dict["energy"] - energy) / num_atoms)
-    )
-    configs_weight = torch.repeat_interleave(data_dict["weight"], num_atoms).unsqueeze(-1)
-    configs_forces_weight = torch.repeat_interleave(
-        data_dict["forces_weight"], num_atoms
-    ).unsqueeze(-1)
-    forces_raw = configs_weight * configs_forces_weight * torch.square(ref_forces - forces)
     energy_scale = energy_loss_weight.to(device=energy.device)
     forces_scale = forces_loss_weight.to(device=energy.device)
-    return energy_scale * energy_raw.mean() + forces_scale * forces_raw.mean()
+    return (
+        energy_scale * _weighted_energy_mse_raw(data_dict, energy).mean()
+        + forces_scale * _weighted_forces_mse_raw(data_dict, forces).mean()
+    )
+
+
+def _edge_force_weighted_forces_loss(
+    *,
+    data_dict: dict[str, torch.Tensor],
+    forces: torch.Tensor,
+    forces_loss_weight: torch.Tensor,
+) -> torch.Tensor:
+    forces_scale = forces_loss_weight.to(device=forces.device)
+    return forces_scale * _weighted_forces_mse_raw(data_dict, forces).mean()
+
+
+def _edge_force_weighted_energy_forces_l1l2_loss(
+    *,
+    data_dict: dict[str, torch.Tensor],
+    energy: torch.Tensor,
+    forces: torch.Tensor,
+    energy_loss_weight: torch.Tensor,
+    forces_loss_weight: torch.Tensor,
+) -> torch.Tensor:
+    energy_scale = energy_loss_weight.to(device=energy.device)
+    forces_scale = forces_loss_weight.to(device=energy.device)
+    return (
+        energy_scale * _weighted_energy_mae_raw(data_dict, energy).mean()
+        + forces_scale * _forces_norm_raw(data_dict, forces).mean()
+    )
+
+
+def _edge_force_compiled_tensor_loss(
+    *,
+    loss_kind: str,
+    data_dict: dict[str, torch.Tensor],
+    energy: torch.Tensor,
+    forces: torch.Tensor,
+    loss_weights: tuple[torch.Tensor, ...],
+) -> torch.Tensor:
+    if loss_kind == "weighted_energy_forces":
+        return _edge_force_weighted_energy_forces_loss(
+            data_dict=data_dict,
+            energy=energy,
+            forces=forces,
+            energy_loss_weight=loss_weights[0],
+            forces_loss_weight=loss_weights[1],
+        )
+    if loss_kind == "weighted_forces":
+        return _edge_force_weighted_forces_loss(
+            data_dict=data_dict,
+            forces=forces,
+            forces_loss_weight=loss_weights[0],
+        )
+    if loss_kind == "weighted_energy_forces_l1l2":
+        return _edge_force_weighted_energy_forces_l1l2_loss(
+            data_dict=data_dict,
+            energy=energy,
+            forces=forces,
+            energy_loss_weight=loss_weights[0],
+            forces_loss_weight=loss_weights[1],
+        )
+    raise RuntimeError(f"unsupported compiled tensor loss kind: {loss_kind}")
 
 
 def _position_force_weighted_energy_forces_loss(
@@ -1992,6 +2126,9 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             data_dict.keys(), force_gradient_mode=self.config.force_gradient_mode
         )
         compile_loss = _edge_force_can_compile_loss(loss_fn, data_dict.keys())
+        compiled_loss_kind = (
+            _compiled_tensor_loss_kind(loss_fn) if compile_loss else ""
+        )
         loss_input_names = (
             edge_force_compile_loss_input_names(data_dict.keys()) if compile_loss else ()
         )
@@ -2031,12 +2168,12 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                         use_e3nn_spherical_harmonics=self.config.use_e3nn_spherical_harmonics,
                     )
                     if compile_loss:
-                        loss = _position_force_weighted_energy_forces_loss(
+                        loss = _edge_force_compiled_tensor_loss(
+                            loss_kind=compiled_loss_kind,
                             data_dict=current_data,
                             energy=energy,
                             forces=forces,
-                            energy_loss_weight=loss_weights[0],
-                            forces_loss_weight=loss_weights[1],
+                            loss_weights=loss_weights,
                         )
                         return energy, forces, loss
                     return energy, forces
@@ -2048,12 +2185,12 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 )
                 if compile_loss:
                     forces = _atomic_forces_from_edge_grad(current_data, edge_grad)
-                    loss = _edge_force_weighted_energy_forces_loss(
+                    loss = _edge_force_compiled_tensor_loss(
+                        loss_kind=compiled_loss_kind,
                         data_dict=current_data,
                         energy=energy,
                         forces=forces,
-                        energy_loss_weight=loss_weights[0],
-                        forces_loss_weight=loss_weights[1],
+                        loss_weights=loss_weights,
                     )
                     return energy, forces, loss
                 return energy, edge_grad

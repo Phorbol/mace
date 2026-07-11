@@ -967,6 +967,72 @@ def test_edge_force_weighted_energy_forces_tensor_loss_matches_loss_module():
     assert_close(actual, reference)
 
 
+def test_edge_force_weighted_forces_tensor_loss_matches_loss_module():
+    from mace.modules import WeightedForcesLoss
+    from mace.tools.training_compile import (
+        _atomic_forces_from_edge_grad,
+        _edge_force_energy_and_edge_grad,
+        _edge_force_weighted_forces_loss,
+        _edge_vector_inputs,
+        _loss_from_energy_forces,
+    )
+
+    model = create_tiny_mace("cpu")
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    loss_fn = WeightedForcesLoss(forces_weight=7.0)
+    data_dict, _, _, vectors = _edge_vector_inputs(batch)
+    energy, edge_grad = _edge_force_energy_and_edge_grad(model, data_dict, vectors)
+    forces = _atomic_forces_from_edge_grad(data_dict, edge_grad)
+
+    reference = _loss_from_energy_forces(
+        batch=batch,
+        loss_fn=loss_fn,
+        energy=energy,
+        forces=forces,
+    )
+    actual = _edge_force_weighted_forces_loss(
+        data_dict=data_dict,
+        forces=forces,
+        forces_loss_weight=loss_fn.forces_weight,
+    )
+
+    assert_close(actual, reference)
+
+
+def test_edge_force_weighted_energy_forces_l1l2_tensor_loss_matches_loss_module():
+    from mace.modules import WeightedEnergyForcesL1L2Loss
+    from mace.tools.training_compile import (
+        _atomic_forces_from_edge_grad,
+        _edge_force_energy_and_edge_grad,
+        _edge_force_weighted_energy_forces_l1l2_loss,
+        _edge_vector_inputs,
+        _loss_from_energy_forces,
+    )
+
+    model = create_tiny_mace("cpu")
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    loss_fn = WeightedEnergyForcesL1L2Loss(energy_weight=1.3, forces_weight=7.0)
+    data_dict, _, _, vectors = _edge_vector_inputs(batch)
+    energy, edge_grad = _edge_force_energy_and_edge_grad(model, data_dict, vectors)
+    forces = _atomic_forces_from_edge_grad(data_dict, edge_grad)
+
+    reference = _loss_from_energy_forces(
+        batch=batch,
+        loss_fn=loss_fn,
+        energy=energy,
+        forces=forces,
+    )
+    actual = _edge_force_weighted_energy_forces_l1l2_loss(
+        data_dict=data_dict,
+        energy=energy,
+        forces=forces,
+        energy_loss_weight=loss_fn.energy_weight,
+        forces_loss_weight=loss_fn.forces_weight,
+    )
+
+    assert_close(actual, reference)
+
+
 def test_position_force_weighted_energy_forces_tensor_loss_matches_loss_module():
     from mace.modules import WeightedEnergyForcesLoss
     from mace.tools.training_compile import (
@@ -1517,7 +1583,7 @@ def test_edge_force_compiled_loss_supports_weighted_forces_loss():
     )
 
     assert metrics["edge_force_compile"] is True
-    assert metrics["edge_force_compile_loss"] is False
+    assert metrics["edge_force_compile_loss"] is True
     loss.backward()
     assert any(param.grad is not None for param in model.parameters())
 
@@ -1549,7 +1615,7 @@ def test_edge_force_compiled_loss_supports_weighted_energy_forces_l1l2_loss():
     )
 
     assert metrics["edge_force_compile"] is True
-    assert metrics["edge_force_compile_loss"] is False
+    assert metrics["edge_force_compile_loss"] is True
     loss.backward()
     assert any(param.grad is not None for param in model.parameters())
 
