@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -124,20 +125,49 @@ def align_features(candidates: list[CandidateFrame], features_npz: Path) -> np.n
     return np.stack([features[by_key[candidate.source_key]] for candidate in candidates], axis=0)
 
 
-def farthest_point_indices(features: np.ndarray, count: int) -> np.ndarray:
+def project_features_for_fps(
+    features: np.ndarray, *, target_dim: int | None, seed: int
+) -> np.ndarray:
+    feats = np.ascontiguousarray(features, dtype=np.float32)
+    if target_dim is None or int(target_dim) <= 0 or feats.shape[1] <= int(target_dim):
+        return feats
+    rng = np.random.default_rng(seed)
+    projection = rng.standard_normal((feats.shape[1], int(target_dim))).astype(np.float32)
+    projection /= np.sqrt(float(target_dim))
+    return np.ascontiguousarray(feats @ projection, dtype=np.float32)
+
+
+def _squared_distances_to_index(
+    features: np.ndarray, feature_norm2: np.ndarray, index: int
+) -> np.ndarray:
+    center = features[int(index)]
+    dist2 = feature_norm2 + feature_norm2[int(index)] - 2.0 * (features @ center)
+    return np.maximum(dist2, 0.0, out=dist2)
+
+
+def farthest_point_indices(
+    features: np.ndarray, count: int, *, progress_interval: int | None = None
+) -> np.ndarray:
     if count <= 0:
         return np.zeros(0, dtype=np.int64)
     if count > len(features):
         raise ValueError(f"Requested {count} FPS points from only {len(features)} candidates")
-    feats = np.asarray(features, dtype=np.float32)
+    feats = np.ascontiguousarray(features, dtype=np.float32)
     selected = np.empty(count, dtype=np.int64)
     selected[0] = 0
-    min_dist2 = np.sum((feats - feats[0]) ** 2, axis=1)
+    feature_norm2 = np.einsum("ij,ij->i", feats, feats, dtype=np.float32)
+    min_dist2 = _squared_distances_to_index(feats, feature_norm2, 0)
     for out_idx in range(1, count):
         next_idx = int(np.argmax(min_dist2))
         selected[out_idx] = next_idx
-        dist2 = np.sum((feats - feats[next_idx]) ** 2, axis=1)
-        min_dist2 = np.minimum(min_dist2, dist2)
+        dist2 = _squared_distances_to_index(feats, feature_norm2, next_idx)
+        np.minimum(min_dist2, dist2, out=min_dist2)
+        if progress_interval and out_idx % int(progress_interval) == 0:
+            print(
+                f"[prepare_fullcase200_fps_extxyz] selected {out_idx + 1}/{count} FPS frames",
+                file=sys.stderr,
+                flush=True,
+            )
     return selected
 
 
@@ -173,6 +203,7 @@ def prepare_fullcase200_fps_extxyz(
     valid_size: int = 10000,
     seed: int = 20260711,
     features_npz: Path,
+    fps_feature_dim: int | None = 128,
     overwrite: bool = False,
 ) -> dict:
     output_dir = output_dir.resolve()
@@ -188,7 +219,13 @@ def prepare_fullcase200_fps_extxyz(
             f"Requested {train_size}+{valid_size} frames from only {len(candidates)} labeled candidates"
         )
     features = align_features(candidates, features_npz)
-    train_indices = farthest_point_indices(features, train_size)
+    original_feature_dim = int(features.shape[1])
+    fps_features = project_features_for_fps(
+        features, target_dim=fps_feature_dim, seed=seed
+    )
+    train_indices = farthest_point_indices(
+        fps_features, train_size, progress_interval=500
+    )
     valid_indices = random_valid_indices(
         candidate_count=len(candidates),
         train_indices=train_indices,
@@ -207,6 +244,8 @@ def prepare_fullcase200_fps_extxyz(
             "data_root": str(Path(data_root).resolve()),
             "features_npz": str(Path(features_npz).resolve()),
             "candidate_frames": len(candidates),
+            "original_feature_dim": original_feature_dim,
+            "fps_feature_dim": int(fps_features.shape[1]),
             "seed": int(seed),
         },
         "train": {
@@ -233,6 +272,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-size", type=int, default=5000)
     parser.add_argument("--valid-size", type=int, default=10000)
     parser.add_argument("--seed", type=int, default=20260711)
+    parser.add_argument("--fps-feature-dim", type=int, default=128)
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -247,6 +287,7 @@ def main() -> None:
         valid_size=args.valid_size,
         seed=args.seed,
         features_npz=args.features_npz,
+        fps_feature_dim=args.fps_feature_dim,
         overwrite=args.overwrite,
     )
     print(json.dumps(summary, indent=2))

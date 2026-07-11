@@ -22,6 +22,7 @@ TRAIN_SIZE=${MACE_OC20NEB_PREP_TRAIN_SIZE:-5000}
 VALID_SIZE=${MACE_OC20NEB_PREP_VALID_SIZE:-10000}
 BATCH_SIZE=${MACE_OC20NEB_PREP_BATCH_SIZE:-16}
 CHUNK_SIZE=${MACE_OC20NEB_PREP_CHUNK_SIZE:-256}
+FPS_FEATURE_DIM=${MACE_OC20NEB_PREP_FPS_FEATURE_DIM:-128}
 SEED=${MACE_OC20NEB_PREP_SEED:-20260711}
 DEVICE=${MACE_OC20NEB_PREP_DEVICE:-cuda}
 OVERWRITE=${MACE_OC20NEB_PREP_OVERWRITE:-0}
@@ -69,11 +70,16 @@ prepare_args=(
   --train-size "${TRAIN_SIZE}"
   --valid-size "${VALID_SIZE}"
   --seed "${SEED}"
+  --fps-feature-dim "${FPS_FEATURE_DIM}"
 )
 if [[ "${OVERWRITE}" == "1" || "${OVERWRITE}" == "true" || "${OVERWRITE}" == "True" ]]; then
   feature_args+=(--overwrite)
   prepare_args+=(--overwrite)
 fi
 
-"${PYTHON_BIN}" scripts/benchmarks/oc20neb_fps/extract_fullcase200_mace_features.py "${feature_args[@]}"
+if [[ -f "${FEATURES_NPZ}" && "${OVERWRITE}" != "1" && "${OVERWRITE}" != "true" && "${OVERWRITE}" != "True" ]]; then
+  echo "Skipping feature extraction because ${FEATURES_NPZ} already exists"
+else
+  "${PYTHON_BIN}" scripts/benchmarks/oc20neb_fps/extract_fullcase200_mace_features.py "${feature_args[@]}"
+fi
 "${PYTHON_BIN}" scripts/benchmarks/oc20neb_fps/prepare_fullcase200_fps_extxyz.py "${prepare_args[@]}"

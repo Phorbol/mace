@@ -132,9 +132,12 @@ def test_prepare_fullcase200_fps_writes_manifest_selected_extxyz(tmp_path):
         valid_size=2,
         seed=7,
         features_npz=feature_path,
+        fps_feature_dim=1,
         overwrite=False,
     )
 
+    assert summary["source"]["original_feature_dim"] == 2
+    assert summary["source"]["fps_feature_dim"] == 1
     assert summary["train"]["frames"] == 2
     assert summary["valid"]["frames"] == 2
     assert summary["source"]["candidate_frames"] == 5
@@ -234,6 +237,20 @@ def test_extract_fullcase200_mace_features_streams_candidates_by_chunk(tmp_path,
     assert payload["source_keys"].astype(str).tolist() == [f"case_a:{idx}" for idx in range(5)]
 
 
+def test_project_features_for_fps_is_seeded_and_dimension_reducing():
+    preparer = load_script("prepare_fullcase200_fps_extxyz.py")
+    features = np.arange(24, dtype=np.float32).reshape(4, 6)
+
+    first = preparer.project_features_for_fps(features, target_dim=3, seed=11)
+    second = preparer.project_features_for_fps(features, target_dim=3, seed=11)
+    unchanged = preparer.project_features_for_fps(features[:, :2], target_dim=3, seed=11)
+
+    assert first.shape == (4, 3)
+    np.testing.assert_allclose(first, second)
+    assert unchanged.shape == (4, 2)
+    np.testing.assert_allclose(unchanged, features[:, :2])
+
+
 def test_prepare_fullcase200_fps_sbatch_extracts_mace_features_before_fps():
     sbatch = SCRIPT_ROOT / "prepare-fullcase200-fps-extxyz.sbatch"
     text = sbatch.read_text()
@@ -246,7 +263,10 @@ def test_prepare_fullcase200_fps_sbatch_extracts_mace_features_before_fps():
     assert "extract_fullcase200_mace_features.py" in text
     assert "prepare_fullcase200_fps_extxyz.py" in text
     assert "MACE_OC20NEB_PREP_CHUNK_SIZE:-256" in text
+    assert "MACE_OC20NEB_PREP_FPS_FEATURE_DIM:-128" in text
     assert "--chunk-size" in text
+    assert "--fps-feature-dim" in text
+    assert "Skipping feature extraction" in text
     assert "--features-npz" in text
 
 
