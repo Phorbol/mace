@@ -282,6 +282,17 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert '--train_file="${TRAIN_FILE}"' in text
     assert '--valid_file="${VALID_FILE}"' in text
     assert "--loss=weighted" in text
+    assert "MACE_OC20NEB_STAGE_TWO:-True" in text
+    assert "MACE_OC20NEB_STAGE_TWO_FRACTION:-0.75" in text
+    assert "--stage_two" in text
+    assert "--start_stage_two=\"${START_STAGE_TWO}\"" in text
+    assert "MACE_OC20NEB_STAGE1_ENERGY_WEIGHT:-1.0" in text
+    assert "MACE_OC20NEB_STAGE1_FORCES_WEIGHT:-100.0" in text
+    assert "MACE_OC20NEB_STAGE2_ENERGY_WEIGHT:-100.0" in text
+    assert "MACE_OC20NEB_STAGE2_FORCES_WEIGHT:-1.0" in text
+    assert "--stage_two_energy_weight=" in text
+    assert "--stage_two_forces_weight=" in text
+    assert "stage_two_start_epoch" in text
     assert "--energy_key=energy" in text
     assert "--forces_key=forces" in text
     assert "--edge_force_compile_force_gradient_mode=positions" in text

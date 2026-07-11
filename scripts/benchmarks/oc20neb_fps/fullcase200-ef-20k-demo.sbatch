@@ -22,6 +22,12 @@ BATCH_SIZE=${MACE_OC20NEB_BATCH_SIZE:-8}
 VALID_BATCH_SIZE=${MACE_OC20NEB_VALID_BATCH_SIZE:-16}
 SEED=${MACE_OC20NEB_SEED:-456}
 EVAL_REPORTS=${MACE_OC20NEB_EVAL_REPORTS:-5}
+STAGE_TWO=${MACE_OC20NEB_STAGE_TWO:-True}
+STAGE_TWO_FRACTION=${MACE_OC20NEB_STAGE_TWO_FRACTION:-0.75}
+STAGE1_ENERGY_WEIGHT=${MACE_OC20NEB_STAGE1_ENERGY_WEIGHT:-1.0}
+STAGE1_FORCES_WEIGHT=${MACE_OC20NEB_STAGE1_FORCES_WEIGHT:-100.0}
+STAGE2_ENERGY_WEIGHT=${MACE_OC20NEB_STAGE2_ENERGY_WEIGHT:-100.0}
+STAGE2_FORCES_WEIGHT=${MACE_OC20NEB_STAGE2_FORCES_WEIGHT:-1.0}
 CASES=${MACE_OC20NEB_CASES:-eager,compile,hybrid_muon,hybrid_muon_compile}
 COMPILE_BUCKET_ATOMS=${MACE_OC20NEB_COMPILE_BUCKET_ATOMS:-384,512,640,800}
 COMPILE_BUCKET_EDGES=${MACE_OC20NEB_COMPILE_BUCKET_EDGES:-8192,12288,16384,24576,32768,40960}
@@ -49,8 +55,8 @@ if [[ ! -f "${VALID_FILE}" ]]; then
   exit 2
 fi
 
-export TRAIN_FILE BATCH_SIZE TARGET_STEPS EVAL_REPORTS
-read -r TRAIN_SIZE MAX_EPOCHS EVAL_INTERVAL < <("${PYTHON_BIN}" - <<'INNERPY'
+export TRAIN_FILE BATCH_SIZE TARGET_STEPS EVAL_REPORTS STAGE_TWO_FRACTION
+read -r TRAIN_SIZE MAX_EPOCHS EVAL_INTERVAL START_STAGE_TWO < <("${PYTHON_BIN}" - <<'INNERPY'
 import math
 from ase.io import read
 import os
@@ -58,12 +64,14 @@ train_file = os.environ["TRAIN_FILE"]
 batch_size = int(os.environ["BATCH_SIZE"])
 target_steps = int(os.environ["TARGET_STEPS"])
 eval_reports = max(1, int(os.environ["EVAL_REPORTS"]))
+stage_two_fraction = float(os.environ["STAGE_TWO_FRACTION"])
 train_size = len(read(train_file, index=":"))
 if train_size <= 0:
     raise SystemExit(f"empty training file: {train_file}")
 max_epochs = max(1, math.ceil(target_steps * batch_size / train_size))
 eval_interval = max(1, max_epochs // eval_reports)
-print(train_size, max_epochs, eval_interval)
+start_stage_two = min(max_epochs, max(1, math.floor(max_epochs * stage_two_fraction)))
+print(train_size, max_epochs, eval_interval, start_stage_two)
 INNERPY
 )
 
@@ -76,12 +84,37 @@ cat > "${RUN_ROOT}/manifest.json" <<JSON
   "python": "${PYTHON_BIN}",
   "repo_root": "${REPO_ROOT}",
   "target_steps": ${TARGET_STEPS},
+  "stage_two": "${STAGE_TWO}",
+  "stage_two_fraction": ${STAGE_TWO_FRACTION},
+  "stage_two_start_epoch": ${START_STAGE_TWO},
+  "stage1_energy_weight": ${STAGE1_ENERGY_WEIGHT},
+  "stage1_forces_weight": ${STAGE1_FORCES_WEIGHT},
+  "stage2_energy_weight": ${STAGE2_ENERGY_WEIGHT},
+  "stage2_forces_weight": ${STAGE2_FORCES_WEIGHT},
   "cases": "${CASES}",
   "train_file": "${TRAIN_FILE}",
   "train_size": ${TRAIN_SIZE},
   "valid_file": "${VALID_FILE}"
 }
 JSON
+
+stage_two_args=()
+case "${STAGE_TWO}" in
+  True|true|1|yes|YES|on|ON)
+    stage_two_args=(
+      --stage_two
+      --start_stage_two="${START_STAGE_TWO}"
+      --stage_two_energy_weight="${STAGE2_ENERGY_WEIGHT}"
+      --stage_two_forces_weight="${STAGE2_FORCES_WEIGHT}"
+    )
+    ;;
+  False|false|0|no|NO|off|OFF)
+    ;;
+  *)
+    echo "Invalid MACE_OC20NEB_STAGE_TWO=${STAGE_TWO}; expected True or False" >&2
+    exit 2
+    ;;
+esac
 
 common_args=(
   --train_file="${TRAIN_FILE}"
@@ -114,8 +147,9 @@ common_args=(
   --lr="${MACE_OC20NEB_LR:-0.001}"
   --weight_decay="${MACE_OC20NEB_WEIGHT_DECAY:-0.001}"
   --loss=weighted
-  --energy_weight="${MACE_OC20NEB_ENERGY_WEIGHT:-20.0}"
-  --forces_weight="${MACE_OC20NEB_FORCES_WEIGHT:-20.0}"
+  --energy_weight="${STAGE1_ENERGY_WEIGHT}"
+  --forces_weight="${STAGE1_FORCES_WEIGHT}"
+  "${stage_two_args[@]}"
   --clip_grad="${MACE_OC20NEB_CLIP_GRAD:-10.0}"
 )
 
