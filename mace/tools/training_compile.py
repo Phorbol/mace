@@ -1398,6 +1398,27 @@ def _position_force_energy_and_forces(
     return output["energy"], forces
 
 
+def _position_model_outputs(
+    model: torch.nn.Module,
+    data_dict: dict[str, torch.Tensor],
+    positions: torch.Tensor,
+    *,
+    compute_virials: bool = False,
+    compute_stress: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+    positions = positions.detach().requires_grad_(True)
+    current_data = dict(data_dict)
+    current_data["positions"] = positions
+    output = model(
+        current_data,
+        training=True,
+        compute_force=True,
+        compute_virials=compute_virials,
+        compute_stress=compute_stress,
+    )
+    return output["energy"], output["forces"], output.get("stress"), output.get("virials")
+
+
 def _forces_matching_reference(
     data_dict: dict[str, torch.Tensor], forces: torch.Tensor
 ) -> torch.Tensor:
@@ -1656,6 +1677,12 @@ def _edge_force_outputs(
     return energy, forces
 
 
+def _loss_required_output_flags(loss_fn: torch.nn.Module) -> tuple[bool, bool]:
+    capability = edge_force_loss_output_capability(loss_fn)
+    required = set(capability.required_outputs)
+    return "virials" in required, "stress" in required
+
+
 def _loss_from_energy_forces(
     *, batch, loss_fn, energy: torch.Tensor, forces: torch.Tensor
 ) -> torch.Tensor:
@@ -1818,12 +1845,13 @@ def _position_force_snapshot(
     *, model: torch.nn.Module, batch, loss_fn
 ) -> dict[str, Any]:
     model.zero_grad(set_to_none=True)
+    compute_virials, compute_stress = _loss_required_output_flags(loss_fn)
     output = model(
         batch.to_dict(),
         training=True,
         compute_force=True,
-        compute_virials=False,
-        compute_stress=False,
+        compute_virials=compute_virials,
+        compute_stress=compute_stress,
     )
     loss = loss_fn(pred=output, ref=batch)
     loss.backward()
@@ -1839,12 +1867,13 @@ def _position_force_value_snapshot(
     *, model: torch.nn.Module, batch, loss_fn
 ) -> dict[str, Any]:
     model.zero_grad(set_to_none=True)
+    compute_virials, compute_stress = _loss_required_output_flags(loss_fn)
     output = model(
         batch.to_dict(),
         training=True,
         compute_force=True,
-        compute_virials=False,
-        compute_stress=False,
+        compute_virials=compute_virials,
+        compute_stress=compute_stress,
     )
     loss = loss_fn(pred=output, ref=batch)
     return {
@@ -2331,18 +2360,33 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             )
             try:
                 if self.config.force_gradient_mode == "positions":
-                    energy, forces = _position_force_energy_and_forces(
-                        self.model,
-                        current_data,
-                        gradient_arg,
-                        use_e3nn_spherical_harmonics=self.config.use_e3nn_spherical_harmonics,
-                    )
+                    compute_stress_loss = compiled_loss_kind == "weighted_energy_forces_stress"
+                    compute_virials_loss = compiled_loss_kind == "weighted_energy_forces_virials"
+                    if compute_stress_loss or compute_virials_loss:
+                        energy, forces, stress, virials = _position_model_outputs(
+                            self.model,
+                            current_data,
+                            gradient_arg,
+                            compute_virials=compute_virials_loss,
+                            compute_stress=compute_stress_loss,
+                        )
+                    else:
+                        energy, forces = _position_force_energy_and_forces(
+                            self.model,
+                            current_data,
+                            gradient_arg,
+                            use_e3nn_spherical_harmonics=self.config.use_e3nn_spherical_harmonics,
+                        )
+                        stress = None
+                        virials = None
                     if compile_loss:
                         loss = _edge_force_compiled_tensor_loss(
                             loss_kind=compiled_loss_kind,
                             data_dict=current_data,
                             energy=energy,
                             forces=forces,
+                            stress=stress,
+                            virials=virials,
                             loss_weights=loss_weights,
                         )
                         return energy, forces, loss
@@ -2502,9 +2546,10 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             return self._eager_force_loss(
                 batch=batch, loss_fn=loss_fn, output_args=output_args
             )
-        if bool(output_args.get("virials", False)) or bool(
+        requested_extra_outputs = bool(output_args.get("virials", False)) or bool(
             output_args.get("stress", False)
-        ):
+        )
+        if requested_extra_outputs and self.config.force_gradient_mode != "positions":
             return self._eager_force_loss(
                 batch=batch,
                 loss_fn=loss_fn,
@@ -2512,7 +2557,10 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 disabled_reason="unsupported_outputs",
             )
         loss_capability = edge_force_loss_output_capability(loss_fn)
-        if not loss_capability.edge_force_supported:
+        if not loss_capability.edge_force_supported and not (
+            self.config.force_gradient_mode == "positions"
+            and loss_capability.compiled_tensor_loss_supported
+        ):
             return self._eager_force_loss(
                 batch=batch,
                 loss_fn=loss_fn,
@@ -2524,6 +2572,15 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             input_names = edge_force_compile_input_names(
                 data_dict.keys(), force_gradient_mode=self.config.force_gradient_mode
             )
+            if requested_extra_outputs and not _edge_force_can_compile_loss(
+                loss_fn, data_dict.keys()
+            ):
+                return self._eager_force_loss(
+                    batch=batch,
+                    loss_fn=loss_fn,
+                    output_args=output_args,
+                    disabled_reason="unsupported_loss_inputs",
+                )
             cache_key = self._cache_key(
                 batch=batch,
                 input_names=input_names,

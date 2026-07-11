@@ -1910,6 +1910,90 @@ def test_edge_force_compiled_loss_supports_weighted_energy_forces_l1l2_loss():
     assert any(param.grad is not None for param in model.parameters())
 
 
+def test_edge_force_compiled_loss_position_mode_stress_loss_passes_setup_gate():
+    from mace.tools.training_compile import (
+        EdgeForceCompileConfig,
+        prepare_edge_force_compiled_loss,
+    )
+
+    model = create_tiny_mace("cpu")
+    prepared = prepare_edge_force_compiled_loss(
+        model,
+        config=EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_policy="dynamic",
+            cache_hit_gate=False,
+            allow_fallback=False,
+            force_gradient_mode="positions",
+        ),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    loss, metrics = prepared.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=modules.WeightedEnergyForcesStressLoss(
+            energy_weight=1.0, forces_weight=10.0, stress_weight=0.5
+        ),
+        output_args={"forces": True, "virials": False, "stress": True},
+    )
+
+    assert torch.isfinite(loss)
+    assert metrics["edge_force_compile"] is True
+    assert metrics["edge_force_gate_accepted"] is True
+
+
+@pytest.mark.parametrize(
+    ("loss_fn", "output_args"),
+    [
+        (
+            modules.WeightedEnergyForcesStressLoss(
+                energy_weight=1.0, forces_weight=10.0, stress_weight=0.5
+            ),
+            {"forces": True, "virials": False, "stress": True},
+        ),
+        (
+            modules.WeightedEnergyForcesVirialsLoss(
+                energy_weight=1.0, forces_weight=10.0, virials_weight=0.5
+            ),
+            {"forces": True, "virials": True, "stress": False},
+        ),
+    ],
+)
+def test_edge_force_compiled_loss_position_mode_supports_stress_virials_losses(
+    loss_fn, output_args
+):
+    from mace.tools.training_compile import (
+        EdgeForceCompileConfig,
+        prepare_edge_force_compiled_loss,
+    )
+
+    model = create_tiny_mace("cpu")
+    prepared = prepare_edge_force_compiled_loss(
+        model,
+        config=EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=False,
+            cache_policy="dynamic",
+            setup_gate="none",
+            cache_hit_gate=False,
+            allow_fallback=False,
+            force_gradient_mode="positions",
+        ),
+    )
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    loss, metrics = prepared.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=loss_fn,
+        output_args=output_args,
+    )
+
+    assert metrics["edge_force_compile"] is True
+    assert metrics["edge_force_compile_loss"] is True
+    assert metrics["edge_force_gradient_mode"] == "positions"
+    loss.backward()
+    assert any(param.grad is not None for param in model.parameters())
+
+
 def test_edge_force_compiled_loss_eager_fallback_preserves_requested_outputs():
     from mace.tools.training_compile import (
         EdgeForceCompileConfig,
