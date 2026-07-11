@@ -1099,6 +1099,7 @@ def test_pad_edge_force_data_to_bucket_adds_masks_and_fixed_shapes():
     assert padded["shifts"].shape == (num_edges + 5, 3)
     assert padded["_node_mask"].shape == (num_atoms + 3,)
     assert padded["_edge_mask"].shape == (num_edges + 5,)
+    assert padded["forces"].shape == (num_atoms + 3, 3)
     assert padded["_real_num_atoms"].item() == num_atoms
     assert torch.all(padded["_node_mask"][:num_atoms] == 1)
     assert torch.all(padded["_node_mask"][num_atoms:] == 0)
@@ -1167,6 +1168,44 @@ def test_loss_from_energy_forces_slices_padded_forces_to_reference_atoms():
 
     assert torch.isfinite(loss)
 
+
+def test_edge_force_weighted_energy_forces_tensor_loss_ignores_padded_force_targets():
+    from mace.modules import WeightedEnergyForcesLoss
+    from mace.tools.training_compile import (
+        _edge_force_weighted_energy_forces_loss,
+        _pad_edge_force_data_to_bucket,
+    )
+
+    data_dict = create_batch("cpu")
+    num_atoms = data_dict["positions"].shape[0]
+    num_edges = data_dict["edge_index"].shape[1]
+    loss_fn = WeightedEnergyForcesLoss(energy_weight=1.3, forces_weight=7.0)
+    energy = data_dict["energy"] + 0.25
+    forces = data_dict["forces"] + 0.5
+    reference = _edge_force_weighted_energy_forces_loss(
+        data_dict=data_dict,
+        energy=energy,
+        forces=forces,
+        energy_loss_weight=loss_fn.energy_weight,
+        forces_loss_weight=loss_fn.forces_weight,
+    )
+
+    padded = _pad_edge_force_data_to_bucket(
+        data_dict,
+        atom_bucket=num_atoms + 2,
+        edge_bucket=num_edges + 4,
+        r_max=5.0,
+    )
+    padded_forces = torch.cat((forces, torch.full((2, 3), 123.0)), dim=0)
+    actual = _edge_force_weighted_energy_forces_loss(
+        data_dict=padded,
+        energy=energy,
+        forces=padded_forces,
+        energy_loss_weight=loss_fn.energy_weight,
+        forces_loss_weight=loss_fn.forces_weight,
+    )
+
+    assert_close(actual, reference)
 
 
 def test_edge_force_weighted_energy_forces_tensor_loss_matches_loss_module():

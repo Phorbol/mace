@@ -795,6 +795,8 @@ def _pad_edge_force_data_to_bucket(
         padded["node_attrs"] = node_attrs
     if "batch" in data:
         padded["batch"] = _pad_first_dim(data["batch"], atom_bucket)
+    if "forces" in data:
+        padded["forces"] = _pad_first_dim(data["forces"], atom_bucket)
 
     edge_index = torch.zeros(
         (2, edge_bucket), dtype=data["edge_index"].dtype, device=data["edge_index"].device
@@ -1501,16 +1503,32 @@ def _weighted_energy_mae_raw(
     )
 
 
+def _per_atom_config_values(
+    data_dict: dict[str, torch.Tensor], key: str, *, like: torch.Tensor
+) -> torch.Tensor:
+    if "batch" in data_dict:
+        per_atom = data_dict[key][data_dict["batch"]].unsqueeze(-1)
+        node_mask = data_dict.get("_node_mask")
+        if node_mask is not None and node_mask.shape[0] == per_atom.shape[0]:
+            per_atom = per_atom * node_mask.to(
+                dtype=per_atom.dtype, device=per_atom.device
+            ).unsqueeze(-1)
+        return per_atom.to(dtype=like.dtype, device=like.device)
+    num_atoms = data_dict["ptr"][1:] - data_dict["ptr"][:-1]
+    return torch.repeat_interleave(data_dict[key], num_atoms).unsqueeze(-1).to(
+        dtype=like.dtype, device=like.device
+    )
+
+
 def _weighted_forces_mse_raw(
     data_dict: dict[str, torch.Tensor], forces: torch.Tensor
 ) -> torch.Tensor:
     ref_forces = data_dict["forces"]
     forces = _forces_matching_reference(data_dict, forces)
-    num_atoms = data_dict["ptr"][1:] - data_dict["ptr"][:-1]
-    configs_weight = torch.repeat_interleave(data_dict["weight"], num_atoms).unsqueeze(-1)
-    configs_forces_weight = torch.repeat_interleave(
-        data_dict["forces_weight"], num_atoms
-    ).unsqueeze(-1)
+    configs_weight = _per_atom_config_values(data_dict, "weight", like=forces)
+    configs_forces_weight = _per_atom_config_values(
+        data_dict, "forces_weight", like=forces
+    )
     return configs_weight * configs_forces_weight * torch.square(ref_forces - forces)
 
 
@@ -1520,6 +1538,20 @@ def _forces_norm_raw(
     ref_forces = data_dict["forces"]
     forces = _forces_matching_reference(data_dict, forces)
     return torch.linalg.vector_norm(ref_forces - forces, ord=2, dim=-1)
+
+
+def _node_masked_mean(
+    data_dict: dict[str, torch.Tensor], values: torch.Tensor
+) -> torch.Tensor:
+    node_mask = data_dict.get("_node_mask")
+    if node_mask is None or values.shape[0] != node_mask.shape[0]:
+        return values.mean()
+    mask = node_mask.to(dtype=values.dtype, device=values.device)
+    view_shape = (mask.shape[0],) + (1,) * (values.dim() - 1)
+    masked_values = values * mask.reshape(view_shape)
+    values_per_node = max(1, values.numel() // int(values.shape[0]))
+    denom = mask.sum() * values_per_node
+    return masked_values.sum() / denom.clamp_min(1)
 
 
 def _edge_force_weighted_energy_forces_loss(
@@ -1534,7 +1566,8 @@ def _edge_force_weighted_energy_forces_loss(
     forces_scale = forces_loss_weight.to(device=energy.device)
     return (
         energy_scale * _weighted_energy_mse_raw(data_dict, energy).mean()
-        + forces_scale * _weighted_forces_mse_raw(data_dict, forces).mean()
+        + forces_scale
+        * _node_masked_mean(data_dict, _weighted_forces_mse_raw(data_dict, forces))
     )
 
 
@@ -1545,7 +1578,9 @@ def _edge_force_weighted_forces_loss(
     forces_loss_weight: torch.Tensor,
 ) -> torch.Tensor:
     forces_scale = forces_loss_weight.to(device=forces.device)
-    return forces_scale * _weighted_forces_mse_raw(data_dict, forces).mean()
+    return forces_scale * _node_masked_mean(
+        data_dict, _weighted_forces_mse_raw(data_dict, forces)
+    )
 
 
 def _edge_force_weighted_energy_forces_l1l2_loss(
@@ -1560,7 +1595,7 @@ def _edge_force_weighted_energy_forces_l1l2_loss(
     forces_scale = forces_loss_weight.to(device=energy.device)
     return (
         energy_scale * _weighted_energy_mae_raw(data_dict, energy).mean()
-        + forces_scale * _forces_norm_raw(data_dict, forces).mean()
+        + forces_scale * _node_masked_mean(data_dict, _forces_norm_raw(data_dict, forces))
     )
 
 
@@ -1604,7 +1639,8 @@ def _edge_force_weighted_energy_forces_stress_loss(
     stress_scale = stress_loss_weight.to(device=energy.device)
     return (
         energy_scale * _weighted_energy_mse_raw(data_dict, energy).mean()
-        + forces_scale * _weighted_forces_mse_raw(data_dict, forces).mean()
+        + forces_scale
+        * _node_masked_mean(data_dict, _weighted_forces_mse_raw(data_dict, forces))
         + stress_scale * _weighted_stress_mse_raw(data_dict, stress).mean()
     )
 
@@ -1624,7 +1660,8 @@ def _edge_force_weighted_energy_forces_virials_loss(
     virials_scale = virials_loss_weight.to(device=energy.device)
     return (
         energy_scale * _weighted_energy_mse_raw(data_dict, energy).mean()
-        + forces_scale * _weighted_forces_mse_raw(data_dict, forces).mean()
+        + forces_scale
+        * _node_masked_mean(data_dict, _weighted_forces_mse_raw(data_dict, forces))
         + virials_scale * _weighted_virials_mse_raw(data_dict, virials).mean()
     )
 
