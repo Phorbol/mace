@@ -4489,6 +4489,7 @@ def test_take_step_uses_compiled_force_training_loss_hook():
     assert ema.updates == 1
     assert metrics["edge_force_compile"] is True
     assert metrics["edge_force_cache_hit"] is False
+    assert metrics["train_phase_timings_synchronized"] is False
     for key in (
         "train_batch_to_device_seconds",
         "train_forward_loss_seconds",

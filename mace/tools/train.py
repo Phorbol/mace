@@ -709,7 +709,14 @@ def take_step(
     global_step: int = 0,
 ) -> Tuple[float, Dict[str, Any]]:
     start_time = time.time()
+    sync_phase_timings = (
+        os.environ.get("MACE_TRAIN_SYNC_PHASE_TIMINGS", "").lower()
+        in {"1", "true", "yes", "on"}
+        and device.type == "cuda"
+        and torch.cuda.is_available()
+    )
     step_timing = {
+        "train_phase_timings_synchronized": sync_phase_timings,
         "train_batch_to_device_seconds": 0.0,
         "train_forward_loss_seconds": 0.0,
         "train_backward_seconds": 0.0,
@@ -718,8 +725,15 @@ def take_step(
         "train_optimizer_step_seconds": 0.0,
         "train_ema_update_seconds": 0.0,
     }
+
+    def sync_train_phase_timing() -> None:
+        if sync_phase_timings:
+            torch.cuda.synchronize(device)
+
+    sync_train_phase_timing()
     batch_to_device_start = time.perf_counter()
     batch = batch.to(device, non_blocking=non_blocking_transfer)
+    sync_train_phase_timing()
     step_timing["train_batch_to_device_seconds"] += (
         time.perf_counter() - batch_to_device_start
     )
@@ -750,6 +764,7 @@ def take_step(
             if detect_anomaly
             else nullcontext()
         )
+        sync_train_phase_timing()
         forward_loss_start = time.perf_counter()
         with forward_anomaly_context, get_float32_matmul_precision_context(precision_config):
             if can_use_compiled_force_loss:
@@ -768,6 +783,7 @@ def take_step(
                         compute_stress=output_args["stress"],
                     )
                     loss = loss_fn(pred=output, ref=batch)
+        sync_train_phase_timing()
         step_timing["train_forward_loss_seconds"] += (
             time.perf_counter() - forward_loss_start
         )
@@ -798,11 +814,14 @@ def take_step(
             if detect_anomaly
             else nullcontext()
         )
+        sync_train_phase_timing()
         backward_start = time.perf_counter()
         with anomaly_context, backward_context:
             loss.backward(retain_graph=retain_graph_for_backward)
+        sync_train_phase_timing()
         step_timing["train_backward_seconds"] += time.perf_counter() - backward_start
         if compiled_param_grad_tensors:
+            sync_train_phase_timing()
             grad_copy_start = time.perf_counter()
             named_parameters = dict(model.named_parameters())
             for name, grad_source in compiled_param_grad_tensors:
@@ -820,26 +839,31 @@ def take_step(
                 if parameter.grad is None:
                     parameter.grad = torch.empty_like(parameter)
                 parameter.grad.copy_(grad)
+            sync_train_phase_timing()
             step_timing["train_compiled_grad_copy_seconds"] += (
                 time.perf_counter() - grad_copy_start
             )
         if max_grad_norm is not None:
+            sync_train_phase_timing()
             grad_clip_start = time.perf_counter()
             grad_norm = stable_clip_grad_norm_(
                 model.parameters(),
                 max_norm=max_grad_norm,
                 stable=guard_config.stable_grad_clip,
             )
+            sync_train_phase_timing()
             step_timing["train_grad_clip_seconds"] += (
                 time.perf_counter() - grad_clip_start
             )
         elif nonfinite_grad_guard is not None:
+            sync_train_phase_timing()
             grad_clip_start = time.perf_counter()
             grad_norm = stable_clip_grad_norm_(
                 model.parameters(),
                 max_norm=float("inf"),
                 stable=True,
             )
+            sync_train_phase_timing()
             step_timing["train_grad_clip_seconds"] += (
                 time.perf_counter() - grad_clip_start
             )
@@ -858,15 +882,19 @@ def take_step(
 
     loss_skipped = skip_result.skip if skip_result is not None else False
     if not loss_skipped:
+        sync_train_phase_timing()
         optimizer_step_start = time.perf_counter()
         optimizer.step()
+        sync_train_phase_timing()
         step_timing["train_optimizer_step_seconds"] += (
             time.perf_counter() - optimizer_step_start
         )
 
         if ema is not None:
+            sync_train_phase_timing()
             ema_update_start = time.perf_counter()
             ema.update()
+            sync_train_phase_timing()
             step_timing["train_ema_update_seconds"] += (
                 time.perf_counter() - ema_update_start
             )
