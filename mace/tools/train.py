@@ -769,7 +769,11 @@ def take_step(
         if compiled_param_grad_tensors:
             named_parameters = dict(model.named_parameters())
             for name, grad_source in compiled_param_grad_tensors:
-                parameter = named_parameters[name]
+                parameter = named_parameters.get(name)
+                if parameter is None:
+                    parameter = named_parameters.get(f"model.{name}")
+                if parameter is None:
+                    raise KeyError(name)
                 if grad_source.grad is None:
                     parameter.grad = None
                     continue
