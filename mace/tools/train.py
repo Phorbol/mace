@@ -6,6 +6,7 @@
 
 import dataclasses
 import logging
+import os
 import time
 from collections import defaultdict
 from contextlib import contextmanager, nullcontext
@@ -764,7 +765,13 @@ def take_step(
             if retain_graph_for_backward
             else nullcontext()
         )
-        with backward_context:
+        anomaly_context = (
+            torch.autograd.detect_anomaly(check_nan=False)
+            if os.environ.get("MACE_TRAIN_DETECT_ANOMALY", "").lower()
+            in {"1", "true", "yes", "on"}
+            else nullcontext()
+        )
+        with anomaly_context, backward_context:
             loss.backward(retain_graph=retain_graph_for_backward)
         if compiled_param_grad_tensors:
             named_parameters = dict(model.named_parameters())

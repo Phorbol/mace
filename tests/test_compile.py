@@ -4481,6 +4481,36 @@ def test_take_step_disables_functorch_donated_buffer_for_retained_backward(
         functorch_config.donated_buffer = previous
 
 
+def test_take_step_honors_train_detect_anomaly_env(monkeypatch):
+    from mace.tools.train import take_step
+
+    anomaly_enabled_values = []
+    original_backward = torch.Tensor.backward
+
+    def recording_backward(self, *args, **kwargs):
+        anomaly_enabled_values.append(torch.is_anomaly_enabled())
+        return original_backward(self, *args, **kwargs)
+
+    monkeypatch.setenv("MACE_TRAIN_DETECT_ANOMALY", "1")
+    monkeypatch.setattr(torch.Tensor, "backward", recording_backward)
+
+    model = _CompiledForceLossModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+
+    take_step(
+        model=model,
+        loss_fn=_MiniLoss(),
+        batch=_MiniBatch(),
+        optimizer=optimizer,
+        ema=None,
+        output_args={"forces": True, "virials": False, "stress": False},
+        max_grad_norm=None,
+        device=torch.device("cpu"),
+    )
+
+    assert anomaly_enabled_values == [True]
+
+
 def test_take_step_copies_compiled_parameter_clone_grads_before_optimizer_step():
     from mace.tools.train import take_step
 

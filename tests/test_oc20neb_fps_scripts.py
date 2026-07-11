@@ -318,6 +318,7 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert '--hybrid_muon_routing="${MACE_OC20NEB_HYBRID_MUON_ROUTING:-mace}"' in text
     assert '--hybrid_muon_lr_factor="${MACE_OC20NEB_HYBRID_MUON_LR_FACTOR:-0.1}"' in text
     assert "parse_metrics.py" in text
+    assert '--error_table="${MACE_OC20NEB_ERROR_TABLE:-PerAtomMAE}"' in text
 
 
 def test_abacus_raw_eval_discovery_includes_vib_and_ignores_sella_traj(tmp_path):

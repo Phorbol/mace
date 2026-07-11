@@ -71,6 +71,27 @@ def test_parse_log_reports_stress_metric_when_present(tmp_path):
         "timestamp": "2026-06-29T04:07:06.930000",
     }
 
+
+def test_parse_log_reports_rmse_metrics_when_present(tmp_path):
+    parse_metrics = load_parse_metrics()
+    log = tmp_path / "train.log"
+    log.write_text(
+        "2026-06-29 04:07:06.930 INFO: Epoch 0: head: Default, "
+        "loss=16.75404358, RMSE_E_per_atom=  312.25 meV, "
+        "RMSE_F=  610.83 meV / A\n"
+    )
+
+    summary = parse_metrics.parse_log(log)
+
+    assert summary["last"] == {
+        "epoch": 0,
+        "rmse_e_mev_atom": 312.25,
+        "rmse_f_mev_a": 610.83,
+        "timestamp": "2026-06-29T04:07:06.930000",
+    }
+    assert summary["has_nan"] is False
+
+
 def test_parse_nvdmon_summarizes_gpu_memory_and_utilization(tmp_path):
     parse_metrics = load_parse_metrics()
     nvdmon = tmp_path / "nvdmon_job-123.log"

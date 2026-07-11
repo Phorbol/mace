@@ -134,7 +134,7 @@ common_args=(
   --max_num_epochs="${MAX_EPOCHS}"
   --patience=999999
   --eval_interval="${EVAL_INTERVAL}"
-  --error_table=PerAtomMAE
+  --error_table="${MACE_OC20NEB_ERROR_TABLE:-PerAtomMAE}"
   --default_dtype=float32
   --train_amp_dtype=none
   --train_tf32

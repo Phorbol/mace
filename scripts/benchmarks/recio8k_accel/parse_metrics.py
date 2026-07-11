@@ -11,9 +11,11 @@ from statistics import mean
 
 EPOCH_RE = re.compile(
     r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*"
-    r"Epoch (?P<epoch>\d+):.*MAE_E_per_atom=\s*(?P<mae_e>nan|[0-9.]+) meV, "
-    r"MAE_F=\s*(?P<mae_f>nan|[0-9.]+)"
-    r"(?: meV / A, MAE_stress=\s*(?P<mae_stress>nan|[0-9.]+))?"
+    r"Epoch (?P<epoch>\d+):.*(?P<metric>MAE|RMSE)_E(?P<per_atom>_per_atom)?=\s*"
+    r"(?P<energy>nan|[0-9.]+) meV, (?P=metric)_F=\s*"
+    r"(?P<forces>nan|[0-9.]+)"
+    r"(?: meV / A, (?P=metric)_(?P<extra>stress|virials(?:_per_atom)?)=\s*"
+    r"(?P<extra_value>nan|[0-9.]+))?"
 )
 TRAIN_COMPILE_FALLBACK_RE = re.compile(
     r"training torch\.compile failed during backward; disabling compiled "
@@ -68,16 +70,28 @@ def parse_log(path: Path) -> dict:
         match = EPOCH_RE.search(line)
         if match:
             timestamp = _parse_timestamp(match.group("timestamp"))
+            metric_prefix = match.group("metric").lower()
+            energy_key = (
+                f"{metric_prefix}_e_mev_atom"
+                if match.group("per_atom")
+                else f"{metric_prefix}_e_mev"
+            )
             epoch = {
                 "epoch": int(match.group("epoch")),
-                "mae_e_mev_atom": _parse_metric(match.group("mae_e")),
-                "mae_f_mev_a": _parse_metric(match.group("mae_f")),
+                energy_key: _parse_metric(match.group("energy")),
+                f"{metric_prefix}_f_mev_a": _parse_metric(match.group("forces")),
                 "timestamp": timestamp.isoformat(),
             }
-            if match.group("mae_stress") is not None:
-                epoch["mae_stress_mev_a3"] = _parse_metric(
-                    match.group("mae_stress")
+            extra = match.group("extra")
+            if extra is not None:
+                extra_key = (
+                    f"{metric_prefix}_virials_mev_atom"
+                    if extra == "virials_per_atom"
+                    else f"{metric_prefix}_{extra}_mev_a3"
+                    if extra == "stress"
+                    else f"{metric_prefix}_{extra}_mev"
                 )
+                epoch[extra_key] = _parse_metric(match.group("extra_value"))
             epochs.append(epoch)
             continue
         fallback_match = TRAIN_COMPILE_FALLBACK_RE.search(line)
@@ -89,7 +103,11 @@ def parse_log(path: Path) -> dict:
     nan_epochs = [
         epoch["epoch"]
         for epoch in epochs
-        if math.isnan(epoch["mae_e_mev_atom"]) or math.isnan(epoch["mae_f_mev_a"])
+        if any(
+            math.isnan(value)
+            for key, value in epoch.items()
+            if key.endswith(("_e_mev_atom", "_e_mev", "_f_mev_a"))
+        )
     ]
     summary = {
         "log": str(path),
