@@ -2303,6 +2303,14 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
     def forward(self, *args, **kwargs):
         return self.model(*args, **kwargs)
 
+    def _effective_cache_policy(self) -> str:
+        if (
+            self.config.force_gradient_mode == "positions"
+            and self.config.cache_policy == "bucket"
+        ):
+            return "shape"
+        return self.config.cache_policy
+
     def _eager_force_loss(
         self,
         *,
@@ -2633,7 +2641,8 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             requested_outputs_signature,
             input_abi_signature,
         )
-        if self.config.cache_policy == "bucket":
+        cache_policy = self._effective_cache_policy()
+        if cache_policy == "bucket":
             return edge_force_compile_bucket_cache_key(
                 num_atoms=batch.positions.shape[0],
                 num_edges=batch.edge_index.shape[1],
@@ -2643,7 +2652,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 bucket_margin=self.config.bucket_margin,
                 abi_signature=abi_signature,
             )
-        if self.config.cache_policy == "dynamic":
+        if cache_policy == "dynamic":
             return edge_force_compile_dynamic_cache_key(
                 input_shapes=input_shapes,
                 abi_signature=abi_signature,
@@ -2965,6 +2974,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     output_args=output_args,
                     disabled_reason="unsupported_loss_inputs",
                 )
+            cache_policy = self._effective_cache_policy()
             cache_key = self._cache_key(
                 batch=batch,
                 input_names=input_names,
@@ -2972,7 +2982,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                 loss_fn=loss_fn,
                 output_args=output_args,
             )
-            if self.config.cache_policy == "bucket":
+            if cache_policy == "bucket":
                 if not self.config.bucket_atoms or not self.config.bucket_edges:
                     return self._eager_force_loss(
                         batch=batch,
@@ -3026,7 +3036,7 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
             cache_hit = compiled is not None
             policy_decision = self.cache_policy_state.record_and_decide(
                 cache_key,
-                policy=self.config.cache_policy,
+                policy=cache_policy,
                 min_repeats=self.config.min_repeats,
                 cache_hit=cache_hit,
                 break_even_expected_remaining_hits=(

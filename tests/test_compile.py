@@ -4502,6 +4502,92 @@ def test_edge_force_position_mode_uses_original_model_forward_for_forces_only(
     assert original_forward_calls
 
 
+def test_edge_force_position_mode_bucket_policy_uses_unpadded_shape_key(
+    monkeypatch,
+):
+    from mace.modules import WeightedEnergyForcesLoss
+    from mace.tools import training_compile
+
+    model = create_tiny_mace("cpu")
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    data_dict = batch.to_dict()
+    input_names = training_compile.edge_force_compile_input_names(
+        data_dict.keys(), force_gradient_mode="positions"
+    )
+    recorded_cache_keys = []
+
+    def forbidden_bucket_padding(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("positions mode should not bucket-pad original forward")
+
+    def executable(positions, *input_tensors):
+        first_param = input_tensors[0]
+        energy = positions.reshape(-1)[:1] * 0.0 + first_param.reshape(-1)[:1] * 0.0
+        forces = torch.zeros_like(positions)
+        return energy, forces
+
+    def fake_compile_step(*, cache_key, **kwargs):
+        del kwargs
+        recorded_cache_keys.append(cache_key)
+        return training_compile._CompiledEdgeForceStep(
+            executable=executable,
+            executable_reuse_count=0,
+            graph_module=torch.fx.GraphModule(torch.nn.Module(), torch.fx.Graph()),
+            gate_result=training_compile.EdgeForceCompileGateResult(
+                enabled=True,
+                accepted=True,
+                fallback_reason="test",
+                detach_nodes_before=0,
+                detach_nodes_after=0,
+                node_count=0,
+                comparison={},
+                compile_kwargs={},
+            ),
+            cache_key=cache_key,
+            input_names=input_names,
+            param_names=tuple(
+                name for name, param in model.named_parameters() if param.requires_grad
+            ),
+            returns_loss=False,
+            output_names=("energy", "forces"),
+            force_gradient_mode="positions",
+        )
+
+    monkeypatch.setattr(
+        training_compile, "_pad_edge_force_data_to_bucket", forbidden_bucket_padding
+    )
+
+    wrapper = training_compile.EdgeForceCompiledLossModule(
+        model,
+        config=training_compile.EdgeForceCompileConfig(
+            enabled=True,
+            compile_graph=True,
+            cache_policy="bucket",
+            bucket_atoms=(1024,),
+            bucket_edges=(65536,),
+            bucket_margin=2000.0,
+            min_repeats=0,
+            cache_hit_gate=False,
+            allow_fallback=False,
+            refresh_executable_each_step=False,
+            force_gradient_mode="positions",
+            setup_gate="none",
+        ),
+    )
+    monkeypatch.setattr(wrapper, "_compile_step", fake_compile_step)
+
+    loss, metrics = wrapper.compiled_force_training_loss(
+        batch=batch,
+        loss_fn=WeightedEnergyForcesLoss(),
+        output_args={"forces": True, "virials": False, "stress": False},
+    )
+
+    assert torch.isfinite(loss)
+    assert recorded_cache_keys
+    assert recorded_cache_keys[-1][0] == "shape"
+    assert metrics["edge_force_compile_cache_policy"] == "shape"
+
+
 def test_edge_force_compile_graph_uses_returned_stress_for_builtin_stress_loss(
     monkeypatch,
 ):
