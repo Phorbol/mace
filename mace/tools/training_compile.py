@@ -2544,7 +2544,10 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         input_names = edge_force_compile_input_names(
             data_dict.keys(), force_gradient_mode=self.config.force_gradient_mode
         )
-        compile_loss = _edge_force_can_compile_loss(loss_fn, data_dict.keys())
+        compile_loss = (
+            _edge_force_can_compile_loss(loss_fn, data_dict.keys())
+            and not self.config.compile_graph
+        )
         compiled_loss_kind = (
             _compiled_tensor_loss_kind(loss_fn) if compile_loss else ""
         )
@@ -2848,7 +2851,10 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     loss_fn=loss_fn,
                     output_args=output_args,
                 )
-            expected_returns_loss = _edge_force_can_compile_loss(loss_fn, data_dict.keys())
+            expected_returns_loss = (
+                _edge_force_can_compile_loss(loss_fn, data_dict.keys())
+                and not self.config.compile_graph
+            )
             compiled = self._cached_compiled_step(cache_key)
             if compiled is not None and compiled.returns_loss != expected_returns_loss:
                 self.cache.pop(cache_key, None)

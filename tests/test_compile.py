@@ -2382,8 +2382,7 @@ def test_edge_force_compiled_tensor_loss_compile_graph_does_not_request_outer_re
             del input_tensors
             energy = positions.new_zeros(1, requires_grad=True)
             forces = torch.zeros_like(positions)
-            loss = energy.sum()
-            return energy, forces, loss
+            return energy, forces
 
         return executable, {"compile_graph": kwargs["compile_graph"]}
 
@@ -2436,7 +2435,7 @@ def test_edge_force_compiled_tensor_loss_compile_graph_does_not_request_outer_re
 
     assert loss.requires_grad is True
     assert metrics["edge_force_compile"] is True
-    assert metrics["edge_force_compile_loss"] is True
+    assert metrics["edge_force_compile_loss"] is False
     assert "_retain_graph_for_backward" not in metrics
 
 
@@ -3119,8 +3118,7 @@ def test_edge_force_cache_hit_does_not_request_outer_retain_graph(monkeypatch):
             del input_tensors
             energy = torch.ones(1, dtype=positions.dtype, device=positions.device, requires_grad=True)
             forces = torch.zeros_like(positions)
-            loss = energy.sum()
-            return energy, forces, loss
+            return energy, forces
 
         return executable, {"compile_graph": kwargs["compile_graph"]}
 
