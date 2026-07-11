@@ -285,6 +285,14 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert "--energy_key=energy" in text
     assert "--forces_key=forces" in text
     assert "--edge_force_compile_force_gradient_mode=positions" in text
+    assert "--edge_force_compile_cache_policy=bucket" in text
+    assert "--edge_force_compile_bucket_atoms=" in text
+    assert "--edge_force_compile_bucket_edges=" in text
+    assert "--edge_force_compile_bucket_margin=" in text
+    assert "MACE_OC20NEB_COMPILE_BUCKET_ATOMS:-384,512,640,800" in text
+    assert "MACE_OC20NEB_COMPILE_BUCKET_EDGES:-8192,12288,16384,24576,32768,40960" in text
+    assert "MACE_OC20NEB_COMPILE_BUCKET_MARGIN:-0" in text
+    assert "--edge_force_compile_cache_policy=dynamic" not in text
     assert "--no-edge_force_compile_allow_fallback" in text
     assert "MACE_OC20NEB_CASES:-eager,compile,hybrid_muon,hybrid_muon_compile" in text
     assert "run_selected_case hybrid_muon" in text
