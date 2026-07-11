@@ -3212,7 +3212,9 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     stress=stress,
                     virials=virials,
                 )
-            release_executable_after_step = bool(self.config.compile_graph)
+            release_executable_after_step = bool(
+                self.config.compile_graph and self.config.refresh_executable_each_step
+            )
             if release_executable_after_step:
                 compiled.executable = None
 

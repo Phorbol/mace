@@ -2459,7 +2459,7 @@ def test_edge_force_compiled_tensor_loss_compile_graph_requests_outer_retain_gra
     assert metrics["edge_force_compile"] is True
     assert metrics["edge_force_compile_loss"] is False
     assert metrics["_retain_graph_for_backward"] is True
-    assert metrics["edge_force_release_executable_after_step"] is True
+    assert metrics["edge_force_release_executable_after_step"] is False
 
 
 def test_edge_force_compiled_loss_bucket_policy_compiles_padded_inputs():
@@ -3125,7 +3125,7 @@ def test_edge_force_cache_hit_refreshes_runtime_executable(monkeypatch):
     assert next(iter(wrapper.cache.values())).executable is None
 
 
-def test_edge_force_compile_graph_releases_executable_and_requests_outer_retain_graph(
+def test_edge_force_compile_graph_reuses_executable_and_requests_outer_retain_graph(
     monkeypatch,
 ):
     import types
@@ -3217,13 +3217,16 @@ def test_edge_force_compile_graph_releases_executable_and_requests_outer_retain_
     )
 
     assert first_metrics["_retain_graph_for_backward"] is True
-    assert first_metrics["edge_force_release_executable_after_step"] is True
-    assert next(iter(wrapper.cache.values())).executable is None
+    assert first_metrics["edge_force_release_executable_after_step"] is False
+    cached = next(iter(wrapper.cache.values()))
+    assert cached.executable is not None
     assert hit_metrics["edge_force_cache_hit"] is True
     assert hit_metrics["_retain_graph_for_backward"] is True
-    assert hit_metrics["edge_force_release_executable_after_step"] is True
-    assert used_labels == ["exec1", "exec2"]
-    assert len(compiled_labels) == 3
+    assert hit_metrics["edge_force_runtime_recompile"] is False
+    assert hit_metrics["edge_force_release_executable_after_step"] is False
+    assert cached.executable is not None
+    assert used_labels == ["exec1", "exec1"]
+    assert len(compiled_labels) == 2
 
 
 def test_edge_force_compile_periodic_parity_check_records_gradient_diffs(monkeypatch):
