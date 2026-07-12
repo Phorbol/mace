@@ -420,6 +420,43 @@ def test_hybrid_muon_module_routing_defaults_undeclared_params_to_adamw():
     assert adam_group["adam_variant"] == "adamw"
 
 
+
+
+def test_hybrid_muon_module_routing_defaults_cueq_radial_tp_weights_to_muon():
+    class CueqRadialLayer(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.randn(8, 64))
+
+    module = CueqRadialLayer()
+    groups, summary = build_hybrid_muon_param_groups(
+        [("interactions.0.conv_tp_weights.layer0.weight", module.weight)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"interactions.0.conv_tp_weights.layer0": module},
+    )
+
+    assert summary == [
+        {
+            "name": "interactions.0.conv_tp_weights.layer0.weight",
+            "shape": (8, 64),
+            "numel": 512,
+            "route": "muon",
+            "reason": "module-default-radial-tp-weight-mlp",
+            "muon_mode": "2d",
+            "matrix_shape": (8, 64),
+            "matrix_batch": 1,
+        }
+    ]
+    muon_group = next(group for group in groups if group["route"] == "muon")
+    assert muon_group["param_names"] == [
+        "interactions.0.conv_tp_weights.layer0.weight"
+    ]
+
+
 def test_hybrid_muon_module_routing_uses_declared_slice_specs(monkeypatch):
     class FlatSlicedModule(torch.nn.Module):
         def __init__(self):

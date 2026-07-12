@@ -658,8 +658,14 @@ def build_hybrid_muon_param_groups(
             else:
                 optim_spec = _module_declared_optim_spec(name, param, module_map)
                 if optim_spec is None:
-                    route, reason = "adamw", "module-default-adamw"
-                    adam_variant_override = "adamw"
+                    default_route, default_reason = _route_parameter(
+                        name, param, muon_mode=muon_mode, routing="mace"
+                    )
+                    if default_route == "muon" and default_reason == "radial-tp-weight-mlp":
+                        route, reason = "muon", f"module-default-{default_reason}"
+                    else:
+                        route, reason = "adamw", "module-default-adamw"
+                        adam_variant_override = "adamw"
                 else:
                     route, reason = optim_spec.route, "module-declared"
                     flat_specs = _normalize_optim_spec_slice_specs(name, param, optim_spec)
