@@ -36,6 +36,20 @@ COMPILE_MAX_CACHE_ENTRIES=${MACE_OC20NEB_COMPILE_MAX_CACHE_ENTRIES:-2}
 COMPILE_SETUP_GATE=${MACE_OC20NEB_COMPILE_SETUP_GATE:-strict}
 COMPILE_PARITY_GRADIENTS=${MACE_OC20NEB_COMPILE_PARITY_GRADIENTS:-False}
 COMPILE_PARITY_CHECK_STRICT=${MACE_OC20NEB_COMPILE_PARITY_CHECK_STRICT:-False}
+SCHEDULER=${MACE_OC20NEB_SCHEDULER:-WSD}
+LR_SCHEDULER_INTERVAL=${MACE_OC20NEB_LR_SCHEDULER_INTERVAL:-step}
+LR_WSD_WARMUP_RATIO=${MACE_OC20NEB_LR_WSD_WARMUP_RATIO:-0.03}
+LR_WSD_STOP_LR_RATIO=${MACE_OC20NEB_LR_WSD_STOP_LR_RATIO:-0.001}
+LR_WSD_DECAY_PHASE_RATIO=${MACE_OC20NEB_LR_WSD_DECAY_PHASE_RATIO:-0.1}
+LR_WSD_DECAY_TYPE=${MACE_OC20NEB_LR_WSD_DECAY_TYPE:-inverse_linear}
+LR=${MACE_OC20NEB_LR:-0.001}
+WEIGHT_DECAY=${MACE_OC20NEB_WEIGHT_DECAY:-0.001}
+HYBRID_MUON_MODE=${MACE_OC20NEB_HYBRID_MUON_MODE:-2d}
+HYBRID_MUON_ROUTING=${MACE_OC20NEB_HYBRID_MUON_ROUTING:-mace}
+HYBRID_MUON_LR_FACTOR=${MACE_OC20NEB_HYBRID_MUON_LR_FACTOR:-0.1}
+HYBRID_MUON_WEIGHT_DECAY=${MACE_OC20NEB_HYBRID_MUON_WEIGHT_DECAY:-0.0}
+HYBRID_MUON_ADAM_VARIANT=${MACE_OC20NEB_HYBRID_MUON_ADAM_VARIANT:-adamw}
+HYBRID_MUON_LR_SCALE_MODE=${MACE_OC20NEB_HYBRID_MUON_LR_SCALE_MODE:-original}
 
 export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
@@ -95,6 +109,20 @@ cat > "${RUN_ROOT}/manifest.json" <<JSON
   "stage_two": "${STAGE_TWO}",
   "stage_two_fraction": ${STAGE_TWO_FRACTION},
   "stage_two_start_update": ${START_STAGE_TWO_UPDATE},
+  "scheduler": "${SCHEDULER}",
+  "lr_scheduler_interval": "${LR_SCHEDULER_INTERVAL}",
+  "lr_wsd_warmup_ratio": ${LR_WSD_WARMUP_RATIO},
+  "lr_wsd_stop_lr_ratio": ${LR_WSD_STOP_LR_RATIO},
+  "lr_wsd_decay_phase_ratio": ${LR_WSD_DECAY_PHASE_RATIO},
+  "lr_wsd_decay_type": "${LR_WSD_DECAY_TYPE}",
+  "lr": ${LR},
+  "weight_decay": ${WEIGHT_DECAY},
+  "hybrid_muon_mode": "${HYBRID_MUON_MODE}",
+  "hybrid_muon_routing": "${HYBRID_MUON_ROUTING}",
+  "hybrid_muon_lr_factor": ${HYBRID_MUON_LR_FACTOR},
+  "hybrid_muon_weight_decay": ${HYBRID_MUON_WEIGHT_DECAY},
+  "hybrid_muon_adam_variant": "${HYBRID_MUON_ADAM_VARIANT}",
+  "hybrid_muon_lr_scale_mode": "${HYBRID_MUON_LR_SCALE_MODE}",
   "slurm_gpus_per_node": "${SLURM_GPUS_PER_NODE:-${SLURM_GPUS_ON_NODE:-unknown}}",
   "stage1_energy_weight": ${STAGE1_ENERGY_WEIGHT},
   "stage1_forces_weight": ${STAGE1_FORCES_WEIGHT},
@@ -158,14 +186,14 @@ common_args=(
   --shuffle=True
   --enable_cueq="${MACE_OC20NEB_ENABLE_CUEQ:-False}"
   --optimizer=adam
-  --scheduler="${MACE_OC20NEB_SCHEDULER:-WSD}"
-  --lr_scheduler_interval="${MACE_OC20NEB_LR_SCHEDULER_INTERVAL:-step}"
-  --lr_wsd_warmup_ratio="${MACE_OC20NEB_LR_WSD_WARMUP_RATIO:-0.03}"
-  --lr_wsd_stop_lr_ratio="${MACE_OC20NEB_LR_WSD_STOP_LR_RATIO:-0.001}"
-  --lr_wsd_decay_phase_ratio="${MACE_OC20NEB_LR_WSD_DECAY_PHASE_RATIO:-0.1}"
-  --lr_wsd_decay_type="${MACE_OC20NEB_LR_WSD_DECAY_TYPE:-inverse_linear}"
-  --lr="${MACE_OC20NEB_LR:-0.001}"
-  --weight_decay="${MACE_OC20NEB_WEIGHT_DECAY:-0.001}"
+  --scheduler="${SCHEDULER}"
+  --lr_scheduler_interval="${LR_SCHEDULER_INTERVAL}"
+  --lr_wsd_warmup_ratio="${LR_WSD_WARMUP_RATIO}"
+  --lr_wsd_stop_lr_ratio="${LR_WSD_STOP_LR_RATIO}"
+  --lr_wsd_decay_phase_ratio="${LR_WSD_DECAY_PHASE_RATIO}"
+  --lr_wsd_decay_type="${LR_WSD_DECAY_TYPE}"
+  --lr="${LR}"
+  --weight_decay="${WEIGHT_DECAY}"
   --loss=weighted
   --energy_weight="${STAGE1_ENERGY_WEIGHT}"
   --forces_weight="${STAGE1_FORCES_WEIGHT}"
@@ -297,12 +325,12 @@ esac
 
 hybrid_muon_args=(
   --optimizer=hybrid_muon
-  --hybrid_muon_mode="${MACE_OC20NEB_HYBRID_MUON_MODE:-2d}"
-  --hybrid_muon_routing="${MACE_OC20NEB_HYBRID_MUON_ROUTING:-mace}"
-  --hybrid_muon_lr_factor="${MACE_OC20NEB_HYBRID_MUON_LR_FACTOR:-0.1}"
-  --hybrid_muon_weight_decay="${MACE_OC20NEB_HYBRID_MUON_WEIGHT_DECAY:-0.0}"
-  --hybrid_muon_adam_variant="${MACE_OC20NEB_HYBRID_MUON_ADAM_VARIANT:-adamw}"
-  --hybrid_muon_lr_scale_mode="${MACE_OC20NEB_HYBRID_MUON_LR_SCALE_MODE:-original}"
+  --hybrid_muon_mode="${HYBRID_MUON_MODE}"
+  --hybrid_muon_routing="${HYBRID_MUON_ROUTING}"
+  --hybrid_muon_lr_factor="${HYBRID_MUON_LR_FACTOR}"
+  --hybrid_muon_weight_decay="${HYBRID_MUON_WEIGHT_DECAY}"
+  --hybrid_muon_adam_variant="${HYBRID_MUON_ADAM_VARIANT}"
+  --hybrid_muon_lr_scale_mode="${HYBRID_MUON_LR_SCALE_MODE}"
 )
 
 cueq_args=(
