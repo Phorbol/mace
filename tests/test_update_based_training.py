@@ -379,3 +379,44 @@ def test_train_triggers_update_eval_when_epoch_crosses_interval(monkeypatch):
     )
 
     assert len(eval_calls) == 3
+
+
+def test_train_validation_checkpoint_uses_update_metadata(monkeypatch):
+    train_module = importlib.import_module("mace.tools.train")
+    checkpoint_handler = _FakeCheckpointHandler()
+    losses = iter([1.0, 0.5])
+
+    def fake_evaluate(**_kwargs):
+        return next(losses), _eval_metrics()
+
+    def fake_train_one_epoch(**kwargs):
+        return len(kwargs["data_loader"])
+
+    monkeypatch.setattr(train_module, "evaluate", fake_evaluate)
+    monkeypatch.setattr(train_module, "train_one_epoch", fake_train_one_epoch)
+
+    train_module.train(
+        model=torch.nn.Linear(1, 1),
+        loss_fn=_MiniLoss(),
+        train_loader=[object(), object(), object()],
+        valid_loaders={"valid": [object()]},
+        optimizer=torch.optim.SGD([torch.nn.Parameter(torch.tensor([1.0]))], lr=0.1),
+        lr_scheduler=_FakeScheduler(),
+        start_epoch=0,
+        max_num_epochs=2,
+        patience=999,
+        checkpoint_handler=checkpoint_handler,
+        logger=_FakeLogger(),
+        eval_interval=999,
+        output_args={"forces": False, "virials": False, "stress": False},
+        device=torch.device("cpu"),
+        log_errors="PerAtomMAE",
+        max_num_updates=6,
+        eval_interval_updates=4,
+    )
+
+    assert (
+        1,
+        False,
+        {"updates": 6, "checkpoint_kind": "update"},
+    ) in checkpoint_handler.saved

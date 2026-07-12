@@ -304,6 +304,15 @@ def train(
             "Saving keep-last checkpoint every %d optimizer updates",
             checkpoint_interval_updates,
         )
+    use_update_checkpoints = any(
+        value is not None
+        for value in (
+            max_num_updates,
+            eval_interval_updates,
+            checkpoint_interval_updates,
+            start_update,
+        )
+    )
 
     # log validation loss before _any_ training
     for valid_loader_name, valid_loader in valid_loaders.items():
@@ -464,6 +473,12 @@ def train(
                 )
             if log_wandb:
                 wandb.log(wandb_log_dict)
+            validation_checkpoint_kind = (
+                "update" if use_update_checkpoints else "epoch"
+            )
+            validation_checkpoint_updates = (
+                updates_completed if use_update_checkpoints else None
+            )
             if rank == 0:
                 if valid_loss >= lowest_loss:
                     patience_counter += 1
@@ -493,6 +508,8 @@ def train(
                                 keep_last=True,
                                 grad_guard=nonfinite_grad_guard,
                                 named_parameters=model.named_parameters,
+                                updates=validation_checkpoint_updates,
+                                checkpoint_kind=validation_checkpoint_kind,
                             )
                 else:
                     lowest_loss = valid_loss
@@ -508,6 +525,8 @@ def train(
                             keep_last=keep_last,
                             grad_guard=nonfinite_grad_guard,
                             named_parameters=model.named_parameters,
+                            updates=validation_checkpoint_updates,
+                            checkpoint_kind=validation_checkpoint_kind,
                         )
                         keep_last = False or save_all_checkpoints
         if distributed:
