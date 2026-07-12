@@ -29,7 +29,8 @@ STAGE1_ENERGY_WEIGHT=${MACE_OC20NEB_STAGE1_ENERGY_WEIGHT:-1.0}
 STAGE1_FORCES_WEIGHT=${MACE_OC20NEB_STAGE1_FORCES_WEIGHT:-100.0}
 STAGE2_ENERGY_WEIGHT=${MACE_OC20NEB_STAGE2_ENERGY_WEIGHT:-100.0}
 STAGE2_FORCES_WEIGHT=${MACE_OC20NEB_STAGE2_FORCES_WEIGHT:-1.0}
-CASES=${MACE_OC20NEB_CASES:-eager,cueq,hybrid_muon,cueq_hybrid_muon}
+CASES=${MACE_OC20NEB_CASES:-adamw,hybrid_muon,cueq_adamw,cueq_hybrid_muon}
+BASE_OPTIMIZER=${MACE_OC20NEB_BASE_OPTIMIZER:-adamw}
 COMPILE_BUCKET_ATOMS=${MACE_OC20NEB_COMPILE_BUCKET_ATOMS:-384,512,640,800}
 COMPILE_BUCKET_EDGES=${MACE_OC20NEB_COMPILE_BUCKET_EDGES:-8192,12288,16384,24576,32768,40960}
 COMPILE_BUCKET_MARGIN=${MACE_OC20NEB_COMPILE_BUCKET_MARGIN:-0}
@@ -132,6 +133,7 @@ cat > "${RUN_ROOT}/manifest.json" <<JSON
   "stage1_forces_weight": ${STAGE1_FORCES_WEIGHT},
   "stage2_energy_weight": ${STAGE2_ENERGY_WEIGHT},
   "stage2_forces_weight": ${STAGE2_FORCES_WEIGHT},
+  "base_optimizer": "${BASE_OPTIMIZER}",
   "cases": "${CASES}",
   "compile_setup_gate": "${COMPILE_SETUP_GATE}",
   "compile_max_cache_entries": ${COMPILE_MAX_CACHE_ENTRIES},
@@ -190,7 +192,7 @@ common_args=(
   --seed="${SEED}"
   --shuffle=True
   --enable_cueq="${MACE_OC20NEB_ENABLE_CUEQ:-False}"
-  --optimizer=adam
+  --optimizer="${BASE_OPTIMIZER}"
   --scheduler="${SCHEDULER}"
   --lr_scheduler_interval="${LR_SCHEDULER_INTERVAL}"
   --lr_wsd_warmup_ratio="${LR_WSD_WARMUP_RATIO}"
@@ -351,13 +353,16 @@ if [[ -n "${MACE_OC20NEB_POST_ARGS:-}" ]]; then
   read -r -a post_args <<< "${MACE_OC20NEB_POST_ARGS}"
 fi
 
-run_selected_case eager "${extra_args[@]}" "${post_args[@]}"
-run_selected_case compile "${extra_args[@]}" "${compile_args[@]}" "${post_args[@]}"
+run_selected_case adamw "${extra_args[@]}" "${post_args[@]}"
 run_selected_case hybrid_muon "${extra_args[@]}" "${hybrid_muon_args[@]}" "${post_args[@]}"
-run_selected_case hybrid_muon_compile "${extra_args[@]}" "${hybrid_muon_args[@]}" "${compile_args[@]}" "${post_args[@]}"
-run_selected_case cueq "${extra_args[@]}" "${cueq_args[@]}" "${post_args[@]}"
-run_selected_case cueq_compile "${extra_args[@]}" "${cueq_args[@]}" "${compile_args[@]}" "${post_args[@]}"
+run_selected_case cueq_adamw "${extra_args[@]}" "${cueq_args[@]}" "${post_args[@]}"
 run_selected_case cueq_hybrid_muon "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_args[@]}" "${post_args[@]}"
+
+run_selected_case eager "${extra_args[@]}" "${post_args[@]}"
+run_selected_case cueq "${extra_args[@]}" "${cueq_args[@]}" "${post_args[@]}"
+run_selected_case compile "${extra_args[@]}" "${compile_args[@]}" "${post_args[@]}"
+run_selected_case hybrid_muon_compile "${extra_args[@]}" "${hybrid_muon_args[@]}" "${compile_args[@]}" "${post_args[@]}"
+run_selected_case cueq_compile "${extra_args[@]}" "${cueq_args[@]}" "${compile_args[@]}" "${post_args[@]}"
 run_selected_case cueq_hybrid_muon_compile "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_args[@]}" "${compile_args[@]}" "${post_args[@]}"
 
 "${PYTHON_BIN}" scripts/benchmarks/recio8k_accel/parse_metrics.py "${RUN_ROOT}" > "${RUN_ROOT}/summary.json"
