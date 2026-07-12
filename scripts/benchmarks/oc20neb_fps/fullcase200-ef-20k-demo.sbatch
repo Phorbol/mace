@@ -356,6 +356,12 @@ run_selected_case cueq_hybrid_muon "${extra_args[@]}" "${cueq_args[@]}" "${hybri
 run_selected_case cueq_hybrid_muon_compile "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_args[@]}" "${compile_args[@]}" "${post_args[@]}"
 
 "${PYTHON_BIN}" scripts/benchmarks/recio8k_accel/parse_metrics.py "${RUN_ROOT}" > "${RUN_ROOT}/summary.json"
-"${PYTHON_BIN}" scripts/benchmarks/oc20neb_fps/summarize_fullcase200_ef20k_matrix.py "${RUN_ROOT}" --csv "${RUN_ROOT}/matrix_summary.csv" > "${RUN_ROOT}/matrix_summary.json"
+"${PYTHON_BIN}" scripts/benchmarks/oc20neb_fps/summarize_fullcase200_ef20k_matrix.py \
+  "${RUN_ROOT}" \
+  --csv "${RUN_ROOT}/matrix_summary.csv" \
+  --comparisons-csv "${RUN_ROOT}/matrix_comparisons.csv" \
+  --comparisons-json "${RUN_ROOT}/matrix_comparisons.json" \
+  > "${RUN_ROOT}/matrix_summary.json"
 cat "${RUN_ROOT}/summary.json"
 cat "${RUN_ROOT}/matrix_summary.json"
+cat "${RUN_ROOT}/matrix_comparisons.json"

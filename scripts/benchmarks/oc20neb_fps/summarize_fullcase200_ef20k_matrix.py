@@ -135,6 +135,72 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
     return row
 
 
+
+PAIRWISE_COMPARISONS = (
+    ("eager", "hybrid_muon"),
+    ("cueq", "cueq_hybrid_muon"),
+    ("compile", "hybrid_muon_compile"),
+    ("cueq_compile", "cueq_hybrid_muon_compile"),
+)
+
+
+def _numeric_delta(candidate: Any, baseline: Any) -> float | None:
+    if candidate is None or baseline is None:
+        return None
+    return float(candidate) - float(baseline)
+
+
+def _numeric_ratio(numerator: Any, denominator: Any) -> float | None:
+    if numerator is None or denominator in (None, 0):
+        return None
+    return float(numerator) / float(denominator)
+
+
+def _comparison_row(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "root": baseline.get("root"),
+        "baseline_case": baseline.get("case"),
+        "candidate_case": candidate.get("case"),
+        "target_steps": candidate.get("target_steps") or baseline.get("target_steps"),
+        "effective_updates": candidate.get("effective_updates") or baseline.get("effective_updates"),
+        "stage_two_start_update": candidate.get("stage_two_start_update") or baseline.get("stage_two_start_update"),
+        "scheduler": candidate.get("scheduler") or baseline.get("scheduler"),
+        "lr_scheduler_interval": candidate.get("lr_scheduler_interval") or baseline.get("lr_scheduler_interval"),
+        "hybrid_muon_mode": candidate.get("hybrid_muon_mode"),
+        "hybrid_muon_routing": candidate.get("hybrid_muon_routing"),
+        "hybrid_muon_lr_factor": candidate.get("hybrid_muon_lr_factor"),
+        "baseline_mae_e_mev_atom": baseline.get("mae_e_mev_atom"),
+        "candidate_mae_e_mev_atom": candidate.get("mae_e_mev_atom"),
+        "mae_e_delta_mev_atom": _numeric_delta(candidate.get("mae_e_mev_atom"), baseline.get("mae_e_mev_atom")),
+        "mae_e_ratio": _numeric_ratio(candidate.get("mae_e_mev_atom"), baseline.get("mae_e_mev_atom")),
+        "baseline_mae_f_mev_a": baseline.get("mae_f_mev_a"),
+        "candidate_mae_f_mev_a": candidate.get("mae_f_mev_a"),
+        "mae_f_delta_mev_a": _numeric_delta(candidate.get("mae_f_mev_a"), baseline.get("mae_f_mev_a")),
+        "mae_f_ratio": _numeric_ratio(candidate.get("mae_f_mev_a"), baseline.get("mae_f_mev_a")),
+        "baseline_seconds_per_epoch": baseline.get("mean_seconds_per_epoch"),
+        "candidate_seconds_per_epoch": candidate.get("mean_seconds_per_epoch"),
+        "seconds_per_epoch_delta": _numeric_delta(candidate.get("mean_seconds_per_epoch"), baseline.get("mean_seconds_per_epoch")),
+        "seconds_per_epoch_ratio": _numeric_ratio(candidate.get("mean_seconds_per_epoch"), baseline.get("mean_seconds_per_epoch")),
+        "speedup_vs_baseline": _numeric_ratio(baseline.get("mean_seconds_per_epoch"), candidate.get("mean_seconds_per_epoch")),
+        "baseline_max_fb_memory_mb": baseline.get("max_fb_memory_mb"),
+        "candidate_max_fb_memory_mb": candidate.get("max_fb_memory_mb"),
+        "max_fb_memory_delta_mb": _numeric_delta(candidate.get("max_fb_memory_mb"), baseline.get("max_fb_memory_mb")),
+    }
+
+
+def summarize_pairwise_comparisons(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    comparisons: list[dict[str, Any]] = []
+    roots = sorted({str(row.get("root")) for row in rows})
+    for root in roots:
+        by_case = {row.get("case"): row for row in rows if str(row.get("root")) == root}
+        for baseline_case, candidate_case in PAIRWISE_COMPARISONS:
+            baseline = by_case.get(baseline_case)
+            candidate = by_case.get(candidate_case)
+            if baseline is not None and candidate is not None:
+                comparisons.append(_comparison_row(baseline, candidate))
+    return comparisons
+
+
 def summarize_roots(roots: list[Path]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for root in roots:
@@ -160,12 +226,19 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("roots", nargs="+", type=Path)
     parser.add_argument("--csv", type=Path, default=None)
+    parser.add_argument("--comparisons-csv", type=Path, default=None)
+    parser.add_argument("--comparisons-json", type=Path, default=None)
     args = parser.parse_args()
 
     rows = summarize_roots(args.roots)
     print(json.dumps(rows, indent=2, sort_keys=True))
     if args.csv is not None:
         _write_csv(rows, args.csv)
+    comparisons = summarize_pairwise_comparisons(rows)
+    if args.comparisons_json is not None:
+        args.comparisons_json.write_text(json.dumps(comparisons, indent=2, sort_keys=True))
+    if args.comparisons_csv is not None:
+        _write_csv(comparisons, args.comparisons_csv)
 
 
 if __name__ == "__main__":

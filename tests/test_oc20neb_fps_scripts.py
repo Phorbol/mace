@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -349,6 +350,8 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert '--hybrid_muon_lr_factor="${HYBRID_MUON_LR_FACTOR}"' in text
     assert "parse_metrics.py" in text
     assert "summarize_fullcase200_ef20k_matrix.py" in text
+    assert "--comparisons-csv" in text
+    assert "matrix_comparisons.json" in text
     assert '--error_table="${MACE_OC20NEB_ERROR_TABLE:-PerAtomMAE}"' in text
 
 
@@ -586,3 +589,51 @@ def test_summarize_fullcase200_ef20k_matrix_reports_case_config_and_metrics(tmp_
     assert row["hybrid_muon_mode"] == "2d"
     assert row["hybrid_muon_routing"] == "mace"
     assert row["hybrid_muon_lr_factor"] == 0.1
+
+
+def test_summarize_fullcase200_ef20k_matrix_reports_hybrid_muon_comparisons(tmp_path):
+    summarizer = load_script("summarize_fullcase200_ef20k_matrix.py")
+    root = tmp_path / "matrix_cueq_muon"
+    manifest = {
+        "batch_size": 8,
+        "target_steps": 20000,
+        "train_size": 5000,
+        "max_num_updates": 20000,
+        "stage_two_start_update": 15000,
+    }
+    root.mkdir()
+    (root / "manifest.json").write_text(json.dumps(manifest))
+
+    for case_name, epoch_seconds, mae_e, mae_f, fb_memory in (
+        ("cueq", 40.0, 20.0, 130.0, 10000),
+        ("cueq_hybrid_muon", 42.0, 18.0, 105.0, 10100),
+    ):
+        case_dir = root / case_name
+        log_dir = case_dir / "logs"
+        log_dir.mkdir(parents=True)
+        second = int(epoch_seconds)
+        log_dir.joinpath("train.log").write_text(
+            "2026-07-12 10:20:00.000 INFO: Epoch 0: head: Default, loss=0.12, "
+            f"MAE_E_per_atom= {mae_e:8.2f} meV, MAE_F= {mae_f:8.2f} meV / A\n"
+            f"2026-07-12 10:20:{second:02d}.000 INFO: Epoch 1: head: Default, loss=0.10, "
+            f"MAE_E_per_atom= {mae_e:8.2f} meV, MAE_F= {mae_f:8.2f} meV / A\n"
+        )
+        case_dir.joinpath(f"nvdmon_job-1_{case_name}.log").write_text(
+            "# gpu pwr gtemp mtemp sm mem enc dec mclk pclk pviol tviol fb bar1 ccpm\n"
+            f"0 0 250 45 40 50 20 0 0 877 1380 0 0 0 0 {fb_memory}\n"
+        )
+
+    rows = summarizer.summarize_roots([root])
+    comparisons = summarizer.summarize_pairwise_comparisons(rows)
+
+    assert len(comparisons) == 1
+    comparison = comparisons[0]
+    assert comparison["baseline_case"] == "cueq"
+    assert comparison["candidate_case"] == "cueq_hybrid_muon"
+    assert comparison["mae_e_delta_mev_atom"] == -2.0
+    assert comparison["mae_f_delta_mev_a"] == -25.0
+    assert comparison["mae_f_ratio"] == 105.0 / 130.0
+    assert comparison["seconds_per_epoch_ratio"] == 42.0 / 40.0
+    assert comparison["speedup_vs_baseline"] == 40.0 / 42.0
+    assert comparison["max_fb_memory_delta_mb"] == 100
+
