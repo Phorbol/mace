@@ -311,6 +311,7 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert "stage_two_start_update" in text
     assert "max_num_updates" in text
     assert "eval_interval_updates" in text
+    assert "checkpoint_interval_updates" in text
     assert '"scheduler"' in text
     assert '"lr_scheduler_interval"' in text
     assert '"hybrid_muon_mode"' in text

@@ -22,6 +22,7 @@ BATCH_SIZE=${MACE_OC20NEB_BATCH_SIZE:-8}
 VALID_BATCH_SIZE=${MACE_OC20NEB_VALID_BATCH_SIZE:-16}
 SEED=${MACE_OC20NEB_SEED:-456}
 EVAL_REPORTS=${MACE_OC20NEB_EVAL_REPORTS:-5}
+CHECKPOINT_REPORTS=${MACE_OC20NEB_CHECKPOINT_REPORTS:-${EVAL_REPORTS}}
 STAGE_TWO=${MACE_OC20NEB_STAGE_TWO:-True}
 STAGE_TWO_FRACTION=${MACE_OC20NEB_STAGE_TWO_FRACTION:-0.75}
 STAGE1_ENERGY_WEIGHT=${MACE_OC20NEB_STAGE1_ENERGY_WEIGHT:-1.0}
@@ -73,8 +74,8 @@ if [[ ! -f "${VALID_FILE}" ]]; then
   exit 2
 fi
 
-export TRAIN_FILE BATCH_SIZE TARGET_STEPS EVAL_REPORTS STAGE_TWO_FRACTION
-read -r TRAIN_SIZE MAX_EPOCHS EVAL_INTERVAL EVAL_INTERVAL_UPDATES START_STAGE_TWO_UPDATE < <("${PYTHON_BIN}" - <<'INNERPY'
+export TRAIN_FILE BATCH_SIZE TARGET_STEPS EVAL_REPORTS CHECKPOINT_REPORTS STAGE_TWO_FRACTION
+read -r TRAIN_SIZE MAX_EPOCHS EVAL_INTERVAL EVAL_INTERVAL_UPDATES CHECKPOINT_INTERVAL_UPDATES START_STAGE_TWO_UPDATE < <("${PYTHON_BIN}" - <<'INNERPY'
 import math
 from ase.io import read
 import os
@@ -82,6 +83,7 @@ train_file = os.environ["TRAIN_FILE"]
 batch_size = int(os.environ["BATCH_SIZE"])
 target_steps = int(os.environ["TARGET_STEPS"])
 eval_reports = max(1, int(os.environ["EVAL_REPORTS"]))
+checkpoint_reports = max(1, int(os.environ["CHECKPOINT_REPORTS"]))
 stage_two_fraction = float(os.environ["STAGE_TWO_FRACTION"])
 train_size = len(read(train_file, index=":"))
 if train_size <= 0:
@@ -89,8 +91,9 @@ if train_size <= 0:
 max_epochs = max(1, math.ceil(target_steps * batch_size / train_size))
 eval_interval = max(1, max_epochs // eval_reports)
 eval_interval_updates = max(1, target_steps // eval_reports)
+checkpoint_interval_updates = max(1, target_steps // checkpoint_reports)
 start_stage_two_update = min(target_steps, max(1, math.floor(target_steps * stage_two_fraction)))
-print(train_size, max_epochs, eval_interval, eval_interval_updates, start_stage_two_update)
+print(train_size, max_epochs, eval_interval, eval_interval_updates, checkpoint_interval_updates, start_stage_two_update)
 INNERPY
 )
 
@@ -101,6 +104,7 @@ cat > "${RUN_ROOT}/manifest.json" <<JSON
   "data_root": "${DATA_ROOT}",
   "eval_interval": ${EVAL_INTERVAL},
   "eval_interval_updates": ${EVAL_INTERVAL_UPDATES},
+  "checkpoint_interval_updates": ${CHECKPOINT_INTERVAL_UPDATES},
   "max_num_epochs": ${MAX_EPOCHS},
   "max_num_updates": ${TARGET_STEPS},
   "python": "${PYTHON_BIN}",
@@ -177,6 +181,7 @@ common_args=(
   --patience=999999
   --eval_interval="${EVAL_INTERVAL}"
   --eval_interval_updates="${EVAL_INTERVAL_UPDATES}"
+  --checkpoint_interval_updates="${CHECKPOINT_INTERVAL_UPDATES}"
   --error_table="${MACE_OC20NEB_ERROR_TABLE:-PerAtomMAE}"
   --default_dtype=float32
   --train_amp_dtype=none

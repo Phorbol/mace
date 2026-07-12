@@ -61,11 +61,14 @@ def test_arg_parser_accepts_update_based_training_flags():
         "15000",
         "--eval_interval_updates",
         "1000",
+        "--checkpoint_interval_updates",
+        "5000",
     ])
 
     assert args.max_num_updates == 20000
     assert args.start_swa_update == 15000
     assert args.eval_interval_updates == 1000
+    assert args.checkpoint_interval_updates == 5000
 
 
 def test_train_one_epoch_stops_after_max_steps(monkeypatch):
@@ -203,3 +206,43 @@ def test_train_activates_stage_two_from_global_update(monkeypatch):
 
     assert seen_losses == [stage_one_loss, stage_two_loss]
     assert averaged_model.updated == 1
+
+
+def test_train_saves_update_interval_checkpoints_without_waiting_for_validation(monkeypatch):
+    train_module = importlib.import_module("mace.tools.train")
+    checkpoint_handler = _FakeCheckpointHandler()
+
+    def fake_evaluate(**_kwargs):
+        return 1.0, _eval_metrics()
+
+    def fake_train_one_epoch(**kwargs):
+        max_steps = kwargs.get("max_steps")
+        loader_steps = len(kwargs["data_loader"])
+        return loader_steps if max_steps is None else min(max_steps, loader_steps)
+
+    monkeypatch.setattr(train_module, "evaluate", fake_evaluate)
+    monkeypatch.setattr(train_module, "train_one_epoch", fake_train_one_epoch)
+
+    train_module.train(
+        model=torch.nn.Linear(1, 1),
+        loss_fn=_MiniLoss(),
+        train_loader=[object(), object(), object()],
+        valid_loaders={"valid": [object()]},
+        optimizer=torch.optim.SGD([torch.nn.Parameter(torch.tensor([1.0]))], lr=0.1),
+        lr_scheduler=_FakeScheduler(),
+        start_epoch=0,
+        max_num_epochs=3,
+        patience=999,
+        checkpoint_handler=checkpoint_handler,
+        logger=_FakeLogger(),
+        eval_interval=999,
+        output_args={"forces": False, "virials": False, "stress": False},
+        device=torch.device("cpu"),
+        log_errors="PerAtomMAE",
+        max_num_updates=6,
+        checkpoint_interval_updates=3,
+    )
+
+    assert (3, True) in checkpoint_handler.saved
+    assert (6, True) in checkpoint_handler.saved
+

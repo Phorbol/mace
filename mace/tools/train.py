@@ -231,6 +231,7 @@ def train(
     guard_config: Optional[TrainingGuardConfig] = None,
     max_num_updates: Optional[int] = None,
     eval_interval_updates: Optional[int] = None,
+    checkpoint_interval_updates: Optional[int] = None,
 ):
     lowest_loss = np.inf
     valid_loss = np.inf
@@ -263,6 +264,8 @@ def train(
         raise ValueError("max_num_updates must be non-negative")
     if eval_interval_updates is not None and eval_interval_updates <= 0:
         raise ValueError("eval_interval_updates must be positive")
+    if checkpoint_interval_updates is not None and checkpoint_interval_updates <= 0:
+        raise ValueError("checkpoint_interval_updates must be positive")
     updates_completed = (
         start_epoch * train_loader_len if train_loader_len is not None else start_epoch
     )
@@ -271,6 +274,11 @@ def train(
     if eval_interval_updates is not None:
         logging.info(
             "Evaluating every %d optimizer updates", eval_interval_updates
+        )
+    if checkpoint_interval_updates is not None:
+        logging.info(
+            "Saving keep-last checkpoint every %d optimizer updates",
+            checkpoint_interval_updates,
         )
 
     # log validation loss before _any_ training
@@ -358,6 +366,23 @@ def train(
             break
         if distributed:
             torch.distributed.barrier()
+
+        should_save_update_checkpoint = False
+        if checkpoint_interval_updates is not None and updates_completed > 0:
+            should_save_update_checkpoint = (
+                updates_completed % checkpoint_interval_updates == 0
+            )
+            if max_num_updates is not None and updates_completed >= max_num_updates:
+                should_save_update_checkpoint = True
+        if should_save_update_checkpoint and rank == 0:
+            _save_checkpoint_after_guard(
+                checkpoint_handler=checkpoint_handler,
+                state=CheckpointState(model, optimizer, lr_scheduler),
+                epochs=updates_completed,
+                keep_last=True,
+                grad_guard=nonfinite_grad_guard,
+                named_parameters=model.named_parameters,
+            )
 
         # Validate
         should_evaluate = epoch % eval_interval == 0

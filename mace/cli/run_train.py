@@ -1159,6 +1159,7 @@ def run(args) -> None:
         guard_config=_training_guard_config_from_args(args),
         max_num_updates=args.max_num_updates,
         eval_interval_updates=args.eval_interval_updates,
+        checkpoint_interval_updates=args.checkpoint_interval_updates,
     )
 
     logging.info("")

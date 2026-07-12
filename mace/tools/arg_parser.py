@@ -1460,6 +1460,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=None,
     )
     parser.add_argument(
+        "--checkpoint_interval_updates",
+        help="save a keep-last checkpoint every <n> optimizer updates; useful for max_num_updates training",
+        type=int,
+        default=None,
+    )
+    parser.add_argument(
         "--keep_checkpoints",
         help="keep all checkpoints",
         action="store_true",
