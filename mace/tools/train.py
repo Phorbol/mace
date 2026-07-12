@@ -97,15 +97,16 @@ def _apply_hybrid_muon_stage_two_lr_factor(
     optimizer: torch.optim.Optimizer,
     lr_scheduler: Any,
     factor: float,
-) -> None:
+) -> int:
     factor = float(factor)
     if factor < 0.0:
         raise ValueError("hybrid_muon_stage_two_lr_factor must be non-negative")
     if factor == 1.0:
-        return
+        return 0
     scheduler = getattr(lr_scheduler, "lr_scheduler", lr_scheduler)
     base_lrs = getattr(scheduler, "base_lrs", None)
     last_lrs = getattr(scheduler, "_last_lr", None)
+    applied_groups = 0
     for index, group in enumerate(optimizer.param_groups):
         if group.get("route") != "muon":
             continue
@@ -117,6 +118,8 @@ def _apply_hybrid_muon_stage_two_lr_factor(
         if isinstance(last_lrs, list) and index < len(last_lrs):
             last_lrs[index] = float(last_lrs[index]) * factor
         group["hybrid_muon_stage_two_lr_factor_applied"] = True
+        applied_groups += 1
+    return applied_groups
 
 
 def _next_update_boundary(
@@ -408,9 +411,16 @@ def train(
         else:
             if swa_start:
                 logging.info("Changing loss based on Stage Two Weights")
-                _apply_hybrid_muon_stage_two_lr_factor(
+                applied_muon_lr_groups = _apply_hybrid_muon_stage_two_lr_factor(
                     optimizer, lr_scheduler, hybrid_muon_stage_two_lr_factor
                 )
+                if applied_muon_lr_groups:
+                    logging.info(
+                        "Applied HybridMuon Stage Two LR factor %s to %d Muon param group%s",
+                        hybrid_muon_stage_two_lr_factor,
+                        applied_muon_lr_groups,
+                        "" if applied_muon_lr_groups == 1 else "s",
+                    )
                 lowest_loss = np.inf
                 swa_start = False
                 keep_last = True

@@ -129,6 +129,7 @@ def test_train_stops_at_max_num_updates_without_full_extra_epoch(monkeypatch):
     monkeypatch.setattr(train_module, "evaluate", fake_evaluate)
     monkeypatch.setattr(train_module, "train_one_epoch", fake_train_one_epoch)
 
+
     train_module.train(
         model=torch.nn.Linear(1, 1),
         loss_fn=_MiniLoss(),
@@ -217,7 +218,7 @@ def test_train_activates_stage_two_from_global_update(monkeypatch):
 
 
 
-def test_train_scales_only_muon_lr_when_stage_two_starts(monkeypatch):
+def test_train_scales_only_muon_lr_when_stage_two_starts(monkeypatch, caplog):
     train_module = importlib.import_module("mace.tools.train")
     stage_one_loss = _MiniLoss()
     stage_two_loss = _MiniLoss()
@@ -236,6 +237,7 @@ def test_train_scales_only_muon_lr_when_stage_two_starts(monkeypatch):
     monkeypatch.setattr(train_module, "evaluate", fake_evaluate)
     monkeypatch.setattr(train_module, "train_one_epoch", fake_train_one_epoch)
 
+    caplog.set_level(logging.INFO)
     train_module.train(
         model=torch.nn.Linear(1, 1),
         loss_fn=stage_one_loss,
@@ -266,6 +268,10 @@ def test_train_scales_only_muon_lr_when_stage_two_starts(monkeypatch):
     assert optimizer.param_groups[0]["lr"] == pytest.approx(0.025)
     assert optimizer.param_groups[1]["lr"] == pytest.approx(0.2)
     assert scheduler.lr_scheduler.base_lrs == pytest.approx([0.025, 0.2])
+    assert (
+        "Applied HybridMuon Stage Two LR factor 0.25 to 1 Muon param group"
+        in caplog.text
+    )
 
 
 def test_train_saves_update_interval_checkpoints_without_waiting_for_validation(monkeypatch):
