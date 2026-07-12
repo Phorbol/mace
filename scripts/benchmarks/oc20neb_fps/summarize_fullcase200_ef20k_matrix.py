@@ -75,6 +75,18 @@ def _bool_from_case(case_name: str, token: str) -> bool:
     return token in case_name.split("_") or token in case_name
 
 
+def _hybrid_muon_routing_from_case(
+    case_name: str, manifest: dict[str, Any]
+) -> str | None:
+    if "hybrid_muon" not in case_name:
+        return manifest.get("hybrid_muon_routing")
+    if case_name.endswith("_module") or "hybrid_muon_module" in case_name:
+        return "module"
+    if case_name.endswith("_tace") or "hybrid_muon_tace" in case_name:
+        return "tace"
+    return manifest.get("hybrid_muon_routing")
+
+
 def _steps_per_epoch(manifest: dict[str, Any]) -> int | None:
     train_size = manifest.get("train_size")
     batch_size = manifest.get("batch_size")
@@ -140,7 +152,7 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         "lr": manifest.get("lr"),
         "weight_decay": manifest.get("weight_decay"),
         "hybrid_muon_mode": manifest.get("hybrid_muon_mode"),
-        "hybrid_muon_routing": manifest.get("hybrid_muon_routing"),
+        "hybrid_muon_routing": _hybrid_muon_routing_from_case(case_name, manifest),
         "hybrid_muon_lr_factor": manifest.get("hybrid_muon_lr_factor"),
         "hybrid_muon_weight_decay": manifest.get("hybrid_muon_weight_decay"),
         "hybrid_muon_adam_variant": manifest.get("hybrid_muon_adam_variant"),

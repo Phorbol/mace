@@ -69,6 +69,42 @@ def test_summarize_case_reports_update_runtime_and_manifest_metadata(tmp_path):
     assert row["updates_per_second"] == pytest.approx(625 / 15.0)
 
 
+def test_summarize_case_overrides_hybrid_muon_routing_from_case_name(tmp_path):
+    manifest = {
+        "hybrid_muon_routing": "mace",
+        "hybrid_muon_mode": "2d",
+    }
+    root, case_dir = _write_case(
+        tmp_path,
+        "hybrid_muon_tace",
+        "2026-07-12 10:20:00.000 INFO: Epoch 0: head: Default, loss=0.12, "
+        "MAE_E_per_atom=  150.00 meV, MAE_F=   40.00 meV / A\n",
+    )
+
+    row = summarize_case(root, case_dir, manifest)
+
+    assert row["hybrid_muon"] is True
+    assert row["hybrid_muon_routing"] == "tace"
+
+
+def test_summarize_case_overrides_hybrid_muon_module_routing_from_case_name(tmp_path):
+    manifest = {
+        "hybrid_muon_routing": "mace",
+        "hybrid_muon_mode": "2d",
+    }
+    root, case_dir = _write_case(
+        tmp_path,
+        "cueq_hybrid_muon_module",
+        "2026-07-12 10:20:00.000 INFO: Epoch 0: head: Default, loss=0.12, "
+        "MAE_E_per_atom=  150.00 meV, MAE_F=   40.00 meV / A\n",
+    )
+
+    row = summarize_case(root, case_dir, manifest)
+
+    assert row["cueq"] is True
+    assert row["hybrid_muon_routing"] == "module"
+
+
 def test_summarize_case_reports_early_update_speed_from_initial(tmp_path):
     manifest = {
         "target_steps": 20000,
