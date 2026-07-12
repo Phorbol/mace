@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from scripts.benchmarks.oc20neb_fps.summarize_fullcase200_ef20k_matrix import (
+    summarize_ablation_table,
     summarize_case,
     summarize_pairwise_comparisons,
 )
@@ -237,3 +238,53 @@ def test_pairwise_comparison_reports_final_best_and_update_speed():
     assert comparison["best_mae_f_delta_mev_a"] == -19.0
     assert comparison["seconds_per_update_ratio"] == pytest.approx(0.064 / 0.060)
     assert comparison["updates_per_second_ratio"] == pytest.approx(15.625 / 16.6666667)
+
+
+def test_ablation_table_compares_cross_run_hybrid_muon_to_cueq_adamw():
+    rows = [
+        {
+            "root": "baseline",
+            "case": "cueq_adamw",
+            "final_update": 20000,
+            "final_mae_e_mev_atom": 13.0,
+            "final_mae_f_mev_a": 106.6,
+            "best_mae_e_mev_atom": 13.0,
+            "best_mae_f_mev_a": 40.6,
+            "seconds_per_update": 0.053,
+            "updates_per_second": 18.8,
+            "max_fb_memory_mb": 10160,
+        },
+        {
+            "root": "stage2_lr0",
+            "case": "cueq_hybrid_muon",
+            "final_update": 20000,
+            "hybrid_muon_routing": "mace",
+            "hybrid_muon_lr_factor": 0.1,
+            "hybrid_muon_stage_two_lr_factor": 0.0,
+            "hybrid_muon_lr_scale_mode": "original",
+            "final_mae_e_mev_atom": 20.0,
+            "final_mae_f_mev_a": 101.0,
+            "best_mae_e_mev_atom": 20.0,
+            "best_mae_f_mev_a": 46.0,
+            "seconds_per_update": 0.056,
+            "updates_per_second": 17.9,
+            "max_fb_memory_mb": 10158,
+        },
+    ]
+
+    table = summarize_ablation_table(rows)
+
+    assert [row["label"] for row in table] == [
+        "cueq_adamw",
+        "cueq_hybrid_muon/routing=mace/lr_factor=0.1/stage2_lr_factor=0.0/scale=original",
+    ]
+    baseline, candidate = table
+    assert baseline["is_baseline"] is True
+    assert candidate["is_baseline"] is False
+    assert candidate["baseline_case"] == "cueq_adamw"
+    assert candidate["same_final_update"] is True
+    assert candidate["final_mae_e_delta_mev_atom"] == pytest.approx(7.0)
+    assert candidate["final_mae_f_delta_mev_a"] == pytest.approx(-5.6)
+    assert candidate["speedup_vs_baseline"] == pytest.approx(0.053 / 0.056)
+    assert candidate["max_fb_memory_delta_mb"] == -2
+

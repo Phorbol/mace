@@ -358,6 +358,99 @@ def summarize_pairwise_comparisons(rows: list[dict[str, Any]]) -> list[dict[str,
     return comparisons
 
 
+def _format_label_value(value: Any) -> str:
+    return str(value)
+
+
+def _ablation_label(row: dict[str, Any]) -> str:
+    label = str(row.get("case"))
+    if row.get("hybrid_muon") or "hybrid_muon" in label:
+        parts: list[str] = []
+        for key, name in (
+            ("hybrid_muon_routing", "routing"),
+            ("hybrid_muon_lr_factor", "lr_factor"),
+            ("hybrid_muon_stage_two_lr_factor", "stage2_lr_factor"),
+            ("hybrid_muon_lr_scale_mode", "scale"),
+        ):
+            value = row.get(key)
+            if value is not None:
+                parts.append(f"{name}={_format_label_value(value)}")
+        if parts:
+            label += "/" + "/".join(parts)
+    return label
+
+
+def _select_ablation_baseline(
+    rows: list[dict[str, Any]], baseline_case: str
+) -> dict[str, Any] | None:
+    candidates = [row for row in rows if row.get("case") == baseline_case]
+    if not candidates:
+        return None
+    return sorted(
+        candidates,
+        key=lambda row: (
+            row.get("final_update") is not None,
+            int(row.get("final_update") or -1),
+            str(row.get("root") or ""),
+        ),
+        reverse=True,
+    )[0]
+
+
+def _ablation_row(
+    row: dict[str, Any], baseline: dict[str, Any] | None, baseline_case: str
+) -> dict[str, Any]:
+    comparison = _comparison_row(baseline, row) if baseline is not None else {}
+    is_baseline = baseline is not None and row is baseline
+    return {
+        "label": _ablation_label(row),
+        "root": row.get("root"),
+        "case": row.get("case"),
+        "is_baseline": is_baseline,
+        "baseline_case": baseline_case if baseline is not None else None,
+        "target_steps": row.get("target_steps"),
+        "effective_updates": row.get("effective_updates"),
+        "final_update": row.get("final_update"),
+        "same_final_update": comparison.get("same_final_update"),
+        "cueq": row.get("cueq"),
+        "hybrid_muon": row.get("hybrid_muon"),
+        "hybrid_muon_routing": row.get("hybrid_muon_routing"),
+        "hybrid_muon_lr_factor": row.get("hybrid_muon_lr_factor"),
+        "hybrid_muon_stage_two_lr_factor": row.get("hybrid_muon_stage_two_lr_factor"),
+        "hybrid_muon_lr_scale_mode": row.get("hybrid_muon_lr_scale_mode"),
+        "scheduler": row.get("scheduler"),
+        "lr_scheduler_interval": row.get("lr_scheduler_interval"),
+        "stage_two_start_update": row.get("stage_two_start_update"),
+        "final_mae_e_mev_atom": row.get("final_mae_e_mev_atom"),
+        "final_mae_f_mev_a": row.get("final_mae_f_mev_a"),
+        "best_mae_e_mev_atom": row.get("best_mae_e_mev_atom"),
+        "best_mae_f_mev_a": row.get("best_mae_f_mev_a"),
+        "seconds_per_update": row.get("seconds_per_update"),
+        "updates_per_second": row.get("updates_per_second"),
+        "max_fb_memory_mb": row.get("max_fb_memory_mb"),
+        "baseline_final_mae_e_mev_atom": comparison.get("baseline_final_mae_e_mev_atom"),
+        "baseline_final_mae_f_mev_a": comparison.get("baseline_final_mae_f_mev_a"),
+        "final_mae_e_delta_mev_atom": comparison.get("final_mae_e_delta_mev_atom"),
+        "final_mae_f_delta_mev_a": comparison.get("final_mae_f_delta_mev_a"),
+        "final_mae_e_ratio": comparison.get("final_mae_e_ratio"),
+        "final_mae_f_ratio": comparison.get("final_mae_f_ratio"),
+        "best_mae_e_delta_mev_atom": comparison.get("best_mae_e_delta_mev_atom"),
+        "best_mae_f_delta_mev_a": comparison.get("best_mae_f_delta_mev_a"),
+        "seconds_per_update_delta": comparison.get("seconds_per_update_delta"),
+        "seconds_per_update_ratio": comparison.get("seconds_per_update_ratio"),
+        "updates_per_second_ratio": comparison.get("updates_per_second_ratio"),
+        "speedup_vs_baseline": comparison.get("speedup_vs_baseline"),
+        "max_fb_memory_delta_mb": comparison.get("max_fb_memory_delta_mb"),
+    }
+
+
+def summarize_ablation_table(
+    rows: list[dict[str, Any]], baseline_case: str = "cueq_adamw"
+) -> list[dict[str, Any]]:
+    baseline = _select_ablation_baseline(rows, baseline_case)
+    return [_ablation_row(row, baseline, baseline_case) for row in rows]
+
+
 def summarize_roots(roots: list[Path]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for root in roots:
@@ -385,6 +478,9 @@ def main() -> None:
     parser.add_argument("--csv", type=Path, default=None)
     parser.add_argument("--comparisons-csv", type=Path, default=None)
     parser.add_argument("--comparisons-json", type=Path, default=None)
+    parser.add_argument("--ablation-csv", type=Path, default=None)
+    parser.add_argument("--ablation-json", type=Path, default=None)
+    parser.add_argument("--ablation-baseline-case", default="cueq_adamw")
     args = parser.parse_args()
 
     rows = summarize_roots(args.roots)
@@ -396,6 +492,11 @@ def main() -> None:
         args.comparisons_json.write_text(json.dumps(comparisons, indent=2, sort_keys=True))
     if args.comparisons_csv is not None:
         _write_csv(comparisons, args.comparisons_csv)
+    ablations = summarize_ablation_table(rows, baseline_case=args.ablation_baseline_case)
+    if args.ablation_json is not None:
+        args.ablation_json.write_text(json.dumps(ablations, indent=2, sort_keys=True))
+    if args.ablation_csv is not None:
+        _write_csv(ablations, args.ablation_csv)
 
 
 if __name__ == "__main__":
