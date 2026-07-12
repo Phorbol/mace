@@ -98,6 +98,7 @@ def test_pairwise_comparison_reports_tace_routing_ablation():
             "case": "adamw",
             "final_mae_e_mev_atom": 20.0,
             "final_mae_f_mev_a": 130.0,
+            "final_update": 12000,
             "seconds_per_update": 0.060,
         },
         {
@@ -126,6 +127,7 @@ def test_pairwise_comparison_reports_cueq_adamw_speed_ablation():
             "case": "adamw",
             "final_mae_e_mev_atom": 20.0,
             "final_mae_f_mev_a": 130.0,
+            "final_update": 20000,
             "seconds_per_update": 0.080,
         },
         {
@@ -134,6 +136,7 @@ def test_pairwise_comparison_reports_cueq_adamw_speed_ablation():
             "cueq": True,
             "final_mae_e_mev_atom": 20.0,
             "final_mae_f_mev_a": 130.0,
+            "final_update": 12000,
             "seconds_per_update": 0.060,
         },
     ]
@@ -142,6 +145,9 @@ def test_pairwise_comparison_reports_cueq_adamw_speed_ablation():
 
     assert comparison["baseline_case"] == "adamw"
     assert comparison["candidate_case"] == "cueq_adamw"
+    assert comparison["baseline_final_update"] == 20000
+    assert comparison["candidate_final_update"] == 12000
+    assert comparison["same_final_update"] is False
     assert comparison["speedup_vs_baseline"] == pytest.approx(4.0 / 3.0)
     assert comparison["final_mae_f_delta_mev_a"] == 0.0
 

@@ -276,6 +276,12 @@ def _comparison_row(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         "candidate_case": candidate.get("case"),
         "target_steps": candidate.get("target_steps") or baseline.get("target_steps"),
         "effective_updates": candidate.get("effective_updates") or baseline.get("effective_updates"),
+        "baseline_final_update": baseline.get("final_update"),
+        "candidate_final_update": candidate.get("final_update"),
+        "same_final_update": (
+            baseline.get("final_update") is not None
+            and baseline.get("final_update") == candidate.get("final_update")
+        ),
         "stage_two_start_update": candidate.get("stage_two_start_update") or baseline.get("stage_two_start_update"),
         "scheduler": candidate.get("scheduler") or baseline.get("scheduler"),
         "lr_scheduler_interval": candidate.get("lr_scheduler_interval") or baseline.get("lr_scheduler_interval"),
