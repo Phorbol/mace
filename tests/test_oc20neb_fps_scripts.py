@@ -320,7 +320,7 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert "--edge_force_compile_max_cache_entries=" in text
     assert "--edge_force_compile_cache_policy=dynamic" not in text
     assert "--no-edge_force_compile_allow_fallback" in text
-    assert "MACE_OC20NEB_CASES:-eager,compile,cueq,cueq_compile,hybrid_muon,hybrid_muon_compile,cueq_hybrid_muon,cueq_hybrid_muon_compile" in text
+    assert "MACE_OC20NEB_CASES:-eager,cueq,hybrid_muon,cueq_hybrid_muon" in text
     assert "run_selected_case hybrid_muon" in text
     assert "run_selected_case hybrid_muon_compile" in text
     assert "run_selected_case cueq" in text
