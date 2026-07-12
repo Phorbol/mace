@@ -6,6 +6,7 @@ import pytest
 
 from scripts.benchmarks.oc20neb_fps.summarize_fullcase200_ef20k_matrix import (
     summarize_case,
+    summarize_pairwise_comparisons,
 )
 
 
@@ -65,3 +66,52 @@ def test_summarize_case_reports_update_runtime_and_manifest_metadata(tmp_path):
     assert row["mean_seconds_per_epoch"] == pytest.approx(15.0)
     assert row["seconds_per_update"] == pytest.approx(15.0 / 625)
     assert row["updates_per_second"] == pytest.approx(625 / 15.0)
+
+
+def test_pairwise_comparison_reports_final_best_and_update_speed():
+    rows = [
+        {
+            "root": "run",
+            "case": "cueq_adamw",
+            "effective_updates": 20000,
+            "stage_two_start_update": 15000,
+            "scheduler": "WSD",
+            "lr_scheduler_interval": "step",
+            "final_mae_e_mev_atom": 20.0,
+            "final_mae_f_mev_a": 130.0,
+            "best_mae_e_mev_atom": 18.0,
+            "best_mae_f_mev_a": 120.0,
+            "seconds_per_update": 0.060,
+            "updates_per_second": 16.6666667,
+            "max_fb_memory_mb": 10000,
+        },
+        {
+            "root": "run",
+            "case": "cueq_hybrid_muon",
+            "effective_updates": 20000,
+            "stage_two_start_update": 15000,
+            "scheduler": "WSD",
+            "lr_scheduler_interval": "step",
+            "hybrid_muon_mode": "2d",
+            "hybrid_muon_routing": "mace",
+            "hybrid_muon_lr_factor": 0.1,
+            "final_mae_e_mev_atom": 17.0,
+            "final_mae_f_mev_a": 105.0,
+            "best_mae_e_mev_atom": 16.0,
+            "best_mae_f_mev_a": 101.0,
+            "seconds_per_update": 0.064,
+            "updates_per_second": 15.625,
+            "max_fb_memory_mb": 10150,
+        },
+    ]
+
+    [comparison] = summarize_pairwise_comparisons(rows)
+
+    assert comparison["baseline_case"] == "cueq_adamw"
+    assert comparison["candidate_case"] == "cueq_hybrid_muon"
+    assert comparison["final_mae_e_delta_mev_atom"] == -3.0
+    assert comparison["final_mae_f_delta_mev_a"] == -25.0
+    assert comparison["best_mae_e_delta_mev_atom"] == -2.0
+    assert comparison["best_mae_f_delta_mev_a"] == -19.0
+    assert comparison["seconds_per_update_ratio"] == pytest.approx(0.064 / 0.060)
+    assert comparison["updates_per_second_ratio"] == pytest.approx(15.625 / 16.6666667)
