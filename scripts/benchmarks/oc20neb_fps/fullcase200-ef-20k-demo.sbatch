@@ -31,6 +31,7 @@ STAGE2_ENERGY_WEIGHT=${MACE_OC20NEB_STAGE2_ENERGY_WEIGHT:-100.0}
 STAGE2_FORCES_WEIGHT=${MACE_OC20NEB_STAGE2_FORCES_WEIGHT:-1.0}
 CASES=${MACE_OC20NEB_CASES:-adamw,hybrid_muon,cueq_adamw,cueq_hybrid_muon}
 BASE_OPTIMIZER=${MACE_OC20NEB_BASE_OPTIMIZER:-adamw}
+ENFORCE_STATIC_SOURCE=${MACE_OC20NEB_ENFORCE_STATIC_SOURCE:-True}
 COMPILE_BUCKET_ATOMS=${MACE_OC20NEB_COMPILE_BUCKET_ATOMS:-384,512,640,800}
 COMPILE_BUCKET_EDGES=${MACE_OC20NEB_COMPILE_BUCKET_EDGES:-8192,12288,16384,24576,32768,40960}
 COMPILE_BUCKET_MARGIN=${MACE_OC20NEB_COMPILE_BUCKET_MARGIN:-0}
@@ -73,6 +74,37 @@ if [[ ! -f "${VALID_FILE}" ]]; then
   echo "Valid extxyz not found: ${VALID_FILE}" >&2
   echo "Prepare it with scripts/benchmarks/oc20neb_fps/prepare_fullcase200_fps_extxyz.py" >&2
   exit 2
+fi
+
+SOURCE_GIT_COMMIT=$(git rev-parse HEAD 2>/dev/null || printf unknown)
+SOURCE_GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf unknown)
+source_tree_changed() {
+  ! git diff --quiet --exit-code 2>/dev/null || ! git diff --cached --quiet --exit-code 2>/dev/null
+}
+source_guard_enabled() {
+  case "${ENFORCE_STATIC_SOURCE}" in
+    True|true|1|yes|YES|on|ON) return 0 ;;
+    False|false|0|no|NO|off|OFF) return 1 ;;
+    *)
+      echo "Invalid MACE_OC20NEB_ENFORCE_STATIC_SOURCE=${ENFORCE_STATIC_SOURCE}; expected True or False" >&2
+      exit 2
+      ;;
+  esac
+}
+assert_static_source() {
+  local current_commit
+  current_commit=$(git rev-parse HEAD 2>/dev/null || printf unknown)
+  if [[ "${current_commit}" != "${SOURCE_GIT_COMMIT}" ]]; then
+    echo "Repository HEAD changed during job: ${SOURCE_GIT_COMMIT} -> ${current_commit}" >&2
+    return 3
+  fi
+  if source_tree_changed; then
+    echo "Repository tracked files changed during job; refusing to mix source versions" >&2
+    return 3
+  fi
+}
+if source_guard_enabled; then
+  assert_static_source
 fi
 
 export TRAIN_FILE BATCH_SIZE TARGET_STEPS EVAL_REPORTS CHECKPOINT_REPORTS STAGE_TWO_FRACTION
@@ -135,6 +167,9 @@ cat > "${RUN_ROOT}/manifest.json" <<JSON
   "stage2_forces_weight": ${STAGE2_FORCES_WEIGHT},
   "base_optimizer": "${BASE_OPTIMIZER}",
   "cases": "${CASES}",
+  "git_commit": "${SOURCE_GIT_COMMIT}",
+  "git_branch": "${SOURCE_GIT_BRANCH}",
+  "enforce_static_source": "${ENFORCE_STATIC_SOURCE}",
   "compile_setup_gate": "${COMPILE_SETUP_GATE}",
   "compile_max_cache_entries": ${COMPILE_MAX_CACHE_ENTRIES},
   "compile_parity_gradients": "${COMPILE_PARITY_GRADIENTS}",
@@ -280,6 +315,9 @@ run_selected_case() {
   local case_name=$1
   shift
   if case_enabled "${case_name}"; then
+    if source_guard_enabled; then
+      assert_static_source
+    fi
     echo "Running OC20NEB 20k case: ${case_name}"
     run_case "${case_name}" "$@"
   else
