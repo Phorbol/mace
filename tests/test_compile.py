@@ -3110,7 +3110,7 @@ def test_edge_force_compile_metrics_report_setup_phase_breakdown(monkeypatch, ca
     def fake_compile_fx_graph_module(*args, **kwargs):
         def executable(vectors, *input_tensors):
             del input_tensors
-            energy = torch.ones(
+            energy = torch.zeros(
                 1, dtype=vectors.dtype, device=vectors.device, requires_grad=True
             )
             edge_grad = torch.zeros_like(vectors)
@@ -3125,11 +3125,6 @@ def test_edge_force_compile_metrics_report_setup_phase_breakdown(monkeypatch, ca
             "loss": torch.zeros(()),
             "grads": {},
         }
-
-    class EnergyOnlyLoss(torch.nn.Module):
-        def forward(self, pred, ref):
-            del ref
-            return pred["energy"].sum()
 
     monkeypatch.setattr(
         training_compile, "trace_force_closure", fake_trace_force_closure
@@ -3159,13 +3154,16 @@ def test_edge_force_compile_metrics_report_setup_phase_breakdown(monkeypatch, ca
             cache_hit_gate=False,
             cache_policy="shape",
             allow_fallback=False,
+            parity_check_gradients=False,
         ),
     )
     batch = _BatchDictAdapter(create_batch("cpu"))
 
     _, metrics = wrapper.compiled_force_training_loss(
         batch=batch,
-        loss_fn=EnergyOnlyLoss(),
+        loss_fn=modules.WeightedEnergyForcesLoss(
+            energy_weight=1.0, forces_weight=1.0
+        ),
         output_args={"forces": True, "virials": False, "stress": False},
     )
 
@@ -3184,7 +3182,28 @@ def test_edge_force_compile_metrics_report_setup_phase_breakdown(monkeypatch, ca
     assert "Edge-force compile setup phase input_prep" in setup_messages
     assert "Edge-force compile setup phase trace" in setup_messages
     assert "Edge-force compile setup phase gate_compile" in setup_messages
+    info_messages = "\n".join(
+        record.getMessage() for record in caplog.records if record.levelname == "INFO"
+    )
+    assert "cache_key=" not in info_messages
+    assert "policy=" in info_messages
 
+
+def test_edge_force_cache_key_summary_is_short():
+    from mace.tools.training_compile import _edge_force_cache_key_summary
+
+    summary = _edge_force_cache_key_summary(
+        (
+            "bucket",
+            384,
+            12288,
+            ("abi", ("torch", "2.11")),
+            (("positions", (384, 3)), ("edge_index", (2, 12288))),
+        )
+    )
+
+    assert summary == "policy=bucket atoms=384 edges=12288 inputs=2"
+    assert "torch" not in summary
 
 
 def test_edge_force_compile_setup_gate_none_skips_expensive_setup_snapshots(monkeypatch):

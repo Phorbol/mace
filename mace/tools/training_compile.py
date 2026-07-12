@@ -909,6 +909,20 @@ def _edge_force_bucket_sizes_from_cache_key(cache_key: tuple) -> tuple[int, int]
     return None
 
 
+def _edge_force_cache_key_summary(cache_key: tuple) -> str:
+    policy = str(cache_key[0]) if cache_key else "unknown"
+    if policy == "bucket" and len(cache_key) >= 4:
+        input_shapes = cache_key[-1] if isinstance(cache_key[-1], tuple) else ()
+        return (
+            f"policy=bucket atoms={cache_key[1]} edges={cache_key[2]} "
+            f"inputs={len(input_shapes)}"
+        )
+    if policy in {"shape", "dynamic"} and len(cache_key) >= 3:
+        input_shapes = cache_key[-1] if isinstance(cache_key[-1], tuple) else ()
+        return f"policy={policy} atoms={cache_key[1]} edges={cache_key[2]} inputs={len(input_shapes)}"
+    return f"policy={policy} entries={len(cache_key)}"
+
+
 def _edge_force_model_r_max(model: torch.nn.Module) -> float:
     value = getattr(model, "r_max", None)
     if value is None:
@@ -2729,21 +2743,33 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         phase_seconds: dict[str, float] = {}
 
         def log_phase_start(phase_name: str) -> float:
+            key_summary = _edge_force_cache_key_summary(cache_key)
             logging.info(
-                "Edge-force compile setup phase %s start: mode=%s cache_key=%s",
+                "Edge-force compile setup phase %s start: mode=%s %s",
                 phase_name,
                 self.config.force_gradient_mode,
+                key_summary,
+            )
+            logging.debug(
+                "Edge-force compile setup phase %s cache_key=%s",
+                phase_name,
                 cache_key,
             )
             return time.perf_counter()
 
         def log_phase_done(phase_name: str, phase_start_time: float) -> None:
             phase_seconds[phase_name] = time.perf_counter() - phase_start_time
+            key_summary = _edge_force_cache_key_summary(cache_key)
             logging.info(
-                "Edge-force compile setup phase %s done: %.3fs mode=%s cache_key=%s",
+                "Edge-force compile setup phase %s done: %.3fs mode=%s %s",
                 phase_name,
                 phase_seconds[phase_name],
                 self.config.force_gradient_mode,
+                key_summary,
+            )
+            logging.debug(
+                "Edge-force compile setup phase %s cache_key=%s",
+                phase_name,
                 cache_key,
             )
 
