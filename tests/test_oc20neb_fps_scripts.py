@@ -316,7 +316,7 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert "MACE_OC20NEB_COMPILE_BUCKET_MARGIN:-0" in text
     assert "--edge_force_compile_cache_policy=dynamic" not in text
     assert "--no-edge_force_compile_allow_fallback" in text
-    assert "MACE_OC20NEB_CASES:-eager,compile,hybrid_muon,hybrid_muon_compile" in text
+    assert "MACE_OC20NEB_CASES:-eager,compile,cueq,cueq_compile,hybrid_muon,hybrid_muon_compile,cueq_hybrid_muon,cueq_hybrid_muon_compile" in text
     assert "run_selected_case hybrid_muon" in text
     assert "run_selected_case hybrid_muon_compile" in text
     assert "run_selected_case cueq" in text
@@ -329,6 +329,7 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert '--hybrid_muon_routing="${MACE_OC20NEB_HYBRID_MUON_ROUTING:-mace}"' in text
     assert '--hybrid_muon_lr_factor="${MACE_OC20NEB_HYBRID_MUON_LR_FACTOR:-0.1}"' in text
     assert "parse_metrics.py" in text
+    assert "summarize_fullcase200_ef20k_matrix.py" in text
     assert '--error_table="${MACE_OC20NEB_ERROR_TABLE:-PerAtomMAE}"' in text
 
 
@@ -521,3 +522,40 @@ def test_abacus_raw_extrapolation_sbatch_uses_raw_reader_models_and_dpa4_preflig
     assert "dpa4_preflight" in text
     assert "Unknown model type: dpa4" in text
     assert "--write-label-extxyz" in text
+
+
+def test_summarize_fullcase200_ef20k_matrix_reports_case_config_and_metrics(tmp_path):
+    summarizer = load_script("summarize_fullcase200_ef20k_matrix.py")
+    root = tmp_path / "matrix_compile_a65aa53_20260712"
+    case_dir = root / "compile"
+    log_dir = case_dir / "logs"
+    log_dir.mkdir(parents=True)
+    (root / "manifest.json").write_text(
+        '{\n  "batch_size": 8,\n  "target_steps": 20000,\n  "train_size": 5000,\n  "max_num_epochs": 32,\n  "stage_two_start_epoch": 24,\n  "stage1_energy_weight": 1.0,\n  "stage1_forces_weight": 100.0,\n  "stage2_energy_weight": 100.0,\n  "stage2_forces_weight": 1.0,\n  "compile_setup_gate": "strict",\n  "compile_parity_gradients": "False",\n  "compile_parity_check_strict": "False"\n}\n')
+    (log_dir / "train.log").write_text(
+        "2026-07-12 10:20:00.000 INFO: Epoch 0: head: Default, loss=0.12, "
+        "MAE_E_per_atom=  150.00 meV, MAE_F=   40.00 meV / A\n"
+        "2026-07-12 10:30:00.000 INFO: Epoch 6: head: Default, loss=0.10, "
+        "MAE_E_per_atom=  120.00 meV, MAE_F=   35.00 meV / A\n"
+    )
+    (case_dir / "nvdmon_job-1_compile.log").write_text(
+        "# gpu pwr gtemp mtemp sm mem enc dec mclk pclk pviol tviol fb bar1 ccpm\n"
+        "0 0 250 45 40 50 20 0 0 877 1380 0 0 0 0 1234\n"
+    )
+
+    rows = summarizer.summarize_roots([root])
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["case"] == "compile"
+    assert row["compile"] is True
+    assert row["cueq"] is False
+    assert row["hybrid_muon"] is False
+    assert row["effective_updates"] == 20000
+    assert row["stage_two_start_update"] == 15000
+    assert row["final_epoch"] == 6
+    assert row["mae_e_mev_atom"] == 120.0
+    assert row["mae_f_mev_a"] == 35.0
+    assert row["mean_seconds_per_epoch"] == 100.0
+    assert row["max_fb_memory_mb"] == 1234
+    assert row["compile_setup_gate"] == "strict"
