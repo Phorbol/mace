@@ -300,18 +300,24 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert "MACE_OC20NEB_STAGE_TWO:-True" in text
     assert "MACE_OC20NEB_STAGE_TWO_FRACTION:-0.75" in text
     assert "--stage_two" in text
-    assert "--start_stage_two=\"${START_STAGE_TWO}\"" in text
+    assert '--start_stage_two_update="${START_STAGE_TWO_UPDATE}"' in text
     assert "MACE_OC20NEB_STAGE1_ENERGY_WEIGHT:-1.0" in text
     assert "MACE_OC20NEB_STAGE1_FORCES_WEIGHT:-100.0" in text
     assert "MACE_OC20NEB_STAGE2_ENERGY_WEIGHT:-100.0" in text
     assert "MACE_OC20NEB_STAGE2_FORCES_WEIGHT:-1.0" in text
     assert "--stage_two_energy_weight=" in text
     assert "--stage_two_forces_weight=" in text
-    assert "stage_two_start_epoch" in text
+    assert "stage_two_start_update" in text
+    assert "max_num_updates" in text
+    assert "eval_interval_updates" in text
     assert "valid_batch_size" in text
     assert "slurm_gpus_per_node" in text
     assert "--energy_key=energy" in text
     assert "--forces_key=forces" in text
+    assert '--max_num_updates="${TARGET_STEPS}"' in text
+    assert '--eval_interval_updates="${EVAL_INTERVAL_UPDATES}"' in text
+    assert '--scheduler="${MACE_OC20NEB_SCHEDULER:-WSD}"' in text
+    assert '--lr_scheduler_interval="${MACE_OC20NEB_LR_SCHEDULER_INTERVAL:-step}"' in text
     assert "--edge_force_compile_force_gradient_mode=positions" in text
     assert "--edge_force_compile_cache_policy=bucket" in text
     assert "--edge_force_compile_bucket_atoms=" in text
@@ -539,7 +545,8 @@ def test_summarize_fullcase200_ef20k_matrix_reports_case_config_and_metrics(tmp_
     log_dir = case_dir / "logs"
     log_dir.mkdir(parents=True)
     (root / "manifest.json").write_text(
-        '{\n  "batch_size": 8,\n  "target_steps": 20000,\n  "train_size": 5000,\n  "max_num_epochs": 32,\n  "stage_two_start_epoch": 24,\n  "stage1_energy_weight": 1.0,\n  "stage1_forces_weight": 100.0,\n  "stage2_energy_weight": 100.0,\n  "stage2_forces_weight": 1.0,\n  "compile_setup_gate": "strict",\n  "compile_max_cache_entries": 2,\n  "compile_parity_gradients": "False",\n  "compile_parity_check_strict": "False"\n}\n')
+        '{\n  "batch_size": 8,\n  "target_steps": 20000,\n  "train_size": 5000,\n  "max_num_epochs": 32,\n  "max_num_updates": 20000,\n  "stage_two_start_update": 15000,\n  "stage1_energy_weight": 1.0,\n  "stage1_forces_weight": 100.0,\n  "stage2_energy_weight": 100.0,\n  "stage2_forces_weight": 1.0,\n  "compile_setup_gate": "strict",\n  "compile_max_cache_entries": 2,\n  "compile_parity_gradients": "False",\n  "compile_parity_check_strict": "False"\n}\n'
+    )
     (log_dir / "train.log").write_text(
         "2026-07-12 10:20:00.000 INFO: Epoch 0: head: Default, loss=0.12, "
         "MAE_E_per_atom=  150.00 meV, MAE_F=   40.00 meV / A\n"

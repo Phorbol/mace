@@ -67,6 +67,7 @@ class SWAContainer:
     scheduler: SWALR
     start: int
     loss_fn: torch.nn.Module
+    start_update: Optional[int] = None
 
 
 def _make_loss_skip_controller(
@@ -228,6 +229,8 @@ def train(
     training_model: Optional[torch.nn.Module] = None,
     non_blocking_transfer: bool = False,
     guard_config: Optional[TrainingGuardConfig] = None,
+    max_num_updates: Optional[int] = None,
+    eval_interval_updates: Optional[int] = None,
 ):
     lowest_loss = np.inf
     valid_loss = np.inf
@@ -252,6 +255,23 @@ def train(
     logging.info("Started training, reporting errors on validation set")
     logging.info("Loss metrics on validation set")
     epoch = start_epoch
+    try:
+        train_loader_len = len(train_loader)
+    except TypeError:
+        train_loader_len = None
+    if max_num_updates is not None and max_num_updates < 0:
+        raise ValueError("max_num_updates must be non-negative")
+    if eval_interval_updates is not None and eval_interval_updates <= 0:
+        raise ValueError("eval_interval_updates must be positive")
+    updates_completed = (
+        start_epoch * train_loader_len if train_loader_len is not None else start_epoch
+    )
+    if max_num_updates is not None:
+        logging.info("Training will stop after %d optimizer updates", max_num_updates)
+    if eval_interval_updates is not None:
+        logging.info(
+            "Evaluating every %d optimizer updates", eval_interval_updates
+        )
 
     # log validation loss before _any_ training
     for valid_loader_name, valid_loader in valid_loaders.items():
@@ -271,8 +291,16 @@ def train(
     # variable used for broadcast by rank == 0 if epoch loop is exited early, e.g. patience
     exit_now = torch.zeros(1, device=device) if distributed else None
     while epoch < max_num_epochs:
+        if max_num_updates is not None and updates_completed >= max_num_updates:
+            break
+        stage_two_by_epoch = swa is not None and epoch >= swa.start
+        stage_two_by_update = (
+            swa is not None
+            and swa.start_update is not None
+            and updates_completed >= swa.start_update
+        )
         # LR scheduler and SWA update
-        if swa is None or epoch < swa.start:
+        if swa is None or not (stage_two_by_epoch or stage_two_by_update):
             if epoch > start_epoch:
                 lr_scheduler.step(
                     metrics=valid_loss
@@ -293,11 +321,13 @@ def train(
             train_sampler.set_epoch(epoch)
         if "ScheduleFree" in type(optimizer).__name__:
             optimizer.train()
-        try:
-            global_step_start = epoch * len(train_loader)
-        except TypeError:
-            global_step_start = epoch
-        train_one_epoch(
+        global_step_start = updates_completed
+        max_steps_this_epoch = None
+        if max_num_updates is not None:
+            max_steps_this_epoch = max(0, max_num_updates - updates_completed)
+            if train_loader_len is not None:
+                max_steps_this_epoch = min(max_steps_this_epoch, train_loader_len)
+        steps_completed = train_one_epoch(
             model=model,
             loss_fn=loss_fn,
             data_loader=train_loader,
@@ -319,12 +349,26 @@ def train(
             nonfinite_grad_guard=nonfinite_grad_guard,
             global_step_start=global_step_start,
             lr_scheduler=lr_scheduler,
+            max_steps=max_steps_this_epoch,
         )
+        if steps_completed is None:
+            steps_completed = train_loader_len if train_loader_len is not None else 1
+        updates_completed += int(steps_completed)
+        if int(steps_completed) == 0:
+            break
         if distributed:
             torch.distributed.barrier()
 
         # Validate
-        if epoch % eval_interval == 0:
+        should_evaluate = epoch % eval_interval == 0
+        if eval_interval_updates is not None:
+            should_evaluate = (
+                updates_completed > 0
+                and updates_completed % eval_interval_updates == 0
+            )
+            if max_num_updates is not None and updates_completed >= max_num_updates:
+                should_evaluate = True
+        if should_evaluate:
             model_to_evaluate = (
                 model if distributed_model is None else distributed_model
             )
@@ -452,7 +496,8 @@ def train_one_epoch(
     nonfinite_grad_guard: Optional[NonFiniteGradGuard] = None,
     global_step_start: int = 0,
     lr_scheduler: Optional[Any] = None,
-) -> None:
+    max_steps: Optional[int] = None,
+) -> int:
     if distributed_model is not None:
         model_to_train = distributed_model
     else:
@@ -638,6 +683,9 @@ def train_one_epoch(
             fixed_probe_text,
         )
 
+    if max_steps is not None and max_steps <= 0:
+        return 0
+
     if isinstance(optimizer, LBFGS):
         _, opt_metrics = take_step_lbfgs(
             model=model_to_train,
@@ -658,8 +706,12 @@ def train_one_epoch(
         if rank == 0:
             logger.log(opt_metrics)
         log_edge_force_summary()
+        return 1
     else:
+        steps_completed = 0
         for step_index, batch in enumerate(data_loader):
+            if max_steps is not None and step_index >= max_steps:
+                break
             _, opt_metrics = take_step(
                 model=model_to_train,
                 loss_fn=loss_fn,
@@ -689,7 +741,9 @@ def train_one_epoch(
             update_edge_force_summary(opt_metrics)
             if rank == 0:
                 logger.log(opt_metrics)
+            steps_completed += 1
         log_edge_force_summary()
+        return steps_completed
 
 
 def take_step(

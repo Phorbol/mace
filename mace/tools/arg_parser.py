@@ -1386,6 +1386,14 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         dest="start_swa",
     )
     parser.add_argument(
+        "--start_swa_update",
+        "--start_stage_two_update",
+        help="Number of optimizer updates before changing to Stage Two loss weights",
+        type=int,
+        default=None,
+        dest="start_swa_update",
+    )
+    parser.add_argument(
         "--lbfgs",
         help="Switch to L-BFGS optimizer",
         action="store_true",
@@ -1405,6 +1413,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--max_num_epochs", help="Maximum number of epochs", type=int, default=2048
+    )
+    parser.add_argument(
+        "--max_num_updates",
+        help="Maximum number of optimizer updates; if set, training may stop mid-epoch",
+        type=int,
+        default=None,
     )
     parser.add_argument(
         "--patience",
@@ -1438,6 +1452,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--eval_interval", help="evaluate model every <n> epochs", type=int, default=1
+    )
+    parser.add_argument(
+        "--eval_interval_updates",
+        help="evaluate model every <n> optimizer updates; overrides epoch interval when set",
+        type=int,
+        default=None,
     )
     parser.add_argument(
         "--keep_checkpoints",

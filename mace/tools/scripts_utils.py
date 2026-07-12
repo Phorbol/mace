@@ -750,8 +750,12 @@ def get_swa(
 ):
     assert dipole_only is False, "Stage Two for dipole fitting not implemented"
     swas.append(True)
+    start_swa_update = getattr(args, "start_swa_update", None)
     if args.start_swa is None:
-        args.start_swa = max(1, args.max_num_epochs // 4 * 3)
+        if start_swa_update is None:
+            args.start_swa = max(1, args.max_num_epochs // 4 * 3)
+        else:
+            args.start_swa = args.max_num_epochs + 1
     else:
         if args.start_swa >= args.max_num_epochs:
             logging.warning(
@@ -766,8 +770,13 @@ def get_swa(
             forces_weight=args.swa_forces_weight,
             virials_weight=args.swa_virials_weight,
         )
+        stage_two_start = (
+            f"{start_swa_update} updates"
+            if start_swa_update is not None
+            else f"{args.start_swa} epochs"
+        )
         logging.info(
-            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight},  virials_weight: {args.swa_virials_weight} and learning rate : {args.swa_lr}"
+            f"Stage Two (after {stage_two_start}) with loss function: {loss_fn_energy}, energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight},  virials_weight: {args.swa_virials_weight} and learning rate : {args.swa_lr}"
         )
     elif args.loss == "stress":
         loss_fn_energy = modules.WeightedEnergyForcesStressLoss(
@@ -775,16 +784,26 @@ def get_swa(
             forces_weight=args.swa_forces_weight,
             stress_weight=args.swa_stress_weight,
         )
+        stage_two_start = (
+            f"{start_swa_update} updates"
+            if start_swa_update is not None
+            else f"{args.start_swa} epochs"
+        )
         logging.info(
-            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, stress weight : {args.swa_stress_weight} and learning rate : {args.swa_lr}"
+            f"Stage Two (after {stage_two_start}) with loss function: {loss_fn_energy}, energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, stress weight : {args.swa_stress_weight} and learning rate : {args.swa_lr}"
         )
     elif args.loss == "dipole_polar":
         loss_fn_energy = modules.DipolePolarLoss(
             dipole_weight=args.swa_dipole_weight,
             polarizability_weight=args.swa_polarizability_weight,
         )
+        stage_two_start = (
+            f"{start_swa_update} updates"
+            if start_swa_update is not None
+            else f"{args.start_swa} epochs"
+        )
         logging.info(
-            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, dipole weight : {args.swa_dipole_weight}, polarizability weight : {args.swa_polarizability_weight}, and learning rate : {args.swa_lr}"
+            f"Stage Two (after {stage_two_start}) with loss function: {loss_fn_energy}, dipole weight : {args.swa_dipole_weight}, polarizability weight : {args.swa_polarizability_weight}, and learning rate : {args.swa_lr}"
         )
     elif args.loss == "energy_forces_dipole":
         loss_fn_energy = modules.WeightedEnergyForcesDipoleLoss(
@@ -792,8 +811,13 @@ def get_swa(
             forces_weight=args.swa_forces_weight,
             dipole_weight=args.swa_dipole_weight,
         )
+        stage_two_start = (
+            f"{start_swa_update} updates"
+            if start_swa_update is not None
+            else f"{args.start_swa} epochs"
+        )
         logging.info(
-            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, dipole weight : {args.swa_dipole_weight} and learning rate : {args.swa_lr}"
+            f"Stage Two (after {stage_two_start}) with loss function: {loss_fn_energy}, with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, dipole weight : {args.swa_dipole_weight} and learning rate : {args.swa_lr}"
         )
     elif args.loss == "universal":
         loss_fn_energy = modules.UniversalLoss(
@@ -802,16 +826,26 @@ def get_swa(
             stress_weight=args.swa_stress_weight,
             huber_delta=args.huber_delta,
         )
+        stage_two_start = (
+            f"{start_swa_update} updates"
+            if start_swa_update is not None
+            else f"{args.start_swa} epochs"
+        )
         logging.info(
-            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, stress weight : {args.swa_stress_weight} and learning rate : {args.swa_lr}"
+            f"Stage Two (after {stage_two_start}) with loss function: {loss_fn_energy}, with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, stress weight : {args.swa_stress_weight} and learning rate : {args.swa_lr}"
         )
     else:
         loss_fn_energy = modules.WeightedEnergyForcesLoss(
             energy_weight=args.swa_energy_weight,
             forces_weight=args.swa_forces_weight,
         )
+        stage_two_start = (
+            f"{start_swa_update} updates"
+            if start_swa_update is not None
+            else f"{args.start_swa} epochs"
+        )
         logging.info(
-            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight} and learning rate : {args.swa_lr}"
+            f"Stage Two (after {stage_two_start}) with loss function: {loss_fn_energy}, with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight} and learning rate : {args.swa_lr}"
         )
     swa = SWAContainer(
         model=AveragedModel(model),
@@ -823,6 +857,7 @@ def get_swa(
         ),
         start=args.start_swa,
         loss_fn=loss_fn_energy,
+        start_update=start_swa_update,
     )
     return swa, swas
 
@@ -1214,11 +1249,15 @@ class LRScheduler:
                 patience=args.scheduler_patience,
             )
         elif args.scheduler == "WSD":
+            max_num_updates = getattr(args, "max_num_updates", None)
             num_steps = max(1, int(args.max_num_epochs))
             if self.interval == "step":
-                if self.steps_per_epoch is None:
-                    raise ValueError("WSD per-step scheduling requires steps_per_epoch")
-                num_steps *= self.steps_per_epoch
+                if max_num_updates is not None:
+                    num_steps = max(1, int(max_num_updates))
+                else:
+                    if self.steps_per_epoch is None:
+                        raise ValueError("WSD per-step scheduling requires steps_per_epoch")
+                    num_steps *= self.steps_per_epoch
             self.lr_scheduler = _WarmupStableDecayLR(
                 optimizer=optimizer,
                 num_steps=num_steps,

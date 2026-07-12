@@ -106,6 +106,23 @@ def test_wsd_scheduler_defaults_to_per_step_with_train_loader_length():
     assert optimizer.param_groups[0]["lr"] == pytest.approx(1.0)
 
 
+def test_wsd_scheduler_step_schedule_prefers_max_num_updates():
+    param = torch.nn.Parameter(torch.tensor([1.0]))
+    optimizer = torch.optim.SGD([param], lr=1.0)
+    scheduler = LRScheduler(
+        optimizer,
+        _args(
+            max_num_epochs=100,
+            max_num_updates=20,
+            lr_wsd_warmup_steps=4,
+            lr_scheduler_interval="step",
+        ),
+        steps_per_epoch=5,
+    )
+
+    assert scheduler.summary()["num_steps"] == 20
+
+
 def test_wsd_scheduler_describes_resolved_per_step_schedule():
     param = torch.nn.Parameter(torch.tensor([1.0]))
     optimizer = torch.optim.SGD([param], lr=1.0)

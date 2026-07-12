@@ -101,11 +101,19 @@ def check_args(args):
                 logging.INFO,
             )
         )
+    if getattr(args, "start_swa_update", None) is not None:
+        args.swa = True
+        log_messages.append(
+            (
+                "Stage Two is activated as start_stage_two_update was defined",
+                logging.INFO,
+            )
+        )
 
     if args.swa:
-        if args.start_swa is None:
+        if args.start_swa is None and getattr(args, "start_swa_update", None) is None:
             args.start_swa = max(1, args.max_num_epochs // 4 * 3)
-        if args.start_swa > args.max_num_epochs:
+        if args.start_swa is not None and args.start_swa > args.max_num_epochs:
             log_messages.append(
                 (
                     f"start_stage_two must be less than max_num_epochs, got {args.start_swa} > {args.max_num_epochs}",
@@ -115,6 +123,27 @@ def check_args(args):
             log_messages.append(
                 (
                     "Stage Two will not start, as start_stage_two > max_num_epochs",
+                    logging.WARNING,
+                )
+            )
+            args.swa = False
+        max_num_updates = getattr(args, "max_num_updates", None)
+        start_swa_update = getattr(args, "start_swa_update", None)
+        if (
+            args.swa
+            and max_num_updates is not None
+            and start_swa_update is not None
+            and start_swa_update > max_num_updates
+        ):
+            log_messages.append(
+                (
+                    f"start_stage_two_update must be less than max_num_updates, got {start_swa_update} > {max_num_updates}",
+                    logging.WARNING,
+                )
+            )
+            log_messages.append(
+                (
+                    "Stage Two will not start, as start_stage_two_update > max_num_updates",
                     logging.WARNING,
                 )
             )

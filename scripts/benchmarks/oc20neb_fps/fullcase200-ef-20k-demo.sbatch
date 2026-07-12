@@ -60,7 +60,7 @@ if [[ ! -f "${VALID_FILE}" ]]; then
 fi
 
 export TRAIN_FILE BATCH_SIZE TARGET_STEPS EVAL_REPORTS STAGE_TWO_FRACTION
-read -r TRAIN_SIZE MAX_EPOCHS EVAL_INTERVAL START_STAGE_TWO < <("${PYTHON_BIN}" - <<'INNERPY'
+read -r TRAIN_SIZE MAX_EPOCHS EVAL_INTERVAL EVAL_INTERVAL_UPDATES START_STAGE_TWO_UPDATE < <("${PYTHON_BIN}" - <<'INNERPY'
 import math
 from ase.io import read
 import os
@@ -74,8 +74,9 @@ if train_size <= 0:
     raise SystemExit(f"empty training file: {train_file}")
 max_epochs = max(1, math.ceil(target_steps * batch_size / train_size))
 eval_interval = max(1, max_epochs // eval_reports)
-start_stage_two = min(max_epochs, max(1, math.floor(max_epochs * stage_two_fraction)))
-print(train_size, max_epochs, eval_interval, start_stage_two)
+eval_interval_updates = max(1, target_steps // eval_reports)
+start_stage_two_update = min(target_steps, max(1, math.floor(target_steps * stage_two_fraction)))
+print(train_size, max_epochs, eval_interval, eval_interval_updates, start_stage_two_update)
 INNERPY
 )
 
@@ -85,13 +86,15 @@ cat > "${RUN_ROOT}/manifest.json" <<JSON
   "valid_batch_size": ${VALID_BATCH_SIZE},
   "data_root": "${DATA_ROOT}",
   "eval_interval": ${EVAL_INTERVAL},
+  "eval_interval_updates": ${EVAL_INTERVAL_UPDATES},
   "max_num_epochs": ${MAX_EPOCHS},
+  "max_num_updates": ${TARGET_STEPS},
   "python": "${PYTHON_BIN}",
   "repo_root": "${REPO_ROOT}",
   "target_steps": ${TARGET_STEPS},
   "stage_two": "${STAGE_TWO}",
   "stage_two_fraction": ${STAGE_TWO_FRACTION},
-  "stage_two_start_epoch": ${START_STAGE_TWO},
+  "stage_two_start_update": ${START_STAGE_TWO_UPDATE},
   "slurm_gpus_per_node": "${SLURM_GPUS_PER_NODE:-${SLURM_GPUS_ON_NODE:-unknown}}",
   "stage1_energy_weight": ${STAGE1_ENERGY_WEIGHT},
   "stage1_forces_weight": ${STAGE1_FORCES_WEIGHT},
@@ -113,7 +116,7 @@ case "${STAGE_TWO}" in
   True|true|1|yes|YES|on|ON)
     stage_two_args=(
       --stage_two
-      --start_stage_two="${START_STAGE_TWO}"
+      --start_stage_two_update="${START_STAGE_TWO_UPDATE}"
       --stage_two_energy_weight="${STAGE2_ENERGY_WEIGHT}"
       --stage_two_forces_weight="${STAGE2_FORCES_WEIGHT}"
     )
@@ -142,8 +145,10 @@ common_args=(
   --batch_size="${BATCH_SIZE}"
   --valid_batch_size="${VALID_BATCH_SIZE}"
   --max_num_epochs="${MAX_EPOCHS}"
+  --max_num_updates="${TARGET_STEPS}"
   --patience=999999
   --eval_interval="${EVAL_INTERVAL}"
+  --eval_interval_updates="${EVAL_INTERVAL_UPDATES}"
   --error_table="${MACE_OC20NEB_ERROR_TABLE:-PerAtomMAE}"
   --default_dtype=float32
   --train_amp_dtype=none
@@ -153,7 +158,12 @@ common_args=(
   --shuffle=True
   --enable_cueq="${MACE_OC20NEB_ENABLE_CUEQ:-False}"
   --optimizer=adam
-  --scheduler=ReduceLROnPlateau
+  --scheduler="${MACE_OC20NEB_SCHEDULER:-WSD}"
+  --lr_scheduler_interval="${MACE_OC20NEB_LR_SCHEDULER_INTERVAL:-step}"
+  --lr_wsd_warmup_ratio="${MACE_OC20NEB_LR_WSD_WARMUP_RATIO:-0.03}"
+  --lr_wsd_stop_lr_ratio="${MACE_OC20NEB_LR_WSD_STOP_LR_RATIO:-0.001}"
+  --lr_wsd_decay_phase_ratio="${MACE_OC20NEB_LR_WSD_DECAY_PHASE_RATIO:-0.1}"
+  --lr_wsd_decay_type="${MACE_OC20NEB_LR_WSD_DECAY_TYPE:-inverse_linear}"
   --lr="${MACE_OC20NEB_LR:-0.001}"
   --weight_decay="${MACE_OC20NEB_WEIGHT_DECAY:-0.001}"
   --loss=weighted

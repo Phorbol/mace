@@ -1157,6 +1157,8 @@ def run(args) -> None:
         training_model=training_model,
         non_blocking_transfer=args.non_blocking_transfer,
         guard_config=_training_guard_config_from_args(args),
+        max_num_updates=args.max_num_updates,
+        eval_interval_updates=args.eval_interval_updates,
     )
 
     logging.info("")

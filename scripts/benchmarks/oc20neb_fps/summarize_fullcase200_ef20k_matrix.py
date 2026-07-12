@@ -51,7 +51,9 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
     case_name = case_dir.name
     steps_per_epoch = _steps_per_epoch(manifest)
     max_epochs = manifest.get("max_num_epochs")
+    max_updates = manifest.get("max_num_updates")
     stage_two_epoch = manifest.get("stage_two_start_epoch")
+    stage_two_update = manifest.get("stage_two_start_update")
 
     row: dict[str, Any] = {
         "root": str(root),
@@ -64,9 +66,9 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         "batch_size": manifest.get("batch_size"),
         "max_num_epochs": max_epochs,
         "steps_per_epoch": steps_per_epoch,
-        "effective_updates": None,
+        "effective_updates": max_updates,
         "stage_two_start_epoch": stage_two_epoch,
-        "stage_two_start_update": None,
+        "stage_two_start_update": stage_two_update,
         "stage1_energy_weight": manifest.get("stage1_energy_weight"),
         "stage1_forces_weight": manifest.get("stage1_forces_weight"),
         "stage2_energy_weight": manifest.get("stage2_energy_weight"),
@@ -89,9 +91,9 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         "mean_sm_util_percent": None,
         "mean_mem_util_percent": None,
     }
-    if steps_per_epoch is not None and max_epochs is not None:
+    if row["effective_updates"] is None and steps_per_epoch is not None and max_epochs is not None:
         row["effective_updates"] = steps_per_epoch * int(max_epochs)
-    if steps_per_epoch is not None and stage_two_epoch is not None:
+    if row["stage_two_start_update"] is None and steps_per_epoch is not None and stage_two_epoch is not None:
         row["stage_two_start_update"] = steps_per_epoch * int(stage_two_epoch)
 
     log_path = _case_log(case_dir)
