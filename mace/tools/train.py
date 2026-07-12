@@ -85,6 +85,14 @@ def _make_loss_skip_controller(
     )
 
 
+def _crossed_update_interval(
+    previous_updates: int, current_updates: int, interval: Optional[int]
+) -> bool:
+    if interval is None or interval <= 0 or current_updates <= previous_updates:
+        return False
+    return current_updates // interval > previous_updates // interval
+
+
 def _save_checkpoint_after_guard(
     *,
     checkpoint_handler: CheckpointHandler,
@@ -383,13 +391,11 @@ def train(
         if distributed:
             torch.distributed.barrier()
 
-        should_save_update_checkpoint = False
-        if checkpoint_interval_updates is not None and updates_completed > 0:
-            should_save_update_checkpoint = (
-                updates_completed % checkpoint_interval_updates == 0
-            )
-            if max_num_updates is not None and updates_completed >= max_num_updates:
-                should_save_update_checkpoint = True
+        should_save_update_checkpoint = _crossed_update_interval(
+            global_step_start, updates_completed, checkpoint_interval_updates
+        )
+        if max_num_updates is not None and updates_completed >= max_num_updates:
+            should_save_update_checkpoint = True
         if should_save_update_checkpoint and rank == 0:
             _save_checkpoint_after_guard(
                 checkpoint_handler=checkpoint_handler,
@@ -405,9 +411,8 @@ def train(
         # Validate
         should_evaluate = epoch % eval_interval == 0
         if eval_interval_updates is not None:
-            should_evaluate = (
-                updates_completed > 0
-                and updates_completed % eval_interval_updates == 0
+            should_evaluate = _crossed_update_interval(
+                global_step_start, updates_completed, eval_interval_updates
             )
             if max_num_updates is not None and updates_completed >= max_num_updates:
                 should_evaluate = True
