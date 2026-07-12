@@ -277,6 +277,16 @@ def test_fullcase200_ef20k_demo_supports_hybrid_muon_module_routing_cases():
     assert "run_selected_case cueq_hybrid_muon_module" in text
 
 
+def test_fullcase200_ef20k_demo_supports_hybrid_muon_tace_routing_cases():
+    sbatch = SCRIPT_ROOT / "fullcase200-ef-20k-demo.sbatch"
+    text = sbatch.read_text()
+
+    assert "hybrid_muon_tace_args=(" in text
+    assert "--hybrid_muon_routing=tace" in text
+    assert "run_selected_case hybrid_muon_tace" in text
+    assert "run_selected_case cueq_hybrid_muon_tace" in text
+
+
 def test_prepare_fullcase200_fps_sbatch_extracts_mace_features_before_fps():
     sbatch = SCRIPT_ROOT / "prepare-fullcase200-fps-extxyz.sbatch"
     text = sbatch.read_text()

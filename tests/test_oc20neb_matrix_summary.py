@@ -91,6 +91,34 @@ def test_summarize_case_reports_early_update_speed_from_initial(tmp_path):
     assert row["early_updates_per_second"] == pytest.approx(10.0)
 
 
+def test_pairwise_comparison_reports_tace_routing_ablation():
+    rows = [
+        {
+            "root": "run",
+            "case": "adamw",
+            "final_mae_e_mev_atom": 20.0,
+            "final_mae_f_mev_a": 130.0,
+            "seconds_per_update": 0.060,
+        },
+        {
+            "root": "run",
+            "case": "hybrid_muon_tace",
+            "hybrid_muon_routing": "tace",
+            "final_mae_e_mev_atom": 18.0,
+            "final_mae_f_mev_a": 110.0,
+            "seconds_per_update": 0.066,
+        },
+    ]
+
+    [comparison] = summarize_pairwise_comparisons(rows)
+
+    assert comparison["baseline_case"] == "adamw"
+    assert comparison["candidate_case"] == "hybrid_muon_tace"
+    assert comparison["hybrid_muon_routing"] == "tace"
+    assert comparison["final_mae_f_delta_mev_a"] == -20.0
+    assert comparison["seconds_per_update_ratio"] == pytest.approx(1.1)
+
+
 def test_pairwise_comparison_reports_final_best_and_update_speed():
     rows = [
         {

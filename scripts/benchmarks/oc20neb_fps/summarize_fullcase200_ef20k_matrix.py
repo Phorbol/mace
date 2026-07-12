@@ -233,8 +233,10 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
 
 PAIRWISE_COMPARISONS = (
     ("adamw", "hybrid_muon"),
+    ("adamw", "hybrid_muon_tace"),
     ("eager", "hybrid_muon"),
     ("cueq_adamw", "cueq_hybrid_muon"),
+    ("cueq_adamw", "cueq_hybrid_muon_tace"),
     ("cueq", "cueq_hybrid_muon"),
     ("compile", "hybrid_muon_compile"),
     ("cueq_compile", "cueq_hybrid_muon_compile"),

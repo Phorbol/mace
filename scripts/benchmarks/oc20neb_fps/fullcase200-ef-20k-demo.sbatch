@@ -378,6 +378,11 @@ hybrid_muon_args=(
   --hybrid_muon_lr_scale_mode="${HYBRID_MUON_LR_SCALE_MODE}"
 )
 
+hybrid_muon_tace_args=(
+  "${hybrid_muon_args[@]}"
+  --hybrid_muon_routing=tace
+)
+
 hybrid_muon_module_args=(
   "${hybrid_muon_args[@]}"
   --hybrid_muon_routing=module
@@ -398,9 +403,11 @@ fi
 
 run_selected_case adamw "${extra_args[@]}" "${post_args[@]}"
 run_selected_case hybrid_muon "${extra_args[@]}" "${hybrid_muon_args[@]}" "${post_args[@]}"
+run_selected_case hybrid_muon_tace "${extra_args[@]}" "${hybrid_muon_tace_args[@]}" "${post_args[@]}"
 run_selected_case hybrid_muon_module "${extra_args[@]}" "${hybrid_muon_module_args[@]}" "${post_args[@]}"
 run_selected_case cueq_adamw "${extra_args[@]}" "${cueq_args[@]}" "${post_args[@]}"
 run_selected_case cueq_hybrid_muon "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_args[@]}" "${post_args[@]}"
+run_selected_case cueq_hybrid_muon_tace "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_tace_args[@]}" "${post_args[@]}"
 run_selected_case cueq_hybrid_muon_module "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_module_args[@]}" "${post_args[@]}"
 
 run_selected_case eager "${extra_args[@]}" "${post_args[@]}"
