@@ -5,7 +5,9 @@ import argparse
 import csv
 import json
 import math
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,52 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.benchmarks.recio8k_accel.parse_metrics import parse_log, parse_nvdmon
+
+
+INITIAL_RE = re.compile(
+    r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*"
+    r"Initial: update=(?P<update>\d+),"
+)
+
+
+def _parse_initial_record(log_path: Path) -> dict[str, Any] | None:
+    for line in log_path.read_text(errors="ignore").splitlines():
+        match = INITIAL_RE.search(line)
+        if match:
+            timestamp = datetime.strptime(
+                match.group("timestamp"), "%Y-%m-%d %H:%M:%S.%f"
+            )
+            return {
+                "timestamp": timestamp.isoformat(),
+                "update": int(match.group("update")),
+            }
+    return None
+
+
+def _early_update_timing(
+    log_path: Path, parsed: dict[str, Any]
+) -> dict[str, float] | None:
+    initial = _parse_initial_record(log_path)
+    if initial is None:
+        return None
+    epochs = parsed.get("epochs") or []
+    first_update = next(
+        (epoch for epoch in epochs if epoch.get("update") is not None), None
+    )
+    if first_update is None:
+        return None
+    update_delta = int(first_update["update"]) - int(initial["update"])
+    if update_delta <= 0:
+        return None
+    initial_time = datetime.fromisoformat(str(initial["timestamp"]))
+    first_time = datetime.fromisoformat(str(first_update["timestamp"]))
+    seconds = (first_time - initial_time).total_seconds()
+    if seconds <= 0.0:
+        return None
+    return {
+        "early_seconds_per_update": seconds / update_delta,
+        "early_updates_per_second": update_delta / seconds,
+    }
 
 
 def _load_manifest(root: Path) -> dict[str, Any]:
@@ -119,6 +167,8 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         "mean_seconds_per_epoch": None,
         "seconds_per_update": None,
         "updates_per_second": None,
+        "early_seconds_per_update": None,
+        "early_updates_per_second": None,
         "total_train_seconds_estimate": None,
         "train_compile_fallback": None,
         "train_compile_fallback_count": None,
@@ -160,6 +210,9 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         if mean_epoch is not None and steps_per_epoch:
             row["seconds_per_update"] = float(mean_epoch) / int(steps_per_epoch)
             row["updates_per_second"] = int(steps_per_epoch) / float(mean_epoch)
+        early_timing = _early_update_timing(log_path, parsed)
+        if early_timing is not None:
+            row.update(early_timing)
         if (
             row.get("seconds_per_update") is not None
             and row.get("effective_updates") is not None

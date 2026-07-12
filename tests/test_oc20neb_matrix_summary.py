@@ -69,6 +69,28 @@ def test_summarize_case_reports_update_runtime_and_manifest_metadata(tmp_path):
     assert row["updates_per_second"] == pytest.approx(625 / 15.0)
 
 
+def test_summarize_case_reports_early_update_speed_from_initial(tmp_path):
+    manifest = {
+        "target_steps": 20000,
+        "max_num_updates": 20000,
+        "train_size": 5000,
+        "batch_size": 8,
+    }
+    log_text = """
+2026-07-12 00:00:00.000 INFO: Initial: update=0, head: Default, loss=1.0, MAE_E_per_atom=200.00 meV, MAE_F=50.00 meV / A
+2026-07-12 00:06:40.000 INFO: Epoch 6: update=4000, head: Default, loss=0.8, MAE_E_per_atom=180.00 meV, MAE_F=45.00 meV / A
+"""
+    root, case_dir = _write_case(tmp_path, "hybrid_muon", log_text)
+
+    row = summarize_case(root, case_dir, manifest)
+
+    assert row["final_update"] == 4000
+    assert row["mean_seconds_per_epoch"] is None
+    assert row["seconds_per_update"] is None
+    assert row["early_seconds_per_update"] == pytest.approx(0.1)
+    assert row["early_updates_per_second"] == pytest.approx(10.0)
+
+
 def test_pairwise_comparison_reports_final_best_and_update_speed():
     rows = [
         {
