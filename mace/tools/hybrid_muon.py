@@ -382,7 +382,7 @@ def _module_declared_optim_spec(
     name: str,
     param: torch.nn.Parameter,
     module_map: dict[str, torch.nn.Module] | None,
-) -> OptimSpec:
+) -> OptimSpec | None:
     if module_map is None:
         raise RuntimeError(
             "HybridMuon routing='module' requires a module_map with owning modules"
@@ -414,9 +414,7 @@ def _module_declared_optim_spec(
         if spec is not None:
             return spec
 
-    raise RuntimeError(
-        f"HybridMuon routing='module' requires OptimSpec for parameter {name!r}"
-    )
+    return None
 
 
 def _is_equivariant_slice_candidate(name: str) -> bool:
@@ -659,13 +657,17 @@ def build_hybrid_muon_param_groups(
                 route, reason = "frozen", "requires_grad=False"
             else:
                 optim_spec = _module_declared_optim_spec(name, param, module_map)
-                route, reason = optim_spec.route, "module-declared"
-                flat_specs = _normalize_optim_spec_slice_specs(name, param, optim_spec)
-                matrix_layout = _optim_spec_matrix_layout(name, param, optim_spec)
-                if flat_specs is not None:
-                    muon_matrix_specs[name] = flat_specs
-                if optim_spec.route in _ADAM_VARIANTS:
-                    adam_variant_override = optim_spec.route
+                if optim_spec is None:
+                    route, reason = "adamw", "module-default-adamw"
+                    adam_variant_override = "adamw"
+                else:
+                    route, reason = optim_spec.route, "module-declared"
+                    flat_specs = _normalize_optim_spec_slice_specs(name, param, optim_spec)
+                    matrix_layout = _optim_spec_matrix_layout(name, param, optim_spec)
+                    if flat_specs is not None:
+                        muon_matrix_specs[name] = flat_specs
+                    if optim_spec.route in _ADAM_VARIANTS:
+                        adam_variant_override = optim_spec.route
         else:
             if routing == "tace" and not any(
                 token in lower_name for token in _MACE_HARD_ADAM_NAME_TOKENS

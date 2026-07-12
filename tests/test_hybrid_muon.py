@@ -383,6 +383,43 @@ def test_hybrid_muon_module_routing_uses_radial_mlp_declarations():
     assert adam_group["adam_variant"] == "adamw"
 
 
+def test_hybrid_muon_module_routing_defaults_undeclared_params_to_adamw():
+    class PartiallyDeclaredModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.muon_linear = torch.nn.Linear(4, 3, bias=False)
+            self.adam_linear = torch.nn.Linear(3, 2, bias=False)
+            self.hybrid_muon_optim_specs = {
+                "muon_linear.weight": OptimSpec(route="muon", matrix_axes=(0, 1)),
+            }
+
+    module = PartiallyDeclaredModule()
+    groups, summary = build_hybrid_muon_param_groups(
+        [(f"block.{name}", param) for name, param in module.named_parameters()],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={
+            "block" if name == "" else f"block.{name}": submodule
+            for name, submodule in module.named_modules()
+        },
+    )
+
+    by_name = {entry["name"]: entry for entry in summary}
+    assert by_name["block.muon_linear.weight"]["route"] == "muon"
+    assert by_name["block.muon_linear.weight"]["reason"] == "module-declared"
+    assert by_name["block.adam_linear.weight"]["route"] == "adamw"
+    assert by_name["block.adam_linear.weight"]["reason"] == "module-default-adamw"
+
+    muon_group = next(group for group in groups if group["route"] == "muon")
+    adam_group = next(group for group in groups if group["route"] == "adam")
+    assert muon_group["param_names"] == ["block.muon_linear.weight"]
+    assert adam_group["param_names"] == ["block.adam_linear.weight"]
+    assert adam_group["adam_variant"] == "adamw"
+
+
 def test_hybrid_muon_module_routing_uses_declared_slice_specs(monkeypatch):
     class FlatSlicedModule(torch.nn.Module):
         def __init__(self):
