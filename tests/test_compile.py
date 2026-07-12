@@ -1241,7 +1241,7 @@ def test_padded_position_model_outputs_match_unpadded_real_atoms():
         _position_model_outputs,
     )
 
-    model = create_tiny_mace("cpu")
+    model = create_tiny_mace("cpu", shift=0.25)
     batch = _BatchDictAdapter(create_batch("cpu"))
     data_dict, positions, edge_index, _ = _edge_vector_inputs(batch)
     ref_energy, ref_forces, _, _ = _position_model_outputs(

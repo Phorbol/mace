@@ -1542,7 +1542,25 @@ def _position_model_outputs(
         compute_virials=compute_virials,
         compute_stress=compute_stress,
     )
-    return output["energy"], output["forces"], output.get("stress"), output.get("virials")
+    energy = output["energy"]
+    node_mask = current_data.get("_node_mask")
+    node_energy = output.get("node_energy")
+    if (
+        node_mask is not None
+        and node_energy is not None
+        and "batch" in current_data
+        and node_energy.shape[0] == node_mask.shape[0]
+    ):
+        mask = node_mask.to(device=node_energy.device, dtype=node_energy.dtype)
+        while mask.ndim < node_energy.ndim:
+            mask = mask.unsqueeze(-1)
+        energy = scatter_sum(
+            src=node_energy * mask,
+            index=current_data["batch"],
+            dim=0,
+            dim_size=energy.shape[0],
+        ).to(dtype=energy.dtype, device=energy.device)
+    return energy, output["forces"], output.get("stress"), output.get("virials")
 
 
 def _forces_matching_reference(
