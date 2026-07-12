@@ -1190,6 +1190,7 @@ def test_pad_edge_force_data_to_bucket_adds_masks_and_fixed_shapes():
     assert torch.all(padded["_node_mask"][num_atoms:] == 0)
     assert torch.all(padded["_edge_mask"][:num_edges] == 1)
     assert torch.all(padded["_edge_mask"][num_edges:] == 0)
+    assert torch.all(padded["node_attrs"][num_atoms:] == 0)
     assert torch.all(padded["edge_index"][:, num_edges:] == num_atoms + 2)
     assert torch.all(padded["shifts"][num_edges:, 0] == 10.0)
 
@@ -1231,6 +1232,39 @@ def test_padded_edge_force_outputs_match_unpadded_real_atoms():
 
     assert_close(padded_energy, ref_energy, atol=1e-6, rtol=1e-6)
     assert_close(padded_forces[: positions.shape[0]], ref_forces, atol=1e-6, rtol=1e-6)
+
+
+def test_padded_position_model_outputs_match_unpadded_real_atoms():
+    from mace.tools.training_compile import (
+        _edge_vector_inputs,
+        _pad_edge_force_data_to_bucket,
+        _position_model_outputs,
+    )
+
+    model = create_tiny_mace("cpu")
+    batch = _BatchDictAdapter(create_batch("cpu"))
+    data_dict, positions, edge_index, _ = _edge_vector_inputs(batch)
+    ref_energy, ref_forces, _, _ = _position_model_outputs(
+        model, data_dict, positions
+    )
+
+    padded_data = _pad_edge_force_data_to_bucket(
+        data_dict,
+        atom_bucket=positions.shape[0] + 2,
+        edge_bucket=edge_index.shape[1] + 4,
+        r_max=5.0,
+    )
+    padded_energy, padded_forces, _, _ = _position_model_outputs(
+        model, padded_data, padded_data["positions"]
+    )
+
+    assert_close(padded_energy, ref_energy, atol=1e-6, rtol=1e-6)
+    assert_close(
+        padded_forces[: positions.shape[0]],
+        ref_forces,
+        atol=1e-6,
+        rtol=1e-6,
+    )
 
 
 def test_loss_from_energy_forces_slices_padded_forces_to_reference_atoms():
@@ -2576,7 +2610,7 @@ def test_edge_force_compiled_loss_bucket_policy_compiles_padded_inputs():
 
     _, hit_metrics = take_step(
         model=prepared,
-        loss_fn=_EnergyForcesMiniLoss(),
+        loss_fn=WeightedEnergyForcesLoss(),
         batch=batch,
         optimizer=optimizer,
         ema=None,
@@ -2589,6 +2623,7 @@ def test_edge_force_compiled_loss_bucket_policy_compiles_padded_inputs():
 
 
 def test_edge_force_compiled_loss_bucket_cache_hit_across_smaller_shape():
+    from mace.modules import WeightedEnergyForcesLoss
     from mace.tools.train import take_step
     from mace.tools.training_compile import (
         EdgeForceCompileConfig,
@@ -2630,7 +2665,7 @@ def test_edge_force_compiled_loss_bucket_cache_hit_across_smaller_shape():
 
     take_step(
         model=prepared,
-        loss_fn=_EnergyForcesMiniLoss(),
+        loss_fn=WeightedEnergyForcesLoss(),
         batch=first,
         optimizer=optimizer,
         ema=None,
@@ -2640,7 +2675,7 @@ def test_edge_force_compiled_loss_bucket_cache_hit_across_smaller_shape():
     )
     _, metrics = take_step(
         model=prepared,
-        loss_fn=_EnergyForcesMiniLoss(),
+        loss_fn=WeightedEnergyForcesLoss(),
         batch=second,
         optimizer=optimizer,
         ema=None,
@@ -4910,7 +4945,7 @@ def test_edge_force_position_mode_uncompiled_graph_preserves_force_loss_paramete
     assert compiled.gate_result.accepted is True
 
 
-def test_edge_force_position_mode_bucket_policy_uses_unpadded_shape_key(
+def test_edge_force_position_mode_bucket_policy_pads_and_uses_bucket_key(
     monkeypatch,
 ):
     from mace.modules import WeightedEnergyForcesLoss
@@ -4919,14 +4954,27 @@ def test_edge_force_position_mode_bucket_policy_uses_unpadded_shape_key(
     model = create_tiny_mace("cpu")
     batch = _BatchDictAdapter(create_batch("cpu"))
     data_dict = batch.to_dict()
+    atom_bucket = batch.positions.shape[0] + 3
+    edge_bucket = batch.edge_index.shape[1] + 5
     input_names = training_compile.edge_force_compile_input_names(
-        data_dict.keys(), force_gradient_mode="positions"
+        {
+            **data_dict,
+            "_node_mask": torch.empty(atom_bucket),
+            "_edge_mask": torch.empty(edge_bucket),
+            "_real_num_atoms": torch.tensor(batch.positions.shape[0]),
+        }.keys(),
+        force_gradient_mode="positions",
     )
     recorded_cache_keys = []
+    padding_calls = []
 
-    def forbidden_bucket_padding(*args, **kwargs):
-        del args, kwargs
-        raise AssertionError("positions mode should not bucket-pad original forward")
+    original_pad = training_compile._pad_edge_force_data_to_bucket
+
+    def recording_bucket_padding(data, *, atom_bucket, edge_bucket, r_max):
+        padding_calls.append((atom_bucket, edge_bucket, r_max))
+        return original_pad(
+            data, atom_bucket=atom_bucket, edge_bucket=edge_bucket, r_max=r_max
+        )
 
     def executable(positions, *input_tensors):
         first_param = input_tensors[0]
@@ -4962,7 +5010,7 @@ def test_edge_force_position_mode_bucket_policy_uses_unpadded_shape_key(
         )
 
     monkeypatch.setattr(
-        training_compile, "_pad_edge_force_data_to_bucket", forbidden_bucket_padding
+        training_compile, "_pad_edge_force_data_to_bucket", recording_bucket_padding
     )
 
     wrapper = training_compile.EdgeForceCompiledLossModule(
@@ -4971,9 +5019,9 @@ def test_edge_force_position_mode_bucket_policy_uses_unpadded_shape_key(
             enabled=True,
             compile_graph=True,
             cache_policy="bucket",
-            bucket_atoms=(1024,),
-            bucket_edges=(65536,),
-            bucket_margin=2000.0,
+            bucket_atoms=(atom_bucket,),
+            bucket_edges=(edge_bucket,),
+            bucket_margin=2.0,
             min_repeats=0,
             cache_hit_gate=False,
             allow_fallback=False,
@@ -4992,8 +5040,12 @@ def test_edge_force_position_mode_bucket_policy_uses_unpadded_shape_key(
 
     assert torch.isfinite(loss)
     assert recorded_cache_keys
-    assert recorded_cache_keys[-1][0] == "shape"
-    assert metrics["edge_force_compile_cache_policy"] == "shape"
+    assert recorded_cache_keys[-1][0] == "bucket"
+    assert recorded_cache_keys[-1][1:3] == (atom_bucket, edge_bucket)
+    assert padding_calls == [(atom_bucket, edge_bucket, float(model.r_max))]
+    assert metrics["edge_force_compile_cache_policy"] == "bucket"
+    assert metrics["edge_force_bucket_atoms"] == atom_bucket
+    assert metrics["edge_force_bucket_edges"] == edge_bucket
 
 
 def test_edge_force_compile_graph_uses_returned_stress_for_builtin_stress_loss(

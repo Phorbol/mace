@@ -796,11 +796,7 @@ def _pad_edge_force_data_to_bucket(
 
     padded["positions"] = _pad_first_dim(data["positions"], atom_bucket)
     if "node_attrs" in data:
-        node_attrs = _pad_first_dim(data["node_attrs"], atom_bucket)
-        if atom_bucket > real_num_atoms and node_attrs.shape[1] > 0:
-            node_attrs[real_num_atoms:, :] = 0
-            node_attrs[real_num_atoms:, 0] = 1
-        padded["node_attrs"] = node_attrs
+        padded["node_attrs"] = _pad_first_dim(data["node_attrs"], atom_bucket)
     if "batch" in data:
         padded["batch"] = _pad_first_dim(data["batch"], atom_bucket)
     if "forces" in data:
@@ -2343,11 +2339,6 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
         return self.model(*args, **kwargs)
 
     def _effective_cache_policy(self) -> str:
-        if (
-            self.config.force_gradient_mode == "positions"
-            and self.config.cache_policy == "bucket"
-        ):
-            return "shape"
         return self.config.cache_policy
 
     def _eager_force_loss(
@@ -2665,7 +2656,6 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                     name,
                     str(data_dict[name].dtype),
                     _edge_force_device_abi_signature(data_dict[name].device),
-                    bool(data_dict[name].requires_grad),
                 )
                 for name in input_names
             ),
