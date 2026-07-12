@@ -251,15 +251,19 @@ def test_project_features_for_fps_is_seeded_and_dimension_reducing():
     np.testing.assert_allclose(unchanged, features[:, :2])
 
 
-def test_fullcase200_ef20k_demo_defaults_cover_compile_cueq_matrix():
+def test_fullcase200_ef20k_demo_defaults_focus_noncompile_cueq_muon_matrix():
     sbatch = SCRIPT_ROOT / "fullcase200-ef-20k-demo.sbatch"
     text = sbatch.read_text()
 
-    assert "eager,compile,cueq,cueq_compile" in text
-    assert "cueq_hybrid_muon,cueq_hybrid_muon_compile" in text
+    assert "MACE_OC20NEB_CASES:-eager,cueq,hybrid_muon,cueq_hybrid_muon" in text
+    assert "MACE_OC20NEB_CASES:-eager,compile,cueq,cueq_compile" not in text
     assert "MACE_OC20NEB_COMPILE_PARITY_GRADIENTS:-False" in text
     assert "--no-edge_force_compile_parity_check_gradients" in text
     assert "compile_parity_gradients" in text
+    assert "run_selected_case compile" in text
+    assert "run_selected_case cueq_compile" in text
+    assert "run_selected_case hybrid_muon_compile" in text
+    assert "run_selected_case cueq_hybrid_muon_compile" in text
 
 
 def test_prepare_fullcase200_fps_sbatch_extracts_mace_features_before_fps():
