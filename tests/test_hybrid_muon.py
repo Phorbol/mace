@@ -1213,6 +1213,8 @@ def test_arg_parser_accepts_hybrid_muon_magma_lite_flag():
             "--hybrid_muon_magma_warmup_steps",
             "3",
             "--hybrid_muon_magma_bypass_first_step",
+            "--hybrid_muon_stage_two_lr_factor",
+            "0.25",
         ]
     )
 
@@ -1224,6 +1226,7 @@ def test_arg_parser_accepts_hybrid_muon_magma_lite_flag():
     assert args.hybrid_muon_magma_initial_score == 0.25
     assert args.hybrid_muon_magma_warmup_steps == 3
     assert args.hybrid_muon_magma_bypass_first_step is True
+    assert args.hybrid_muon_stage_two_lr_factor == 0.25
 
 
 def test_get_optimizer_builds_hybrid_muon():

@@ -1175,6 +1175,7 @@ def run(args) -> None:
         max_num_updates=args.max_num_updates,
         eval_interval_updates=args.eval_interval_updates,
         checkpoint_interval_updates=args.checkpoint_interval_updates,
+        hybrid_muon_stage_two_lr_factor=args.hybrid_muon_stage_two_lr_factor,
     )
 
     logging.info("")

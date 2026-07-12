@@ -215,6 +215,7 @@ def test_pairwise_comparison_reports_final_best_and_update_speed():
             "hybrid_muon_mode": "2d",
             "hybrid_muon_routing": "mace",
             "hybrid_muon_lr_factor": 0.1,
+            "hybrid_muon_stage_two_lr_factor": 0.5,
             "final_mae_e_mev_atom": 17.0,
             "final_mae_f_mev_a": 105.0,
             "best_mae_e_mev_atom": 16.0,
@@ -229,6 +230,7 @@ def test_pairwise_comparison_reports_final_best_and_update_speed():
 
     assert comparison["baseline_case"] == "cueq_adamw"
     assert comparison["candidate_case"] == "cueq_hybrid_muon"
+    assert comparison["hybrid_muon_stage_two_lr_factor"] == 0.5
     assert comparison["final_mae_e_delta_mev_atom"] == -3.0
     assert comparison["final_mae_f_delta_mev_a"] == -25.0
     assert comparison["best_mae_e_delta_mev_atom"] == -2.0

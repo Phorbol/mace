@@ -93,6 +93,32 @@ def _crossed_update_interval(
     return current_updates // interval > previous_updates // interval
 
 
+def _apply_hybrid_muon_stage_two_lr_factor(
+    optimizer: torch.optim.Optimizer,
+    lr_scheduler: Any,
+    factor: float,
+) -> None:
+    factor = float(factor)
+    if factor < 0.0:
+        raise ValueError("hybrid_muon_stage_two_lr_factor must be non-negative")
+    if factor == 1.0:
+        return
+    scheduler = getattr(lr_scheduler, "lr_scheduler", lr_scheduler)
+    base_lrs = getattr(scheduler, "base_lrs", None)
+    last_lrs = getattr(scheduler, "_last_lr", None)
+    for index, group in enumerate(optimizer.param_groups):
+        if group.get("route") != "muon":
+            continue
+        if bool(group.get("hybrid_muon_stage_two_lr_factor_applied", False)):
+            continue
+        group["lr"] = float(group["lr"]) * factor
+        if isinstance(base_lrs, list) and index < len(base_lrs):
+            base_lrs[index] = float(base_lrs[index]) * factor
+        if isinstance(last_lrs, list) and index < len(last_lrs):
+            last_lrs[index] = float(last_lrs[index]) * factor
+        group["hybrid_muon_stage_two_lr_factor_applied"] = True
+
+
 def _next_update_boundary(
     updates_completed: int,
     *,
@@ -275,6 +301,7 @@ def train(
     eval_interval_updates: Optional[int] = None,
     checkpoint_interval_updates: Optional[int] = None,
     start_update: Optional[int] = None,
+    hybrid_muon_stage_two_lr_factor: float = 1.0,
 ):
     lowest_loss = np.inf
     valid_loss = np.inf
@@ -381,6 +408,9 @@ def train(
         else:
             if swa_start:
                 logging.info("Changing loss based on Stage Two Weights")
+                _apply_hybrid_muon_stage_two_lr_factor(
+                    optimizer, lr_scheduler, hybrid_muon_stage_two_lr_factor
+                )
                 lowest_loss = np.inf
                 swa_start = False
                 keep_last = True

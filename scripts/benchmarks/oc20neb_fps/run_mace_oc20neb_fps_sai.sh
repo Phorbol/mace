@@ -108,6 +108,7 @@ if [ "${OPTIMIZER:-adam}" = "hybrid_muon" ]; then
     --hybrid_muon_mode="${HYBRID_MUON_MODE:-2d}"
     --hybrid_muon_routing="${HYBRID_MUON_ROUTING:-mace}"
     --hybrid_muon_lr_factor="${HYBRID_MUON_LR_FACTOR:-0.1}"
+    --hybrid_muon_stage_two_lr_factor="${HYBRID_MUON_STAGE_TWO_LR_FACTOR:-1.0}"
     --hybrid_muon_weight_decay="${HYBRID_MUON_WEIGHT_DECAY:-0.0}"
   )
 fi

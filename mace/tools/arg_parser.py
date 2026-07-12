@@ -1207,6 +1207,16 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=0.1,
     )
     parser.add_argument(
+        "--hybrid_muon_stage_two_lr_factor",
+        help=(
+            "Extra multiplier applied once to HybridMuon-routed matrix parameter "
+            "groups when Stage Two starts. Use 1.0 to keep the Stage One "
+            "Muon LR; use 0.0 to freeze Muon-routed matrices in Stage Two."
+        ),
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
         "--hybrid_muon_mode",
         help=(
             "HybridMuon matrix routing mode. '2d' preserves the conservative "
