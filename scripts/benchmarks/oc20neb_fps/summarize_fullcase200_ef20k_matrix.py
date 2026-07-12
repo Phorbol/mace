@@ -232,8 +232,11 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
 
 
 PAIRWISE_COMPARISONS = (
+    ("adamw", "cueq_adamw"),
     ("adamw", "hybrid_muon"),
     ("adamw", "hybrid_muon_tace"),
+    ("hybrid_muon", "cueq_hybrid_muon"),
+    ("hybrid_muon_tace", "cueq_hybrid_muon_tace"),
     ("eager", "hybrid_muon"),
     ("cueq_adamw", "cueq_hybrid_muon"),
     ("cueq_adamw", "cueq_hybrid_muon_tace"),
@@ -253,6 +256,17 @@ def _numeric_ratio(numerator: Any, denominator: Any) -> float | None:
     if numerator is None or denominator in (None, 0):
         return None
     return float(numerator) / float(denominator)
+
+
+def _speedup_vs_baseline(baseline: dict[str, Any], candidate: dict[str, Any]) -> float | None:
+    update_speedup = _numeric_ratio(
+        baseline.get("seconds_per_update"), candidate.get("seconds_per_update")
+    )
+    if update_speedup is not None:
+        return update_speedup
+    return _numeric_ratio(
+        baseline.get("mean_seconds_per_epoch"), candidate.get("mean_seconds_per_epoch")
+    )
 
 
 def _comparison_row(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
@@ -296,7 +310,7 @@ def _comparison_row(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         "candidate_seconds_per_epoch": candidate.get("mean_seconds_per_epoch"),
         "seconds_per_epoch_delta": _numeric_delta(candidate.get("mean_seconds_per_epoch"), baseline.get("mean_seconds_per_epoch")),
         "seconds_per_epoch_ratio": _numeric_ratio(candidate.get("mean_seconds_per_epoch"), baseline.get("mean_seconds_per_epoch")),
-        "speedup_vs_baseline": _numeric_ratio(baseline.get("mean_seconds_per_epoch"), candidate.get("mean_seconds_per_epoch")),
+        "speedup_vs_baseline": _speedup_vs_baseline(baseline, candidate),
         "baseline_seconds_per_update": baseline.get("seconds_per_update"),
         "candidate_seconds_per_update": candidate.get("seconds_per_update"),
         "seconds_per_update_delta": _numeric_delta(candidate.get("seconds_per_update"), baseline.get("seconds_per_update")),

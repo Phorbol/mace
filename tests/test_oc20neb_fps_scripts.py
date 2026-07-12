@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 from ase import Atoms
 from ase.calculators.singlepoint import SinglePointCalculator
 from ase.io import read
@@ -655,6 +656,6 @@ def test_summarize_fullcase200_ef20k_matrix_reports_hybrid_muon_comparisons(tmp_
     assert comparison["mae_f_delta_mev_a"] == -25.0
     assert comparison["mae_f_ratio"] == 105.0 / 130.0
     assert comparison["seconds_per_epoch_ratio"] == 42.0 / 40.0
-    assert comparison["speedup_vs_baseline"] == 40.0 / 42.0
+    assert comparison["speedup_vs_baseline"] == pytest.approx(40.0 / 42.0)
     assert comparison["max_fb_memory_delta_mb"] == 100
 
