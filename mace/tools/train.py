@@ -121,21 +121,25 @@ def valid_err_log(
     logger,
     log_errors,
     epoch=None,
+    update=None,
     valid_loader_name="Default",
 ):
     eval_metrics["mode"] = "eval"
     eval_metrics["epoch"] = epoch
+    if update is not None:
+        eval_metrics["update"] = update
     eval_metrics["head"] = valid_loader_name
     logger.log(eval_metrics)
     if epoch is None:
         inintial_phrase = "Initial"
     else:
         inintial_phrase = f"Epoch {epoch}"
+    update_phrase = "" if update is None else f" update={update},"
     if log_errors == "PerAtomRMSE":
         error_e = eval_metrics["rmse_e_per_atom"] * 1e3
         error_f = eval_metrics["rmse_f"] * 1e3
         logging.info(
-            f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_E_per_atom={error_e:8.2f} meV, RMSE_F={error_f:8.2f} meV / A"
+            f"{inintial_phrase}:{update_phrase} head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_E_per_atom={error_e:8.2f} meV, RMSE_F={error_f:8.2f} meV / A"
         )
     elif (
         log_errors == "PerAtomRMSEstressvirials"
@@ -145,7 +149,7 @@ def valid_err_log(
         error_f = eval_metrics["rmse_f"] * 1e3
         error_stress = eval_metrics["rmse_stress"] * 1e3
         logging.info(
-            f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_E_per_atom={error_e:8.2f} meV, RMSE_F={error_f:8.2f} meV / A, RMSE_stress={error_stress:8.2f} meV / A^3",
+            f"{inintial_phrase}:{update_phrase} head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_E_per_atom={error_e:8.2f} meV, RMSE_F={error_f:8.2f} meV / A, RMSE_stress={error_stress:8.2f} meV / A^3",
         )
     elif (
         log_errors == "PerAtomRMSEstressvirials"
@@ -155,7 +159,7 @@ def valid_err_log(
         error_f = eval_metrics["rmse_f"] * 1e3
         error_virials = eval_metrics["rmse_virials_per_atom"] * 1e3
         logging.info(
-            f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_E_per_atom={error_e:8.2f} meV, RMSE_F={error_f:8.2f} meV / A, RMSE_virials_per_atom={error_virials:8.2f} meV",
+            f"{inintial_phrase}:{update_phrase} head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_E_per_atom={error_e:8.2f} meV, RMSE_F={error_f:8.2f} meV / A, RMSE_virials_per_atom={error_virials:8.2f} meV",
         )
     elif (
         log_errors == "PerAtomMAEstressvirials"
@@ -165,7 +169,7 @@ def valid_err_log(
         error_f = eval_metrics["mae_f"] * 1e3
         error_stress = eval_metrics["mae_stress"] * 1e3
         logging.info(
-            f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, MAE_E_per_atom={error_e:8.2f} meV, MAE_F={error_f:8.2f} meV / A, MAE_stress={error_stress:8.2f} meV / A^3"
+            f"{inintial_phrase}:{update_phrase} head: {valid_loader_name}, loss={valid_loss:8.8f}, MAE_E_per_atom={error_e:8.2f} meV, MAE_F={error_f:8.2f} meV / A, MAE_stress={error_stress:8.2f} meV / A^3"
         )
     elif (
         log_errors == "PerAtomMAEstressvirials"
@@ -175,43 +179,43 @@ def valid_err_log(
         error_f = eval_metrics["mae_f"] * 1e3
         error_virials = eval_metrics["mae_virials"] * 1e3
         logging.info(
-            f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, MAE_E_per_atom={error_e:8.2f} meV, MAE_F={error_f:8.2f} meV / A, MAE_virials={error_virials:8.2f} meV"
+            f"{inintial_phrase}:{update_phrase} head: {valid_loader_name}, loss={valid_loss:8.8f}, MAE_E_per_atom={error_e:8.2f} meV, MAE_F={error_f:8.2f} meV / A, MAE_virials={error_virials:8.2f} meV"
         )
     elif log_errors == "TotalRMSE":
         error_e = eval_metrics["rmse_e"] * 1e3
         error_f = eval_metrics["rmse_f"] * 1e3
         logging.info(
-            f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_E={error_e:8.2f} meV, RMSE_F={error_f:8.2f} meV / A",
+            f"{inintial_phrase}:{update_phrase} head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_E={error_e:8.2f} meV, RMSE_F={error_f:8.2f} meV / A",
         )
     elif log_errors == "PerAtomMAE":
         error_e = eval_metrics["mae_e_per_atom"] * 1e3
         error_f = eval_metrics["mae_f"] * 1e3
         logging.info(
-            f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, MAE_E_per_atom={error_e:8.2f} meV, MAE_F={error_f:8.2f} meV / A",
+            f"{inintial_phrase}:{update_phrase} head: {valid_loader_name}, loss={valid_loss:8.8f}, MAE_E_per_atom={error_e:8.2f} meV, MAE_F={error_f:8.2f} meV / A",
         )
     elif log_errors == "TotalMAE":
         error_e = eval_metrics["mae_e"] * 1e3
         error_f = eval_metrics["mae_f"] * 1e3
         logging.info(
-            f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, MAE_E={error_e:8.2f} meV, MAE_F={error_f:8.2f} meV / A",
+            f"{inintial_phrase}:{update_phrase} head: {valid_loader_name}, loss={valid_loss:8.8f}, MAE_E={error_e:8.2f} meV, MAE_F={error_f:8.2f} meV / A",
         )
     elif log_errors == "DipoleRMSE":
         error_mu = eval_metrics["rmse_mu_per_atom"] * 1e3
         logging.info(
-            f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_MU_per_atom={error_mu:8.2f} mDebye",
+            f"{inintial_phrase}:{update_phrase} head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_MU_per_atom={error_mu:8.2f} mDebye",
         )
     elif log_errors == "DipolePolarRMSE":
         error_mu = eval_metrics["rmse_mu_per_atom"] * 1e3
         error_polarizability = eval_metrics["rmse_polarizability_per_atom"] * 1e3
         logging.info(
-            f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:.4f}, RMSE_MU_per_atom={error_mu:.2f} me A, RMSE_polarizability_per_atom={error_polarizability:.2f} me A^2 / V",
+            f"{inintial_phrase}:{update_phrase} head: {valid_loader_name}, loss={valid_loss:.4f}, RMSE_MU_per_atom={error_mu:.2f} me A, RMSE_polarizability_per_atom={error_polarizability:.2f} me A^2 / V",
         )
     elif log_errors == "EnergyDipoleRMSE":
         error_e = eval_metrics["rmse_e_per_atom"] * 1e3
         error_f = eval_metrics["rmse_f"] * 1e3
         error_mu = eval_metrics["rmse_mu_per_atom"] * 1e3
         logging.info(
-            f"{inintial_phrase}: head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_E_per_atom={error_e:8.2f} meV, RMSE_F={error_f:8.2f} meV / A, RMSE_Mu_per_atom={error_mu:8.2f} mDebye",
+            f"{inintial_phrase}:{update_phrase} head: {valid_loader_name}, loss={valid_loss:8.8f}, RMSE_E_per_atom={error_e:8.2f} meV, RMSE_F={error_f:8.2f} meV / A, RMSE_Mu_per_atom={error_mu:8.2f} mDebye",
         )
 
 
@@ -325,7 +329,13 @@ def train(
             non_blocking_transfer=non_blocking_transfer,
         )
         valid_err_log(
-            valid_loss_head, eval_metrics, logger, log_errors, None, valid_loader_name
+            valid_loss_head,
+            eval_metrics,
+            logger,
+            log_errors,
+            None,
+            update=updates_completed,
+            valid_loader_name=valid_loader_name,
         )
     valid_loss = valid_loss_head  # consider only the last head for the checkpoint
 
@@ -452,7 +462,8 @@ def train(
                             logger,
                             log_errors,
                             epoch,
-                            valid_loader_name,
+                            update=updates_completed,
+                            valid_loader_name=valid_loader_name,
                         )
                         if log_wandb:
                             wandb_log_dict[valid_loader_name] = {

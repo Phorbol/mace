@@ -11,7 +11,7 @@ from statistics import mean
 
 EPOCH_RE = re.compile(
     r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) .*"
-    r"Epoch (?P<epoch>\d+):.*(?P<metric>MAE|RMSE)_E(?P<per_atom>_per_atom)?=\s*"
+    r"Epoch (?P<epoch>\d+):(?: update=(?P<update>\d+),)?.*(?P<metric>MAE|RMSE)_E(?P<per_atom>_per_atom)?=\s*"
     r"(?P<energy>nan|[0-9.]+) meV, (?P=metric)_F=\s*"
     r"(?P<forces>nan|[0-9.]+)"
     r"(?: meV / A, (?P=metric)_(?P<extra>stress|virials(?:_per_atom)?)=\s*"
@@ -82,6 +82,8 @@ def parse_log(path: Path) -> dict:
                 f"{metric_prefix}_f_mev_a": _parse_metric(match.group("forces")),
                 "timestamp": timestamp.isoformat(),
             }
+            if match.group("update") is not None:
+                epoch["update"] = int(match.group("update"))
             extra = match.group("extra")
             if extra is not None:
                 extra_key = (

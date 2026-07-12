@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -420,3 +421,22 @@ def test_train_validation_checkpoint_uses_update_metadata(monkeypatch):
         False,
         {"updates": 6, "checkpoint_kind": "update"},
     ) in checkpoint_handler.saved
+
+
+def test_valid_err_log_records_and_prints_update(caplog):
+    train_module = importlib.import_module("mace.tools.train")
+    logger = _FakeLogger()
+
+    with caplog.at_level(logging.INFO):
+        train_module.valid_err_log(
+            0.25,
+            _eval_metrics(),
+            logger,
+            "PerAtomMAE",
+            epoch=6,
+            update=4000,
+            valid_loader_name="Default",
+        )
+
+    assert logger.records[0]["update"] == 4000
+    assert "Epoch 6: update=4000, head: Default" in caplog.text

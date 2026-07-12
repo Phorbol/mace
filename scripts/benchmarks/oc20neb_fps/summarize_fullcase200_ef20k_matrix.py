@@ -103,6 +103,7 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         "compile_parity_check_strict": manifest.get("compile_parity_check_strict"),
         "log": None,
         "final_epoch": None,
+        "final_update": None,
         "mae_e_mev_atom": None,
         "mae_f_mev_a": None,
         "rmse_e_mev_atom": None,
@@ -140,6 +141,7 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         row["has_nan"] = parsed.get("has_nan")
         last = parsed.get("last") or {}
         row["final_epoch"] = last.get("epoch")
+        row["final_update"] = last.get("update")
         row["mae_e_mev_atom"] = last.get("mae_e_mev_atom")
         row["mae_f_mev_a"] = last.get("mae_f_mev_a")
         row["rmse_e_mev_atom"] = last.get("rmse_e_mev_atom")

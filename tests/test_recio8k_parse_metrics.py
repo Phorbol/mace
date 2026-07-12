@@ -92,6 +92,23 @@ def test_parse_log_reports_rmse_metrics_when_present(tmp_path):
     assert summary["has_nan"] is False
 
 
+def test_parse_log_reports_update_when_present(tmp_path):
+    parse_metrics = load_parse_metrics()
+    log = tmp_path / "train.log"
+    log.write_text(
+        "2026-06-29 04:08:39.691 INFO: Epoch 6: update=4000, "
+        "head: Default, loss=0.8, MAE_E_per_atom=18.00 meV, "
+        "MAE_F=120.00 meV / A\n"
+    )
+
+    summary = parse_metrics.parse_log(log)
+
+    assert summary["last"]["epoch"] == 6
+    assert summary["last"]["update"] == 4000
+    assert summary["last"]["mae_e_mev_atom"] == 18.0
+    assert summary["last"]["mae_f_mev_a"] == 120.0
+
+
 def test_parse_nvdmon_summarizes_gpu_memory_and_utilization(tmp_path):
     parse_metrics = load_parse_metrics()
     nvdmon = tmp_path / "nvdmon_job-123.log"

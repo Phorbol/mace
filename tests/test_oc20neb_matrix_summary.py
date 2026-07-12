@@ -46,7 +46,7 @@ def test_summarize_case_reports_update_runtime_and_manifest_metadata(tmp_path):
     log_text = """
 2026-07-12 00:00:00.000 INFO Epoch 0: head: Default, loss=1.0, MAE_E_per_atom=20.00 meV, MAE_F=140.00 meV / A
 2026-07-12 00:00:10.000 INFO Epoch 1: head: Default, loss=0.8, MAE_E_per_atom=18.00 meV, MAE_F=120.00 meV / A
-2026-07-12 00:00:30.000 INFO Epoch 2: head: Default, loss=0.7, MAE_E_per_atom=19.00 meV, MAE_F=110.00 meV / A
+2026-07-12 00:00:30.000 INFO Epoch 2: update=1250, head: Default, loss=0.7, MAE_E_per_atom=19.00 meV, MAE_F=110.00 meV / A
 """
     root, case_dir = _write_case(tmp_path, "cueq_hybrid_muon", log_text)
 
@@ -59,6 +59,7 @@ def test_summarize_case_reports_update_runtime_and_manifest_metadata(tmp_path):
     assert row["lr"] == 0.001
     assert row["weight_decay"] == 0.001
     assert row["hybrid_muon_adam_variant"] == "adamw"
+    assert row["final_update"] == 1250
     assert row["final_mae_e_mev_atom"] == pytest.approx(19.0)
     assert row["final_mae_f_mev_a"] == pytest.approx(110.0)
     assert row["best_mae_e_mev_atom"] == pytest.approx(18.0)
