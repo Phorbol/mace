@@ -72,6 +72,7 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         "stage2_energy_weight": manifest.get("stage2_energy_weight"),
         "stage2_forces_weight": manifest.get("stage2_forces_weight"),
         "compile_setup_gate": manifest.get("compile_setup_gate"),
+        "compile_max_cache_entries": manifest.get("compile_max_cache_entries"),
         "compile_parity_gradients": manifest.get("compile_parity_gradients"),
         "compile_parity_check_strict": manifest.get("compile_parity_check_strict"),
         "log": None,

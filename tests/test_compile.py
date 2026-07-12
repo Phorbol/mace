@@ -1968,6 +1968,18 @@ def test_edge_force_compiled_loss_repeat_only_uses_eager_before_threshold(monkey
     assert metrics["edge_force_num_edges"] == batch.edge_index.shape[1]
 
 
+def test_edge_force_compile_cache_capacity_rejects_new_key_when_full():
+    from mace.cache_utils import BoundedLRUCache
+    from mace.tools.training_compile import edge_force_compile_cache_has_capacity
+
+    cache = BoundedLRUCache(max_entries=1)
+    existing_key = ("shape", 4, 8)
+    new_key = ("shape", 8, 16)
+    cache.store(existing_key, object())
+
+    assert edge_force_compile_cache_has_capacity(cache, existing_key) is True
+    assert edge_force_compile_cache_has_capacity(cache, new_key) is False
+
 
 def test_edge_force_compiled_loss_returns_tensor_loss_for_weighted_energy_forces():
     from mace.modules import WeightedEnergyForcesLoss

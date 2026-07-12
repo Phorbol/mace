@@ -923,6 +923,14 @@ def _edge_force_cache_key_summary(cache_key: tuple) -> str:
     return f"policy={policy} entries={len(cache_key)}"
 
 
+def edge_force_compile_cache_has_capacity(
+    cache: BoundedLRUCache[tuple, Any], cache_key: tuple
+) -> bool:
+    if cache_key in cache:
+        return True
+    return len(cache) < max(0, int(cache.max_entries))
+
+
 def _edge_force_model_r_max(model: torch.nn.Module) -> float:
     value = getattr(model, "r_max", None)
     if value is None:
@@ -3201,6 +3209,37 @@ class EdgeForceCompiledLossModule(torch.nn.Module):
                         "edge_force_compile_setup_seconds": stats.compile_setup_seconds,
                         "edge_force_compiled_step_seconds_ema": stats.compiled_step_seconds_ema,
                         "edge_force_eager_step_seconds_ema": stats.eager_step_seconds_ema,
+                    }
+                )
+                bucket_sizes = _edge_force_bucket_sizes_from_cache_key(cache_key)
+                if bucket_sizes is not None:
+                    metrics["edge_force_bucket_atoms"] = bucket_sizes[0]
+                    metrics["edge_force_bucket_edges"] = bucket_sizes[1]
+                return loss, metrics
+            if compiled is None and not edge_force_compile_cache_has_capacity(
+                self.cache, cache_key
+            ):
+                eager_start = time.perf_counter()
+                loss, metrics = self._eager_force_loss(
+                    batch=batch,
+                    loss_fn=loss_fn,
+                    output_args=output_args,
+                    disabled_reason="cache_capacity",
+                    policy_decision=policy_decision,
+                )
+                self.cache_policy_state.record_step_time(
+                    cache_key,
+                    compiled=False,
+                    seconds=time.perf_counter() - eager_start,
+                )
+                stats = self.cache_policy_state.stats_for(cache_key)
+                metrics.update(
+                    {
+                        "edge_force_compile_setup_seconds": stats.compile_setup_seconds,
+                        "edge_force_compiled_step_seconds_ema": stats.compiled_step_seconds_ema,
+                        "edge_force_eager_step_seconds_ema": stats.eager_step_seconds_ema,
+                        "edge_force_compile_cache_capacity": self.cache.max_entries,
+                        "edge_force_compile_cache_size": len(self.cache),
                     }
                 )
                 bucket_sizes = _edge_force_bucket_sizes_from_cache_key(cache_key)

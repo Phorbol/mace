@@ -32,6 +32,7 @@ CASES=${MACE_OC20NEB_CASES:-eager,compile,cueq,cueq_compile,hybrid_muon,hybrid_m
 COMPILE_BUCKET_ATOMS=${MACE_OC20NEB_COMPILE_BUCKET_ATOMS:-384,512,640,800}
 COMPILE_BUCKET_EDGES=${MACE_OC20NEB_COMPILE_BUCKET_EDGES:-8192,12288,16384,24576,32768,40960}
 COMPILE_BUCKET_MARGIN=${MACE_OC20NEB_COMPILE_BUCKET_MARGIN:-0}
+COMPILE_MAX_CACHE_ENTRIES=${MACE_OC20NEB_COMPILE_MAX_CACHE_ENTRIES:-2}
 COMPILE_SETUP_GATE=${MACE_OC20NEB_COMPILE_SETUP_GATE:-strict}
 COMPILE_PARITY_GRADIENTS=${MACE_OC20NEB_COMPILE_PARITY_GRADIENTS:-False}
 COMPILE_PARITY_CHECK_STRICT=${MACE_OC20NEB_COMPILE_PARITY_CHECK_STRICT:-False}
@@ -98,6 +99,7 @@ cat > "${RUN_ROOT}/manifest.json" <<JSON
   "stage2_forces_weight": ${STAGE2_FORCES_WEIGHT},
   "cases": "${CASES}",
   "compile_setup_gate": "${COMPILE_SETUP_GATE}",
+  "compile_max_cache_entries": ${COMPILE_MAX_CACHE_ENTRIES},
   "compile_parity_gradients": "${COMPILE_PARITY_GRADIENTS}",
   "compile_parity_check_strict": "${COMPILE_PARITY_CHECK_STRICT}",
   "train_file": "${TRAIN_FILE}",
@@ -249,6 +251,7 @@ compile_args=(
   --edge_force_compile_bucket_atoms="${COMPILE_BUCKET_ATOMS}"
   --edge_force_compile_bucket_edges="${COMPILE_BUCKET_EDGES}"
   --edge_force_compile_bucket_margin="${COMPILE_BUCKET_MARGIN}"
+  --edge_force_compile_max_cache_entries="${COMPILE_MAX_CACHE_ENTRIES}"
   --edge_force_compile_min_repeats=2
   --edge_force_compile_parity_check_interval=1000
   --edge_force_compile_fixed_probe_interval=1000

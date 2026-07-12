@@ -316,6 +316,8 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert "MACE_OC20NEB_COMPILE_BUCKET_ATOMS:-384,512,640,800" in text
     assert "MACE_OC20NEB_COMPILE_BUCKET_EDGES:-8192,12288,16384,24576,32768,40960" in text
     assert "MACE_OC20NEB_COMPILE_BUCKET_MARGIN:-0" in text
+    assert "MACE_OC20NEB_COMPILE_MAX_CACHE_ENTRIES:-2" in text
+    assert "--edge_force_compile_max_cache_entries=" in text
     assert "--edge_force_compile_cache_policy=dynamic" not in text
     assert "--no-edge_force_compile_allow_fallback" in text
     assert "MACE_OC20NEB_CASES:-eager,compile,cueq,cueq_compile,hybrid_muon,hybrid_muon_compile,cueq_hybrid_muon,cueq_hybrid_muon_compile" in text
@@ -533,7 +535,7 @@ def test_summarize_fullcase200_ef20k_matrix_reports_case_config_and_metrics(tmp_
     log_dir = case_dir / "logs"
     log_dir.mkdir(parents=True)
     (root / "manifest.json").write_text(
-        '{\n  "batch_size": 8,\n  "target_steps": 20000,\n  "train_size": 5000,\n  "max_num_epochs": 32,\n  "stage_two_start_epoch": 24,\n  "stage1_energy_weight": 1.0,\n  "stage1_forces_weight": 100.0,\n  "stage2_energy_weight": 100.0,\n  "stage2_forces_weight": 1.0,\n  "compile_setup_gate": "strict",\n  "compile_parity_gradients": "False",\n  "compile_parity_check_strict": "False"\n}\n')
+        '{\n  "batch_size": 8,\n  "target_steps": 20000,\n  "train_size": 5000,\n  "max_num_epochs": 32,\n  "stage_two_start_epoch": 24,\n  "stage1_energy_weight": 1.0,\n  "stage1_forces_weight": 100.0,\n  "stage2_energy_weight": 100.0,\n  "stage2_forces_weight": 1.0,\n  "compile_setup_gate": "strict",\n  "compile_max_cache_entries": 2,\n  "compile_parity_gradients": "False",\n  "compile_parity_check_strict": "False"\n}\n')
     (log_dir / "train.log").write_text(
         "2026-07-12 10:20:00.000 INFO: Epoch 0: head: Default, loss=0.12, "
         "MAE_E_per_atom=  150.00 meV, MAE_F=   40.00 meV / A\n"
@@ -561,3 +563,4 @@ def test_summarize_fullcase200_ef20k_matrix_reports_case_config_and_metrics(tmp_
     assert row["mean_seconds_per_epoch"] == 100.0
     assert row["max_fb_memory_mb"] == 1234
     assert row["compile_setup_gate"] == "strict"
+    assert row["compile_max_cache_entries"] == 2
