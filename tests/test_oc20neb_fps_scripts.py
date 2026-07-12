@@ -256,7 +256,7 @@ def test_fullcase200_ef20k_demo_defaults_focus_noncompile_cueq_muon_matrix():
     sbatch = SCRIPT_ROOT / "fullcase200-ef-20k-demo.sbatch"
     text = sbatch.read_text()
 
-    assert "MACE_OC20NEB_CASES:-eager,cueq,hybrid_muon,cueq_hybrid_muon" in text
+    assert "MACE_OC20NEB_CASES:-adamw,hybrid_muon,cueq_adamw,cueq_hybrid_muon" in text
     assert "MACE_OC20NEB_CASES:-eager,compile,cueq,cueq_compile" not in text
     assert "MACE_OC20NEB_COMPILE_PARITY_GRADIENTS:-False" in text
     assert "--no-edge_force_compile_parity_check_gradients" in text
@@ -265,6 +265,16 @@ def test_fullcase200_ef20k_demo_defaults_focus_noncompile_cueq_muon_matrix():
     assert "run_selected_case cueq_compile" in text
     assert "run_selected_case hybrid_muon_compile" in text
     assert "run_selected_case cueq_hybrid_muon_compile" in text
+
+
+def test_fullcase200_ef20k_demo_supports_hybrid_muon_module_routing_cases():
+    sbatch = SCRIPT_ROOT / "fullcase200-ef-20k-demo.sbatch"
+    text = sbatch.read_text()
+
+    assert "hybrid_muon_module_args=(" in text
+    assert '--hybrid_muon_routing=module' in text
+    assert "run_selected_case hybrid_muon_module" in text
+    assert "run_selected_case cueq_hybrid_muon_module" in text
 
 
 def test_prepare_fullcase200_fps_sbatch_extracts_mace_features_before_fps():
@@ -337,7 +347,7 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert "--edge_force_compile_max_cache_entries=" in text
     assert "--edge_force_compile_cache_policy=dynamic" not in text
     assert "--no-edge_force_compile_allow_fallback" in text
-    assert "MACE_OC20NEB_CASES:-eager,cueq,hybrid_muon,cueq_hybrid_muon" in text
+    assert "MACE_OC20NEB_CASES:-adamw,hybrid_muon,cueq_adamw,cueq_hybrid_muon" in text
     assert "run_selected_case hybrid_muon" in text
     assert "run_selected_case hybrid_muon_compile" in text
     assert "run_selected_case cueq" in text
