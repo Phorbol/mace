@@ -93,10 +93,18 @@ def _save_checkpoint_after_guard(
     keep_last: bool,
     grad_guard: NonFiniteGradGuard | None,
     named_parameters,
+    updates: Optional[int] = None,
+    checkpoint_kind: str = "epoch",
 ) -> None:
     if grad_guard is not None:
         grad_guard.raise_if_nonfinite(named_parameters)
-    checkpoint_handler.save(state=state, epochs=epochs, keep_last=keep_last)
+    checkpoint_handler.save(
+        state=state,
+        epochs=epochs,
+        keep_last=keep_last,
+        updates=updates,
+        checkpoint_kind=checkpoint_kind,
+    )
 
 
 def valid_err_log(
@@ -232,6 +240,7 @@ def train(
     max_num_updates: Optional[int] = None,
     eval_interval_updates: Optional[int] = None,
     checkpoint_interval_updates: Optional[int] = None,
+    start_update: Optional[int] = None,
 ):
     lowest_loss = np.inf
     valid_loss = np.inf
@@ -266,9 +275,16 @@ def train(
         raise ValueError("eval_interval_updates must be positive")
     if checkpoint_interval_updates is not None and checkpoint_interval_updates <= 0:
         raise ValueError("checkpoint_interval_updates must be positive")
-    updates_completed = (
-        start_epoch * train_loader_len if train_loader_len is not None else start_epoch
-    )
+    if start_update is not None:
+        if start_update < 0:
+            raise ValueError("start_update must be non-negative")
+        updates_completed = start_update
+    else:
+        updates_completed = (
+            start_epoch * train_loader_len
+            if train_loader_len is not None
+            else start_epoch
+        )
     if max_num_updates is not None:
         logging.info("Training will stop after %d optimizer updates", max_num_updates)
     if eval_interval_updates is not None:
@@ -378,10 +394,12 @@ def train(
             _save_checkpoint_after_guard(
                 checkpoint_handler=checkpoint_handler,
                 state=CheckpointState(model, optimizer, lr_scheduler),
-                epochs=updates_completed,
+                epochs=epoch,
                 keep_last=True,
                 grad_guard=nonfinite_grad_guard,
                 named_parameters=model.named_parameters,
+                updates=updates_completed,
+                checkpoint_kind="update",
             )
 
         # Validate

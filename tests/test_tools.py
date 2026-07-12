@@ -46,3 +46,29 @@ def test_save_load():
 
         handler.load_latest(state=CheckpointState(model, optimizer, scheduler))
         assert np.isclose(optimizer.param_groups[0]["lr"], initial_lr)
+
+
+def test_update_checkpoint_load_latest_preserves_epoch_and_update():
+    model = MyModel()
+    optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
+    scheduler = optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=0.99)
+
+    with tempfile.TemporaryDirectory() as directory:
+        handler = CheckpointHandler(directory=directory, tag="test", keep=True)
+        handler.save(
+            state=CheckpointState(model, optimizer, scheduler),
+            epochs=2,
+            updates=7,
+            checkpoint_kind="update",
+        )
+
+        result = handler.load_latest_with_metadata(
+            state=CheckpointState(model, optimizer, scheduler),
+            prefer_update=True,
+        )
+
+    assert result is not None
+    assert result.epoch == 2
+    assert result.update == 7
+    assert result.kind == "update"
+

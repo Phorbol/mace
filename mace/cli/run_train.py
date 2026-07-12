@@ -1027,26 +1027,37 @@ def run(args) -> None:
     )
 
     start_epoch = 0
+    start_update = None
     restart_lbfgs = False
-    opt_start_epoch = None
+    opt_start_result = None
     if args.restart_latest:
         try:
-            opt_start_epoch = checkpoint_handler.load_latest(
+            opt_start_result = checkpoint_handler.load_latest_with_metadata(
                 state=tools.CheckpointState(model, optimizer, lr_scheduler),
                 swa=True,
                 device=device,
+                prefer_update=True,
             )
-        except Exception:  # pylint: disable=W0703
-            try:
-                opt_start_epoch = checkpoint_handler.load_latest(
+            if opt_start_result is None:
+                opt_start_result = checkpoint_handler.load_latest_with_metadata(
                     state=tools.CheckpointState(model, optimizer, lr_scheduler),
                     swa=False,
                     device=device,
+                    prefer_update=True,
+                )
+        except Exception:  # pylint: disable=W0703
+            try:
+                opt_start_result = checkpoint_handler.load_latest_with_metadata(
+                    state=tools.CheckpointState(model, optimizer, lr_scheduler),
+                    swa=False,
+                    device=device,
+                    prefer_update=True,
                 )
             except Exception: # pylint: disable=W0703
                 restart_lbfgs = True
-        if opt_start_epoch is not None:
-            start_epoch = opt_start_epoch
+        if opt_start_result is not None:
+            start_epoch = opt_start_result.epoch
+            start_update = opt_start_result.update
 
     ema: Optional[ExponentialMovingAverage] = None
     if args.ema:
@@ -1059,13 +1070,15 @@ def run(args) -> None:
                           max_iter=20,
                           line_search_fn="strong_wolfe")
         if restart_lbfgs:
-            opt_start_epoch = checkpoint_handler.load_latest(
+            opt_start_result = checkpoint_handler.load_latest_with_metadata(
                 state=tools.CheckpointState(model, optimizer, lr_scheduler),
                 swa=False,
                 device=device,
+                prefer_update=True,
             )
-            if opt_start_epoch is not None:
-                start_epoch = opt_start_epoch
+            if opt_start_result is not None:
+                start_epoch = opt_start_result.epoch
+                start_update = opt_start_result.update
 
     if args.wandb:
         setup_wandb(args)
@@ -1137,6 +1150,7 @@ def run(args) -> None:
         checkpoint_handler=checkpoint_handler,
         eval_interval=args.eval_interval,
         start_epoch=start_epoch,
+        start_update=start_update,
         max_num_epochs=args.max_num_epochs,
         logger=logger,
         patience=args.patience,

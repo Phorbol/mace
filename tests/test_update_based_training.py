@@ -36,8 +36,8 @@ class _FakeCheckpointHandler:
     def __init__(self):
         self.saved = []
 
-    def save(self, state, epochs, keep_last):
-        self.saved.append((epochs, keep_last))
+    def save(self, state, epochs, keep_last, **kwargs):
+        self.saved.append((epochs, keep_last, kwargs))
 
 
 def _eval_metrics():
@@ -243,6 +243,57 @@ def test_train_saves_update_interval_checkpoints_without_waiting_for_validation(
         checkpoint_interval_updates=3,
     )
 
-    assert (3, True) in checkpoint_handler.saved
-    assert (6, True) in checkpoint_handler.saved
+    assert (
+        0,
+        True,
+        {"updates": 3, "checkpoint_kind": "update"},
+    ) in checkpoint_handler.saved
+    assert (
+        1,
+        True,
+        {"updates": 6, "checkpoint_kind": "update"},
+    ) in checkpoint_handler.saved
+
+
+def test_train_resume_uses_explicit_start_update(monkeypatch):
+    train_module = importlib.import_module("mace.tools.train")
+    train_calls = []
+
+    def fake_evaluate(**_kwargs):
+        return 0.0, _eval_metrics()
+
+    def fake_train_one_epoch(**kwargs):
+        train_calls.append({
+            "epoch": kwargs["epoch"],
+            "global_step_start": kwargs["global_step_start"],
+            "max_steps": kwargs.get("max_steps"),
+        })
+        return kwargs.get("max_steps")
+
+    monkeypatch.setattr(train_module, "evaluate", fake_evaluate)
+    monkeypatch.setattr(train_module, "train_one_epoch", fake_train_one_epoch)
+
+    train_module.train(
+        model=torch.nn.Linear(1, 1),
+        loss_fn=_MiniLoss(),
+        train_loader=[object(), object(), object()],
+        valid_loaders={"valid": [object()]},
+        optimizer=torch.optim.SGD([torch.nn.Parameter(torch.tensor([1.0]))], lr=0.1),
+        lr_scheduler=_FakeScheduler(),
+        start_epoch=4,
+        start_update=4,
+        max_num_epochs=10,
+        patience=999,
+        checkpoint_handler=_FakeCheckpointHandler(),
+        logger=_FakeLogger(),
+        eval_interval=999,
+        output_args={"forces": False, "virials": False, "stress": False},
+        device=torch.device("cpu"),
+        log_errors="PerAtomMAE",
+        max_num_updates=5,
+    )
+
+    assert train_calls == [
+        {"epoch": 4, "global_step_start": 4, "max_steps": 1},
+    ]
 
