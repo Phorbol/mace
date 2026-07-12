@@ -440,3 +440,93 @@ def test_valid_err_log_records_and_prints_update(caplog):
 
     assert logger.records[0]["update"] == 4000
     assert "Epoch 6: update=4000, head: Default" in caplog.text
+
+
+def test_train_splits_epoch_at_next_update_boundary(monkeypatch):
+    train_module = importlib.import_module("mace.tools.train")
+    train_calls = []
+
+    def fake_evaluate(**_kwargs):
+        return 1.0, _eval_metrics()
+
+    def fake_train_one_epoch(**kwargs):
+        train_calls.append({
+            "epoch": kwargs["epoch"],
+            "global_step_start": kwargs["global_step_start"],
+            "max_steps": kwargs.get("max_steps"),
+        })
+        return kwargs.get("max_steps")
+
+    monkeypatch.setattr(train_module, "evaluate", fake_evaluate)
+    monkeypatch.setattr(train_module, "train_one_epoch", fake_train_one_epoch)
+
+    train_module.train(
+        model=torch.nn.Linear(1, 1),
+        loss_fn=_MiniLoss(),
+        train_loader=[object(), object(), object()],
+        valid_loaders={"valid": [object()]},
+        optimizer=torch.optim.SGD([torch.nn.Parameter(torch.tensor([1.0]))], lr=0.1),
+        lr_scheduler=_FakeScheduler(),
+        start_epoch=0,
+        max_num_epochs=5,
+        patience=999,
+        checkpoint_handler=_FakeCheckpointHandler(),
+        logger=_FakeLogger(),
+        eval_interval=999,
+        output_args={"forces": False, "virials": False, "stress": False},
+        device=torch.device("cpu"),
+        log_errors="PerAtomMAE",
+        max_num_updates=8,
+        eval_interval_updates=4,
+        checkpoint_interval_updates=4,
+    )
+
+    assert train_calls == [
+        {"epoch": 0, "global_step_start": 0, "max_steps": 3},
+        {"epoch": 1, "global_step_start": 3, "max_steps": 1},
+        {"epoch": 2, "global_step_start": 4, "max_steps": 3},
+        {"epoch": 3, "global_step_start": 7, "max_steps": 1},
+    ]
+
+
+def test_update_based_training_reaches_max_updates_despite_boundary_splits(monkeypatch):
+    train_module = importlib.import_module("mace.tools.train")
+    train_calls = []
+
+    def fake_evaluate(**_kwargs):
+        return 1.0, _eval_metrics()
+
+    def fake_train_one_epoch(**kwargs):
+        train_calls.append({
+            "epoch": kwargs["epoch"],
+            "global_step_start": kwargs["global_step_start"],
+            "max_steps": kwargs.get("max_steps"),
+        })
+        return kwargs.get("max_steps")
+
+    monkeypatch.setattr(train_module, "evaluate", fake_evaluate)
+    monkeypatch.setattr(train_module, "train_one_epoch", fake_train_one_epoch)
+
+    train_module.train(
+        model=torch.nn.Linear(1, 1),
+        loss_fn=_MiniLoss(),
+        train_loader=[object(), object(), object()],
+        valid_loaders={"valid": [object()]},
+        optimizer=torch.optim.SGD([torch.nn.Parameter(torch.tensor([1.0]))], lr=0.1),
+        lr_scheduler=_FakeScheduler(),
+        start_epoch=0,
+        max_num_epochs=3,
+        patience=999,
+        checkpoint_handler=_FakeCheckpointHandler(),
+        logger=_FakeLogger(),
+        eval_interval=999,
+        output_args={"forces": False, "virials": False, "stress": False},
+        device=torch.device("cpu"),
+        log_errors="PerAtomMAE",
+        max_num_updates=8,
+        eval_interval_updates=4,
+        checkpoint_interval_updates=4,
+    )
+
+    assert train_calls[-1]["global_step_start"] == 7
+    assert sum(call["max_steps"] for call in train_calls) == 8

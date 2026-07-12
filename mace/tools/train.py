@@ -93,6 +93,28 @@ def _crossed_update_interval(
     return current_updates // interval > previous_updates // interval
 
 
+def _next_update_boundary(
+    updates_completed: int,
+    *,
+    max_num_updates: Optional[int] = None,
+    eval_interval_updates: Optional[int] = None,
+    checkpoint_interval_updates: Optional[int] = None,
+    start_stage_two_update: Optional[int] = None,
+) -> Optional[int]:
+    boundaries = []
+    if max_num_updates is not None and max_num_updates > updates_completed:
+        boundaries.append(max_num_updates)
+    for interval in (eval_interval_updates, checkpoint_interval_updates):
+        if interval is not None and interval > 0:
+            boundaries.append(((updates_completed // interval) + 1) * interval)
+    if (
+        start_stage_two_update is not None
+        and start_stage_two_update > updates_completed
+    ):
+        boundaries.append(start_stage_two_update)
+    return min(boundaries) if boundaries else None
+
+
 def _save_checkpoint_after_guard(
     *,
     checkpoint_handler: CheckpointHandler,
@@ -341,7 +363,7 @@ def train(
 
     # variable used for broadcast by rank == 0 if epoch loop is exited early, e.g. patience
     exit_now = torch.zeros(1, device=device) if distributed else None
-    while epoch < max_num_epochs:
+    while max_num_updates is not None or epoch < max_num_epochs:
         if max_num_updates is not None and updates_completed >= max_num_updates:
             break
         stage_two_by_epoch = swa is not None and epoch >= swa.start
@@ -374,8 +396,15 @@ def train(
             optimizer.train()
         global_step_start = updates_completed
         max_steps_this_epoch = None
-        if max_num_updates is not None:
-            max_steps_this_epoch = max(0, max_num_updates - updates_completed)
+        next_update_boundary = _next_update_boundary(
+            updates_completed,
+            max_num_updates=max_num_updates,
+            eval_interval_updates=eval_interval_updates,
+            checkpoint_interval_updates=checkpoint_interval_updates,
+            start_stage_two_update=(swa.start_update if swa is not None else None),
+        )
+        if next_update_boundary is not None:
+            max_steps_this_epoch = max(0, next_update_boundary - updates_completed)
             if train_loader_len is not None:
                 max_steps_this_epoch = min(max_steps_this_epoch, train_loader_len)
         steps_completed = train_one_epoch(
