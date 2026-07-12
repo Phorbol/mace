@@ -304,6 +304,8 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert "--stage_two_energy_weight=" in text
     assert "--stage_two_forces_weight=" in text
     assert "stage_two_start_epoch" in text
+    assert "valid_batch_size" in text
+    assert "slurm_gpus_per_node" in text
     assert "--energy_key=energy" in text
     assert "--forces_key=forces" in text
     assert "--edge_force_compile_force_gradient_mode=positions" in text

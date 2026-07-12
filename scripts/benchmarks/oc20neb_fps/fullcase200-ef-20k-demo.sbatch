@@ -81,6 +81,7 @@ INNERPY
 cat > "${RUN_ROOT}/manifest.json" <<JSON
 {
   "batch_size": ${BATCH_SIZE},
+  "valid_batch_size": ${VALID_BATCH_SIZE},
   "data_root": "${DATA_ROOT}",
   "eval_interval": ${EVAL_INTERVAL},
   "max_num_epochs": ${MAX_EPOCHS},
@@ -90,6 +91,7 @@ cat > "${RUN_ROOT}/manifest.json" <<JSON
   "stage_two": "${STAGE_TWO}",
   "stage_two_fraction": ${STAGE_TWO_FRACTION},
   "stage_two_start_epoch": ${START_STAGE_TWO},
+  "slurm_gpus_per_node": "${SLURM_GPUS_PER_NODE:-${SLURM_GPUS_ON_NODE:-unknown}}",
   "stage1_energy_weight": ${STAGE1_ENERGY_WEIGHT},
   "stage1_forces_weight": ${STAGE1_FORCES_WEIGHT},
   "stage2_energy_weight": ${STAGE2_ENERGY_WEIGHT},
