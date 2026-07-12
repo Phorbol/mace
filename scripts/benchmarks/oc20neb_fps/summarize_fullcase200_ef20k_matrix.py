@@ -47,6 +47,16 @@ def _case_nvdmon(case_dir: Path) -> dict[str, Any] | None:
     return parse_nvdmon(nvdmon_files[-1])
 
 
+def _best_metric_from_log(parsed: dict[str, Any], key: str) -> float | None:
+    records = parsed.get("records") or parsed.get("epochs") or []
+    values = [record.get(key) for record in records if record.get(key) is not None]
+    if values:
+        return float(min(values))
+    last = parsed.get("last") or {}
+    value = last.get(key)
+    return None if value is None else float(value)
+
+
 def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict[str, Any]:
     case_name = case_dir.name
     steps_per_epoch = _steps_per_epoch(manifest)
@@ -97,7 +107,18 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         "mae_f_mev_a": None,
         "rmse_e_mev_atom": None,
         "rmse_f_mev_a": None,
+        "final_mae_e_mev_atom": None,
+        "final_mae_f_mev_a": None,
+        "final_rmse_e_mev_atom": None,
+        "final_rmse_f_mev_a": None,
+        "best_mae_e_mev_atom": None,
+        "best_mae_f_mev_a": None,
+        "best_rmse_e_mev_atom": None,
+        "best_rmse_f_mev_a": None,
         "mean_seconds_per_epoch": None,
+        "seconds_per_update": None,
+        "updates_per_second": None,
+        "total_train_seconds_estimate": None,
         "train_compile_fallback": None,
         "train_compile_fallback_count": None,
         "has_nan": None,
@@ -123,8 +144,27 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         row["mae_f_mev_a"] = last.get("mae_f_mev_a")
         row["rmse_e_mev_atom"] = last.get("rmse_e_mev_atom")
         row["rmse_f_mev_a"] = last.get("rmse_f_mev_a")
+        row["final_mae_e_mev_atom"] = row["mae_e_mev_atom"]
+        row["final_mae_f_mev_a"] = row["mae_f_mev_a"]
+        row["final_rmse_e_mev_atom"] = row["rmse_e_mev_atom"]
+        row["final_rmse_f_mev_a"] = row["rmse_f_mev_a"]
+        row["best_mae_e_mev_atom"] = _best_metric_from_log(parsed, "mae_e_mev_atom")
+        row["best_mae_f_mev_a"] = _best_metric_from_log(parsed, "mae_f_mev_a")
+        row["best_rmse_e_mev_atom"] = _best_metric_from_log(parsed, "rmse_e_mev_atom")
+        row["best_rmse_f_mev_a"] = _best_metric_from_log(parsed, "rmse_f_mev_a")
         timing = parsed.get("timing") or {}
         row["mean_seconds_per_epoch"] = timing.get("mean_seconds_per_epoch")
+        mean_epoch = row.get("mean_seconds_per_epoch")
+        if mean_epoch is not None and steps_per_epoch:
+            row["seconds_per_update"] = float(mean_epoch) / int(steps_per_epoch)
+            row["updates_per_second"] = int(steps_per_epoch) / float(mean_epoch)
+        if (
+            row.get("seconds_per_update") is not None
+            and row.get("effective_updates") is not None
+        ):
+            row["total_train_seconds_estimate"] = (
+                float(row["seconds_per_update"]) * int(row["effective_updates"])
+            )
 
     nvdmon = _case_nvdmon(case_dir)
     if nvdmon is not None:
