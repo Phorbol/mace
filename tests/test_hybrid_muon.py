@@ -1142,6 +1142,42 @@ def test_hybrid_muon_adam_variant_can_use_coupled_adam(monkeypatch):
     assert adam_group["adam_variant"] == "adam"
 
 
+def test_hybrid_muon_adam_route_initializes_state_after_muon_route_switch():
+    param = torch.nn.Parameter(torch.eye(8))
+    groups = [
+        {
+            "params": [param],
+            "route": "muon",
+            "lr": 1.0e-4,
+            "weight_decay": 0.0,
+            "beta": 0.9,
+            "muon_mode": "2d",
+        }
+    ]
+    optimizer = HybridMuon(groups, lr=1.0e-3)
+
+    param.grad = torch.ones_like(param)
+    optimizer.step()
+    assert "momentum" in optimizer.state[param]
+    assert "step" not in optimizer.state[param]
+
+    optimizer.param_groups[0].update(
+        {
+            "route": "adam",
+            "adam_variant": "adamw",
+            "lr": 1.0e-3,
+            "weight_decay": 1.0e-4,
+        }
+    )
+    param.grad = torch.full_like(param, 0.5)
+
+    optimizer.step()
+
+    assert optimizer.state[param]["step"].item() == 1.0
+    assert optimizer.state[param]["exp_avg"].shape == param.shape
+    assert optimizer.state[param]["exp_avg_sq"].shape == param.shape
+
+
 def test_hybrid_muon_adam_route_converts_legacy_integer_step_for_foreach():
     param = torch.nn.Parameter(torch.ones(1, 8))
     param.grad = torch.ones_like(param)

@@ -1249,15 +1249,17 @@ class HybridMuon(Optimizer):
                     "HybridMuon Adam route does not support sparse gradients"
                 )
             state = self.state[param]
-            if not state:
+            if "step" not in state:
                 state["step"] = torch.tensor(0.0)
+            if "exp_avg" not in state:
                 state["exp_avg"] = torch.zeros_like(param, dtype=torch.float32)
+            if "exp_avg_sq" not in state:
                 state["exp_avg_sq"] = torch.zeros_like(param, dtype=torch.float32)
-                if amsgrad:
-                    state["max_exp_avg_sq"] = torch.zeros_like(
-                        param, dtype=torch.float32
-                    )
-            elif not torch.is_tensor(state["step"]):
+            if amsgrad and "max_exp_avg_sq" not in state:
+                state["max_exp_avg_sq"] = torch.zeros_like(
+                    param, dtype=torch.float32
+                )
+            if not torch.is_tensor(state["step"]):
                 state["step"] = torch.tensor(float(state["step"]))
             elif state["step"].dtype not in (torch.float32, torch.float64):
                 state["step"] = state["step"].detach().to(
