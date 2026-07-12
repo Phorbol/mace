@@ -1024,6 +1024,7 @@ def run(args) -> None:
         tag=tag,
         keep=args.keep_checkpoints,
         swa_start=args.start_swa,
+        swa_start_update=getattr(args, "start_swa_update", None),
     )
 
     start_epoch = 0

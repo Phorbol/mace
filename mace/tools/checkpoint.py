@@ -64,17 +64,39 @@ class CheckpointLoadResult:
 
 class CheckpointIO:
     def __init__(
-        self, directory: str, tag: str, keep: bool = False, swa_start: int = None
+        self,
+        directory: str,
+        tag: str,
+        keep: bool = False,
+        swa_start: int = None,
+        swa_start_update: int = None,
     ) -> None:
         self.directory = directory
         self.tag = tag
         self.keep = keep
         self.old_path: Optional[str] = None
         self.swa_start = swa_start
+        self.swa_start_update = swa_start_update
 
         self._epochs_string = "_epoch-"
         self._updates_string = "_update-"
         self._filename_extension = "pt"
+
+    def _is_swa_checkpoint(
+        self,
+        *,
+        epochs: int,
+        updates: Optional[int],
+        checkpoint_kind: str,
+        swa_start: Optional[int],
+    ) -> bool:
+        if (
+            checkpoint_kind == "update"
+            and self.swa_start_update is not None
+            and updates is not None
+        ):
+            return updates >= self.swa_start_update
+        return swa_start is not None and epochs >= swa_start
 
     def _get_checkpoint_filename(
         self,
@@ -87,12 +109,22 @@ class CheckpointIO:
             if updates is None:
                 raise ValueError("updates must be provided for update checkpoints")
             suffix = f"{self._updates_string}{updates}"
-            if swa_start is not None and epochs >= swa_start:
+            if self._is_swa_checkpoint(
+                epochs=epochs,
+                updates=updates,
+                checkpoint_kind=checkpoint_kind,
+                swa_start=swa_start,
+            ):
                 suffix += "_swa"
             return self.tag + suffix + "." + self._filename_extension
         if checkpoint_kind != "epoch":
             raise ValueError(f"Unsupported checkpoint kind: {checkpoint_kind!r}")
-        if swa_start is not None and epochs >= swa_start:
+        if self._is_swa_checkpoint(
+            epochs=epochs,
+            updates=updates,
+            checkpoint_kind=checkpoint_kind,
+            swa_start=swa_start,
+        ):
             return (
                 self.tag
                 + self._epochs_string

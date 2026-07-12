@@ -72,3 +72,35 @@ def test_update_checkpoint_load_latest_preserves_epoch_and_update():
     assert result.update == 7
     assert result.kind == "update"
 
+
+
+def test_update_checkpoint_uses_update_stage_two_boundary_for_swa():
+    model = MyModel()
+    optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
+    scheduler = optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=0.99)
+
+    with tempfile.TemporaryDirectory() as directory:
+        handler = CheckpointHandler(
+            directory=directory,
+            tag="test",
+            keep=True,
+            swa_start=999,
+            swa_start_update=10,
+        )
+        handler.save(
+            state=CheckpointState(model, optimizer, scheduler),
+            epochs=2,
+            updates=12,
+            checkpoint_kind="update",
+        )
+
+        result = handler.load_latest_with_metadata(
+            state=CheckpointState(model, optimizer, scheduler),
+            swa=True,
+            prefer_update=True,
+        )
+
+    assert result is not None
+    assert result.epoch == 2
+    assert result.update == 12
+    assert result.kind == "update"
