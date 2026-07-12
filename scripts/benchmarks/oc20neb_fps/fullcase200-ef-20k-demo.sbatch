@@ -28,10 +28,13 @@ STAGE1_ENERGY_WEIGHT=${MACE_OC20NEB_STAGE1_ENERGY_WEIGHT:-1.0}
 STAGE1_FORCES_WEIGHT=${MACE_OC20NEB_STAGE1_FORCES_WEIGHT:-100.0}
 STAGE2_ENERGY_WEIGHT=${MACE_OC20NEB_STAGE2_ENERGY_WEIGHT:-100.0}
 STAGE2_FORCES_WEIGHT=${MACE_OC20NEB_STAGE2_FORCES_WEIGHT:-1.0}
-CASES=${MACE_OC20NEB_CASES:-eager,compile,hybrid_muon,hybrid_muon_compile}
+CASES=${MACE_OC20NEB_CASES:-eager,compile,cueq,cueq_compile,hybrid_muon,hybrid_muon_compile,cueq_hybrid_muon,cueq_hybrid_muon_compile}
 COMPILE_BUCKET_ATOMS=${MACE_OC20NEB_COMPILE_BUCKET_ATOMS:-384,512,640,800}
 COMPILE_BUCKET_EDGES=${MACE_OC20NEB_COMPILE_BUCKET_EDGES:-8192,12288,16384,24576,32768,40960}
 COMPILE_BUCKET_MARGIN=${MACE_OC20NEB_COMPILE_BUCKET_MARGIN:-0}
+COMPILE_SETUP_GATE=${MACE_OC20NEB_COMPILE_SETUP_GATE:-strict}
+COMPILE_PARITY_GRADIENTS=${MACE_OC20NEB_COMPILE_PARITY_GRADIENTS:-False}
+COMPILE_PARITY_CHECK_STRICT=${MACE_OC20NEB_COMPILE_PARITY_CHECK_STRICT:-False}
 
 export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
@@ -92,6 +95,9 @@ cat > "${RUN_ROOT}/manifest.json" <<JSON
   "stage2_energy_weight": ${STAGE2_ENERGY_WEIGHT},
   "stage2_forces_weight": ${STAGE2_FORCES_WEIGHT},
   "cases": "${CASES}",
+  "compile_setup_gate": "${COMPILE_SETUP_GATE}",
+  "compile_parity_gradients": "${COMPILE_PARITY_GRADIENTS}",
+  "compile_parity_check_strict": "${COMPILE_PARITY_CHECK_STRICT}",
   "train_file": "${TRAIN_FILE}",
   "train_size": ${TRAIN_SIZE},
   "valid_file": "${VALID_FILE}"
@@ -236,7 +242,7 @@ compile_args=(
   --edge_force_compile
   --edge_force_compile_force_gradient_mode=positions
   --edge_force_compile_tracing_mode=real
-  --edge_force_compile_setup_gate=strict
+  --edge_force_compile_setup_gate="${COMPILE_SETUP_GATE}"
   --edge_force_compile_cache_policy=bucket
   --edge_force_compile_bucket_atoms="${COMPILE_BUCKET_ATOMS}"
   --edge_force_compile_bucket_edges="${COMPILE_BUCKET_EDGES}"
@@ -247,6 +253,32 @@ compile_args=(
   --no-edge_force_compile_allow_fallback
   --no-edge_force_compile_disable_negative_speedup
 )
+
+case "${COMPILE_PARITY_GRADIENTS}" in
+  True|true|1|yes|YES|on|ON)
+    compile_args+=(--edge_force_compile_parity_check_gradients)
+    ;;
+  False|false|0|no|NO|off|OFF)
+    compile_args+=(--no-edge_force_compile_parity_check_gradients)
+    ;;
+  *)
+    echo "Invalid MACE_OC20NEB_COMPILE_PARITY_GRADIENTS=${COMPILE_PARITY_GRADIENTS}; expected True or False" >&2
+    exit 2
+    ;;
+esac
+
+case "${COMPILE_PARITY_CHECK_STRICT}" in
+  True|true|1|yes|YES|on|ON)
+    compile_args+=(--edge_force_compile_parity_check_strict)
+    ;;
+  False|false|0|no|NO|off|OFF)
+    compile_args+=(--no-edge_force_compile_parity_check_strict)
+    ;;
+  *)
+    echo "Invalid MACE_OC20NEB_COMPILE_PARITY_CHECK_STRICT=${COMPILE_PARITY_CHECK_STRICT}; expected True or False" >&2
+    exit 2
+    ;;
+esac
 
 hybrid_muon_args=(
   --optimizer=hybrid_muon
