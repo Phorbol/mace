@@ -51,6 +51,7 @@ HYBRID_MUON_MODE=${MACE_OC20NEB_HYBRID_MUON_MODE:-2d}
 HYBRID_MUON_ROUTING=${MACE_OC20NEB_HYBRID_MUON_ROUTING:-mace}
 HYBRID_MUON_LR_FACTOR=${MACE_OC20NEB_HYBRID_MUON_LR_FACTOR:-0.1}
 HYBRID_MUON_STAGE_TWO_LR_FACTOR=${MACE_OC20NEB_HYBRID_MUON_STAGE_TWO_LR_FACTOR:-1.0}
+HYBRID_MUON_STAGE_TWO_ROUTE=${MACE_OC20NEB_HYBRID_MUON_STAGE_TWO_ROUTE:-keep}
 HYBRID_MUON_WEIGHT_DECAY=${MACE_OC20NEB_HYBRID_MUON_WEIGHT_DECAY:-0.0}
 HYBRID_MUON_ADAM_VARIANT=${MACE_OC20NEB_HYBRID_MUON_ADAM_VARIANT:-adamw}
 HYBRID_MUON_LR_SCALE_MODE=${MACE_OC20NEB_HYBRID_MUON_LR_SCALE_MODE:-original}
@@ -159,6 +160,7 @@ cat > "${RUN_ROOT}/manifest.json" <<JSON
   "hybrid_muon_routing": "${HYBRID_MUON_ROUTING}",
   "hybrid_muon_lr_factor": ${HYBRID_MUON_LR_FACTOR},
   "hybrid_muon_stage_two_lr_factor": ${HYBRID_MUON_STAGE_TWO_LR_FACTOR},
+  "hybrid_muon_stage_two_route": "${HYBRID_MUON_STAGE_TWO_ROUTE}",
   "hybrid_muon_weight_decay": ${HYBRID_MUON_WEIGHT_DECAY},
   "hybrid_muon_adam_variant": "${HYBRID_MUON_ADAM_VARIANT}",
   "hybrid_muon_lr_scale_mode": "${HYBRID_MUON_LR_SCALE_MODE}",
@@ -376,6 +378,7 @@ hybrid_muon_args=(
   --hybrid_muon_routing="${HYBRID_MUON_ROUTING}"
   --hybrid_muon_lr_factor="${HYBRID_MUON_LR_FACTOR}"
   --hybrid_muon_stage_two_lr_factor="${HYBRID_MUON_STAGE_TWO_LR_FACTOR}"
+  --hybrid_muon_stage_two_route="${HYBRID_MUON_STAGE_TWO_ROUTE}"
   --hybrid_muon_weight_decay="${HYBRID_MUON_WEIGHT_DECAY}"
   --hybrid_muon_adam_variant="${HYBRID_MUON_ADAM_VARIANT}"
   --hybrid_muon_lr_scale_mode="${HYBRID_MUON_LR_SCALE_MODE}"

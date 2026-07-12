@@ -1217,6 +1217,17 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=1.0,
     )
     parser.add_argument(
+        "--hybrid_muon_stage_two_route",
+        help=(
+            "Optimizer route for HybridMuon-routed matrix parameter groups when "
+            "Stage Two starts. 'keep' preserves Muon; 'adamw' or 'adam' switch "
+            "those groups to the corresponding Adam variant at the base LR."
+        ),
+        type=str,
+        default="keep",
+        choices=["keep", "adam", "adamw"],
+    )
+    parser.add_argument(
         "--hybrid_muon_mode",
         help=(
             "HybridMuon matrix routing mode. '2d' preserves the conservative "

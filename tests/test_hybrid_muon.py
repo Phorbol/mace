@@ -58,7 +58,10 @@ def test_hybrid_muon_routes_only_safe_dense_mace_weights():
     assert "atomic_energies_fn.weight" in adam_names
     assert "products" in adam_names
     assert sum(len(group["params"]) for group in groups) == len(list(model.parameters()))
-    assert next(group for group in groups if group["route"] == "muon")["lr"] == 1.0e-4
+    muon_group = next(group for group in groups if group["route"] == "muon")
+    assert muon_group["lr"] == 1.0e-4
+    assert muon_group["hybrid_muon_base_lr"] == 1.0e-3
+    assert muon_group["hybrid_muon_lr_factor"] == 0.1
     assert next(group for group in groups if group["route"] == "adam")["lr"] == 1.0e-3
 
 
@@ -1289,6 +1292,8 @@ def test_arg_parser_accepts_hybrid_muon_magma_lite_flag():
             "--hybrid_muon_magma_bypass_first_step",
             "--hybrid_muon_stage_two_lr_factor",
             "0.25",
+            "--hybrid_muon_stage_two_route",
+            "adamw",
         ]
     )
 
@@ -1301,6 +1306,7 @@ def test_arg_parser_accepts_hybrid_muon_magma_lite_flag():
     assert args.hybrid_muon_magma_warmup_steps == 3
     assert args.hybrid_muon_magma_bypass_first_step is True
     assert args.hybrid_muon_stage_two_lr_factor == 0.25
+    assert args.hybrid_muon_stage_two_route == "adamw"
 
 
 def test_get_optimizer_builds_hybrid_muon():

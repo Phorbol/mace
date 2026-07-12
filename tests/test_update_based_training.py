@@ -70,12 +70,15 @@ def test_arg_parser_accepts_update_based_training_flags():
         "1000",
         "--checkpoint_interval_updates",
         "5000",
+        "--hybrid_muon_stage_two_route",
+        "adamw",
     ])
 
     assert args.max_num_updates == 20000
     assert args.start_swa_update == 15000
     assert args.eval_interval_updates == 1000
     assert args.checkpoint_interval_updates == 5000
+    assert args.hybrid_muon_stage_two_route == "adamw"
 
 
 def test_train_one_epoch_stops_after_max_steps(monkeypatch):
@@ -272,6 +275,70 @@ def test_train_scales_only_muon_lr_when_stage_two_starts(monkeypatch, caplog):
         "Applied HybridMuon Stage Two LR factor 0.25 to 1 Muon param group"
         in caplog.text
     )
+
+
+def test_train_switches_muon_route_to_adamw_when_stage_two_starts(monkeypatch, caplog):
+    train_module = importlib.import_module("mace.tools.train")
+    stage_one_loss = _MiniLoss()
+    stage_two_loss = _MiniLoss()
+    param = torch.nn.Parameter(torch.tensor([1.0]))
+    optimizer = torch.optim.SGD([param], lr=0.1)
+    optimizer.param_groups[0].update(
+        {
+            "route": "muon",
+            "adam_variant": "adamw",
+            "weight_decay": 0.0,
+            "beta": 0.9,
+            "muon_mode": "2d",
+            "hybrid_muon_base_lr": 0.001,
+            "hybrid_muon_lr_factor": 0.1,
+        }
+    )
+    optimizer.param_groups.append({"params": [], "lr": 0.2, "route": "adam"})
+    scheduler = _FakeWrappedScheduler([0.1, 0.2])
+
+    def fake_evaluate(**_kwargs):
+        return 0.0, _eval_metrics()
+
+    def fake_train_one_epoch(**kwargs):
+        return len(kwargs["data_loader"])
+
+    monkeypatch.setattr(train_module, "evaluate", fake_evaluate)
+    monkeypatch.setattr(train_module, "train_one_epoch", fake_train_one_epoch)
+
+    caplog.set_level(logging.INFO)
+    train_module.train(
+        model=torch.nn.Linear(1, 1),
+        loss_fn=stage_one_loss,
+        train_loader=[object(), object(), object()],
+        valid_loaders={"valid": [object()]},
+        optimizer=optimizer,
+        lr_scheduler=scheduler,
+        start_epoch=0,
+        max_num_epochs=3,
+        patience=999,
+        checkpoint_handler=_FakeCheckpointHandler(),
+        logger=_FakeLogger(),
+        eval_interval=1,
+        output_args={"forces": False, "virials": False, "stress": False},
+        device=torch.device("cpu"),
+        log_errors="PerAtomMAE",
+        max_num_updates=6,
+        hybrid_muon_stage_two_route="adamw",
+        swa=SimpleNamespace(
+            start=999,
+            start_update=3,
+            loss_fn=stage_two_loss,
+            model=SimpleNamespace(update_parameters=lambda _model: None),
+            scheduler=SimpleNamespace(step=lambda: None),
+        ),
+    )
+
+    assert optimizer.param_groups[0]["route"] == "adam"
+    assert optimizer.param_groups[0]["adam_variant"] == "adamw"
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(0.001)
+    assert scheduler.lr_scheduler.base_lrs == pytest.approx([0.001, 0.2])
+    assert "Switched 1 HybridMuon param group from Muon to AdamW for Stage Two" in caplog.text
 
 
 def test_train_saves_update_interval_checkpoints_without_waiting_for_validation(monkeypatch):

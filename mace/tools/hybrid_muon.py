@@ -774,6 +774,8 @@ def build_hybrid_muon_param_groups(
                 "params": muon_params,
                 "route": "muon",
                 "lr": lr * muon_lr_factor,
+                "hybrid_muon_base_lr": lr,
+                "hybrid_muon_lr_factor": muon_lr_factor,
                 "weight_decay": muon_weight_decay,
                 "beta": beta,
                 "muon_mode": muon_mode,

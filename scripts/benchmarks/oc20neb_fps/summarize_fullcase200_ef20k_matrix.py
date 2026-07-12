@@ -155,6 +155,7 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         "hybrid_muon_routing": _hybrid_muon_routing_from_case(case_name, manifest),
         "hybrid_muon_lr_factor": manifest.get("hybrid_muon_lr_factor"),
         "hybrid_muon_stage_two_lr_factor": manifest.get("hybrid_muon_stage_two_lr_factor"),
+        "hybrid_muon_stage_two_route": manifest.get("hybrid_muon_stage_two_route"),
         "hybrid_muon_weight_decay": manifest.get("hybrid_muon_weight_decay"),
         "hybrid_muon_adam_variant": manifest.get("hybrid_muon_adam_variant"),
         "hybrid_muon_lr_scale_mode": manifest.get("hybrid_muon_lr_scale_mode"),
@@ -302,6 +303,7 @@ def _comparison_row(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         "hybrid_muon_routing": candidate.get("hybrid_muon_routing"),
         "hybrid_muon_lr_factor": candidate.get("hybrid_muon_lr_factor"),
         "hybrid_muon_stage_two_lr_factor": candidate.get("hybrid_muon_stage_two_lr_factor"),
+        "hybrid_muon_stage_two_route": candidate.get("hybrid_muon_stage_two_route"),
         "baseline_mae_e_mev_atom": baseline.get("mae_e_mev_atom"),
         "candidate_mae_e_mev_atom": candidate.get("mae_e_mev_atom"),
         "mae_e_delta_mev_atom": _numeric_delta(candidate.get("mae_e_mev_atom"), baseline.get("mae_e_mev_atom")),
@@ -370,6 +372,7 @@ def _ablation_label(row: dict[str, Any]) -> str:
             ("hybrid_muon_routing", "routing"),
             ("hybrid_muon_lr_factor", "lr_factor"),
             ("hybrid_muon_stage_two_lr_factor", "stage2_lr_factor"),
+            ("hybrid_muon_stage_two_route", "stage2_route"),
             ("hybrid_muon_lr_scale_mode", "scale"),
         ):
             value = row.get(key)
@@ -417,6 +420,7 @@ def _ablation_row(
         "hybrid_muon_routing": row.get("hybrid_muon_routing"),
         "hybrid_muon_lr_factor": row.get("hybrid_muon_lr_factor"),
         "hybrid_muon_stage_two_lr_factor": row.get("hybrid_muon_stage_two_lr_factor"),
+        "hybrid_muon_stage_two_route": row.get("hybrid_muon_stage_two_route"),
         "hybrid_muon_lr_scale_mode": row.get("hybrid_muon_lr_scale_mode"),
         "scheduler": row.get("scheduler"),
         "lr_scheduler_interval": row.get("lr_scheduler_interval"),

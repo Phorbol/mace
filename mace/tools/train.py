@@ -122,6 +122,40 @@ def _apply_hybrid_muon_stage_two_lr_factor(
     return applied_groups
 
 
+def _apply_hybrid_muon_stage_two_route(
+    optimizer: torch.optim.Optimizer,
+    lr_scheduler: Any,
+    route: str,
+) -> int:
+    if route not in {"keep", "adam", "adamw"}:
+        raise ValueError("hybrid_muon_stage_two_route must be 'keep', 'adam', or 'adamw'")
+    if route == "keep":
+        return 0
+    scheduler = getattr(lr_scheduler, "lr_scheduler", lr_scheduler)
+    base_lrs = getattr(scheduler, "base_lrs", None)
+    last_lrs = getattr(scheduler, "_last_lr", None)
+    switched_groups = 0
+    for index, group in enumerate(optimizer.param_groups):
+        if group.get("route") != "muon":
+            continue
+        if bool(group.get("hybrid_muon_stage_two_route_applied", False)):
+            continue
+        base_lr = group.get("hybrid_muon_base_lr")
+        if base_lr is None:
+            lr_factor = float(group.get("hybrid_muon_lr_factor", 1.0))
+            base_lr = float(group["lr"]) / lr_factor if lr_factor != 0.0 else float(group["lr"])
+        group["route"] = "adam"
+        group["adam_variant"] = route
+        group["lr"] = float(base_lr)
+        if isinstance(base_lrs, list) and index < len(base_lrs):
+            base_lrs[index] = float(base_lr)
+        if isinstance(last_lrs, list) and index < len(last_lrs):
+            last_lrs[index] = float(base_lr)
+        group["hybrid_muon_stage_two_route_applied"] = True
+        switched_groups += 1
+    return switched_groups
+
+
 def _next_update_boundary(
     updates_completed: int,
     *,
@@ -305,6 +339,7 @@ def train(
     checkpoint_interval_updates: Optional[int] = None,
     start_update: Optional[int] = None,
     hybrid_muon_stage_two_lr_factor: float = 1.0,
+    hybrid_muon_stage_two_route: str = "keep",
 ):
     lowest_loss = np.inf
     valid_loss = np.inf
@@ -411,6 +446,16 @@ def train(
         else:
             if swa_start:
                 logging.info("Changing loss based on Stage Two Weights")
+                switched_muon_groups = _apply_hybrid_muon_stage_two_route(
+                    optimizer, lr_scheduler, hybrid_muon_stage_two_route
+                )
+                if switched_muon_groups:
+                    logging.info(
+                        "Switched %d HybridMuon param group%s from Muon to %s for Stage Two",
+                        switched_muon_groups,
+                        "" if switched_muon_groups == 1 else "s",
+                        "AdamW" if hybrid_muon_stage_two_route == "adamw" else "Adam",
+                    )
                 applied_muon_lr_groups = _apply_hybrid_muon_stage_two_lr_factor(
                     optimizer, lr_scheduler, hybrid_muon_stage_two_lr_factor
                 )
