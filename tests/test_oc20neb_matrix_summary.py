@@ -181,6 +181,29 @@ def test_summarize_case_reports_train_metrics_timing(tmp_path):
     assert row["train_metrics_updates_per_second"] == pytest.approx(1.0 / 0.06)
     assert row["train_metrics_optimizer_step_seconds"] == pytest.approx(0.003)
 
+def test_eval_history_intervals_report_per_case_improvement():
+    from scripts.benchmarks.oc20neb_fps.summarize_fullcase200_ef20k_matrix import summarize_eval_history_intervals
+
+    rows = [
+        {
+            "root": "run",
+            "case": "cueq_hybrid_muon",
+            "eval_history": [
+                {"update": 20000, "mae_e_mev_atom": 126.0, "mae_f_mev_a": 41.0},
+                {"update": 40000, "mae_e_mev_atom": 89.0, "mae_f_mev_a": 37.0},
+                {"update": 60000, "mae_e_mev_atom": 67.0, "mae_f_mev_a": 35.5},
+            ],
+        },
+    ]
+
+    intervals = summarize_eval_history_intervals(rows)
+
+    assert [row["to_update"] for row in intervals] == [40000, 60000]
+    assert intervals[0]["mae_e_improvement_mev_atom"] == pytest.approx(37.0)
+    assert intervals[0]["mae_f_improvement_mev_a"] == pytest.approx(4.0)
+    assert intervals[1]["mae_e_delta_mev_atom"] == pytest.approx(-22.0)
+    assert intervals[1]["mae_f_delta_mev_a"] == pytest.approx(-1.5)
+
 def test_eval_history_comparison_reports_same_update_deltas():
     from scripts.benchmarks.oc20neb_fps.summarize_fullcase200_ef20k_matrix import summarize_eval_history_comparisons
 

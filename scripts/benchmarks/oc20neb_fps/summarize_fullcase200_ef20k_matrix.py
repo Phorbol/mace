@@ -532,6 +532,39 @@ def summarize_eval_history_comparisons(
     return comparisons
 
 
+def _eval_history_interval_row(
+    row: dict[str, Any], previous: dict[str, Any], current: dict[str, Any]
+) -> dict[str, Any]:
+    e_delta = _numeric_delta(current.get("mae_e_mev_atom"), previous.get("mae_e_mev_atom"))
+    f_delta = _numeric_delta(current.get("mae_f_mev_a"), previous.get("mae_f_mev_a"))
+    return {
+        "root": row.get("root"),
+        "case": row.get("case"),
+        "from_update": previous.get("update"),
+        "to_update": current.get("update"),
+        "from_mae_e_mev_atom": previous.get("mae_e_mev_atom"),
+        "to_mae_e_mev_atom": current.get("mae_e_mev_atom"),
+        "mae_e_delta_mev_atom": e_delta,
+        "mae_e_improvement_mev_atom": -e_delta if e_delta is not None else None,
+        "from_mae_f_mev_a": previous.get("mae_f_mev_a"),
+        "to_mae_f_mev_a": current.get("mae_f_mev_a"),
+        "mae_f_delta_mev_a": f_delta,
+        "mae_f_improvement_mev_a": -f_delta if f_delta is not None else None,
+    }
+
+
+def summarize_eval_history_intervals(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    intervals: list[dict[str, Any]] = []
+    for row in sorted(rows, key=lambda row: (str(row.get("case")), str(row.get("root")))):
+        history = sorted(
+            (record for record in (row.get("eval_history") or []) if record.get("update") is not None),
+            key=lambda record: int(record["update"]),
+        )
+        for previous, current in zip(history, history[1:]):
+            intervals.append(_eval_history_interval_row(row, previous, current))
+    return intervals
+
+
 def _format_label_value(value: Any) -> str:
     return str(value)
 
@@ -669,6 +702,8 @@ def main() -> None:
     parser.add_argument("--comparisons-json", type=Path, default=None)
     parser.add_argument("--eval-history-csv", type=Path, default=None)
     parser.add_argument("--eval-history-json", type=Path, default=None)
+    parser.add_argument("--eval-intervals-csv", type=Path, default=None)
+    parser.add_argument("--eval-intervals-json", type=Path, default=None)
     parser.add_argument("--ablation-csv", type=Path, default=None)
     parser.add_argument("--ablation-json", type=Path, default=None)
     parser.add_argument("--ablation-baseline-case", default="cueq_adamw")
@@ -690,6 +725,11 @@ def main() -> None:
         args.eval_history_json.write_text(json.dumps(eval_history, indent=2, sort_keys=True))
     if args.eval_history_csv is not None:
         _write_csv(eval_history, args.eval_history_csv)
+    eval_intervals = summarize_eval_history_intervals(rows)
+    if args.eval_intervals_json is not None:
+        args.eval_intervals_json.write_text(json.dumps(eval_intervals, indent=2, sort_keys=True))
+    if args.eval_intervals_csv is not None:
+        _write_csv(eval_intervals, args.eval_intervals_csv)
     ablations = summarize_ablation_table(rows, baseline_case=args.ablation_baseline_case)
     if args.ablation_json is not None:
         args.ablation_json.write_text(json.dumps(ablations, indent=2, sort_keys=True))
