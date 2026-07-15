@@ -124,6 +124,48 @@ def _count_nonempty_lines(path: Path) -> int:
     return count
 
 
+TRAIN_METRIC_MEAN_KEYS = {
+    "time": "train_metrics_seconds_per_update",
+    "train_batch_to_device_seconds": "train_metrics_batch_to_device_seconds",
+    "train_forward_loss_seconds": "train_metrics_forward_loss_seconds",
+    "train_backward_seconds": "train_metrics_backward_seconds",
+    "train_optimizer_step_seconds": "train_metrics_optimizer_step_seconds",
+    "train_grad_clip_seconds": "train_metrics_grad_clip_seconds",
+}
+
+
+def _parse_train_metrics(path: Path) -> dict[str, Any]:
+    line_count = 0
+    sums = {output_key: 0.0 for output_key in TRAIN_METRIC_MEAN_KEYS.values()}
+    counts = {output_key: 0 for output_key in TRAIN_METRIC_MEAN_KEYS.values()}
+    with path.open(errors="ignore") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            line_count += 1
+            try:
+                record = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            for input_key, output_key in TRAIN_METRIC_MEAN_KEYS.items():
+                value = record.get(input_key)
+                if isinstance(value, (int, float)) and math.isfinite(float(value)):
+                    sums[output_key] += float(value)
+                    counts[output_key] += 1
+    summary: dict[str, Any] = {"train_metrics_updates": line_count}
+    for output_key, total in sums.items():
+        count = counts[output_key]
+        summary[output_key] = total / count if count else None
+    seconds_per_update = summary.get("train_metrics_seconds_per_update")
+    summary["train_metrics_updates_per_second"] = (
+        1.0 / seconds_per_update if seconds_per_update not in (None, 0.0) else None
+    )
+    return summary
+
+
 def _run_completion_status(
     observed_updates: int | None, effective_updates: Any, target_steps: Any
 ) -> tuple[bool | None, str]:
@@ -198,6 +240,14 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         "final_update": None,
         "last_eval_update": None,
         "current_train_updates": None,
+        "train_metrics_updates": None,
+        "train_metrics_seconds_per_update": None,
+        "train_metrics_updates_per_second": None,
+        "train_metrics_batch_to_device_seconds": None,
+        "train_metrics_forward_loss_seconds": None,
+        "train_metrics_backward_seconds": None,
+        "train_metrics_optimizer_step_seconds": None,
+        "train_metrics_grad_clip_seconds": None,
         "observed_updates": None,
         "is_complete": None,
         "run_status": "unknown",
@@ -273,7 +323,9 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
 
     train_metrics_path = _case_train_metrics_path(case_dir)
     if train_metrics_path is not None:
-        row["current_train_updates"] = _count_nonempty_lines(train_metrics_path)
+        train_metrics = _parse_train_metrics(train_metrics_path)
+        row.update(train_metrics)
+        row["current_train_updates"] = train_metrics["train_metrics_updates"]
     observed_updates = row.get("current_train_updates")
     if observed_updates is None:
         observed_updates = row.get("last_eval_update")
@@ -322,14 +374,15 @@ def _numeric_ratio(numerator: Any, denominator: Any) -> float | None:
 
 
 def _speedup_vs_baseline(baseline: dict[str, Any], candidate: dict[str, Any]) -> float | None:
-    update_speedup = _numeric_ratio(
-        baseline.get("seconds_per_update"), candidate.get("seconds_per_update")
-    )
-    if update_speedup is not None:
-        return update_speedup
-    return _numeric_ratio(
-        baseline.get("mean_seconds_per_epoch"), candidate.get("mean_seconds_per_epoch")
-    )
+    for key in (
+        "seconds_per_update",
+        "train_metrics_seconds_per_update",
+        "mean_seconds_per_epoch",
+    ):
+        speedup = _numeric_ratio(baseline.get(key), candidate.get(key))
+        if speedup is not None:
+            return speedup
+    return None
 
 
 def _comparison_row(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
@@ -394,6 +447,18 @@ def _comparison_row(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         "candidate_updates_per_second": candidate.get("updates_per_second"),
         "updates_per_second_delta": _numeric_delta(candidate.get("updates_per_second"), baseline.get("updates_per_second")),
         "updates_per_second_ratio": _numeric_ratio(candidate.get("updates_per_second"), baseline.get("updates_per_second")),
+        "baseline_train_metrics_seconds_per_update": baseline.get("train_metrics_seconds_per_update"),
+        "candidate_train_metrics_seconds_per_update": candidate.get("train_metrics_seconds_per_update"),
+        "train_metrics_seconds_per_update_delta": _numeric_delta(candidate.get("train_metrics_seconds_per_update"), baseline.get("train_metrics_seconds_per_update")),
+        "train_metrics_seconds_per_update_ratio": _numeric_ratio(candidate.get("train_metrics_seconds_per_update"), baseline.get("train_metrics_seconds_per_update")),
+        "baseline_train_metrics_updates_per_second": baseline.get("train_metrics_updates_per_second"),
+        "candidate_train_metrics_updates_per_second": candidate.get("train_metrics_updates_per_second"),
+        "train_metrics_updates_per_second_delta": _numeric_delta(candidate.get("train_metrics_updates_per_second"), baseline.get("train_metrics_updates_per_second")),
+        "train_metrics_updates_per_second_ratio": _numeric_ratio(candidate.get("train_metrics_updates_per_second"), baseline.get("train_metrics_updates_per_second")),
+        "baseline_train_metrics_optimizer_step_seconds": baseline.get("train_metrics_optimizer_step_seconds"),
+        "candidate_train_metrics_optimizer_step_seconds": candidate.get("train_metrics_optimizer_step_seconds"),
+        "train_metrics_optimizer_step_delta_seconds": _numeric_delta(candidate.get("train_metrics_optimizer_step_seconds"), baseline.get("train_metrics_optimizer_step_seconds")),
+        "train_metrics_optimizer_step_ratio": _numeric_ratio(candidate.get("train_metrics_optimizer_step_seconds"), baseline.get("train_metrics_optimizer_step_seconds")),
         "baseline_max_fb_memory_mb": baseline.get("max_fb_memory_mb"),
         "candidate_max_fb_memory_mb": candidate.get("max_fb_memory_mb"),
         "max_fb_memory_delta_mb": _numeric_delta(candidate.get("max_fb_memory_mb"), baseline.get("max_fb_memory_mb")),
@@ -471,6 +536,9 @@ def _ablation_row(
         "observed_updates": row.get("observed_updates"),
         "current_train_updates": row.get("current_train_updates"),
         "last_eval_update": row.get("last_eval_update"),
+        "train_metrics_seconds_per_update": row.get("train_metrics_seconds_per_update"),
+        "train_metrics_updates_per_second": row.get("train_metrics_updates_per_second"),
+        "train_metrics_optimizer_step_seconds": row.get("train_metrics_optimizer_step_seconds"),
         "final_update": row.get("final_update"),
         "same_final_update": comparison.get("same_final_update"),
         "cueq": row.get("cueq"),
@@ -501,6 +569,11 @@ def _ablation_row(
         "seconds_per_update_delta": comparison.get("seconds_per_update_delta"),
         "seconds_per_update_ratio": comparison.get("seconds_per_update_ratio"),
         "updates_per_second_ratio": comparison.get("updates_per_second_ratio"),
+        "train_metrics_seconds_per_update_delta": comparison.get("train_metrics_seconds_per_update_delta"),
+        "train_metrics_seconds_per_update_ratio": comparison.get("train_metrics_seconds_per_update_ratio"),
+        "train_metrics_updates_per_second_ratio": comparison.get("train_metrics_updates_per_second_ratio"),
+        "train_metrics_optimizer_step_delta_seconds": comparison.get("train_metrics_optimizer_step_delta_seconds"),
+        "train_metrics_optimizer_step_ratio": comparison.get("train_metrics_optimizer_step_ratio"),
         "speedup_vs_baseline": comparison.get("speedup_vs_baseline"),
         "max_fb_memory_delta_mb": comparison.get("max_fb_memory_delta_mb"),
     }

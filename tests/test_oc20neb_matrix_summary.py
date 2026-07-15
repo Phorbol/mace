@@ -154,6 +154,33 @@ def test_summarize_case_marks_partial_run_from_train_metrics(tmp_path):
     assert row["is_complete"] is False
     assert row["run_status"] == "partial"
 
+def test_summarize_case_reports_train_metrics_timing(tmp_path):
+    manifest = {
+        "target_steps": 20000,
+        "max_num_updates": 20000,
+        "train_size": 5000,
+        "batch_size": 8,
+    }
+    log_text = (
+        "2026-07-12 00:00:00.000 INFO: Initial: update=0, head: Default, loss=1.0, MAE_E_per_atom=200.00 meV, MAE_F=50.00 meV / A\n"
+        "2026-07-12 00:06:40.000 INFO: Epoch 16: update=10000, head: Default, loss=0.8, MAE_E_per_atom=180.00 meV, MAE_F=45.00 meV / A\n"
+    )
+    root, case_dir = _write_case(tmp_path, "cueq_hybrid_muon", log_text)
+    results_dir = case_dir / "results"
+    results_dir.mkdir()
+    metrics_path = results_dir / "demo_train.txt"
+    metrics_path.write_text(
+        "{\"time\": 0.05, \"train_optimizer_step_seconds\": 0.002, \"mode\": \"opt\"}\n"
+        "{\"time\": 0.07, \"train_optimizer_step_seconds\": 0.004, \"mode\": \"opt\"}\n"
+    )
+
+    row = summarize_case(root, case_dir, manifest)
+
+    assert row["train_metrics_updates"] == 2
+    assert row["train_metrics_seconds_per_update"] == pytest.approx(0.06)
+    assert row["train_metrics_updates_per_second"] == pytest.approx(1.0 / 0.06)
+    assert row["train_metrics_optimizer_step_seconds"] == pytest.approx(0.003)
+
 def test_pairwise_comparison_reports_tace_routing_ablation():
     rows = [
         {
@@ -214,6 +241,30 @@ def test_pairwise_comparison_reports_cueq_adamw_speed_ablation():
     assert comparison["speedup_vs_baseline"] == pytest.approx(4.0 / 3.0)
     assert comparison["final_mae_f_delta_mev_a"] == 0.0
 
+
+def test_pairwise_comparison_uses_train_metrics_speed_when_epoch_timing_missing():
+    rows = [
+        {
+            "root": "run",
+            "case": "cueq_adamw",
+            "train_metrics_seconds_per_update": 0.05,
+            "train_metrics_updates_per_second": 20.0,
+            "train_metrics_optimizer_step_seconds": 0.001,
+        },
+        {
+            "root": "run",
+            "case": "cueq_hybrid_muon",
+            "train_metrics_seconds_per_update": 0.06,
+            "train_metrics_updates_per_second": 16.6666667,
+            "train_metrics_optimizer_step_seconds": 0.003,
+        },
+    ]
+
+    [comparison] = summarize_pairwise_comparisons(rows)
+
+    assert comparison["train_metrics_seconds_per_update_ratio"] == pytest.approx(1.2)
+    assert comparison["train_metrics_optimizer_step_delta_seconds"] == pytest.approx(0.002)
+    assert comparison["speedup_vs_baseline"] == pytest.approx(0.05 / 0.06)
 
 def test_pairwise_comparison_reports_final_best_and_update_speed():
     rows = [
