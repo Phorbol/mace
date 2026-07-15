@@ -128,6 +128,32 @@ def test_summarize_case_reports_early_update_speed_from_initial(tmp_path):
     assert row["early_updates_per_second"] == pytest.approx(10.0)
 
 
+def test_summarize_case_marks_partial_run_from_train_metrics(tmp_path):
+    manifest = {
+        "target_steps": 20000,
+        "max_num_updates": 20000,
+        "train_size": 5000,
+        "batch_size": 8,
+    }
+    log_text = """
+2026-07-12 00:00:00.000 INFO: Initial: update=0, head: Default, loss=1.0, MAE_E_per_atom=200.00 meV, MAE_F=50.00 meV / A
+2026-07-12 00:06:40.000 INFO: Epoch 16: update=10000, head: Default, loss=0.8, MAE_E_per_atom=180.00 meV, MAE_F=45.00 meV / A
+"""
+    root, case_dir = _write_case(tmp_path, "cueq_hybrid_muon", log_text)
+    results_dir = case_dir / "results"
+    results_dir.mkdir()
+    metrics_path = results_dir / "demo_train.txt"
+    metrics_path.write_text(
+        "\n".join("{\"loss\": 1.0, \"mode\": \"opt\"}" for _ in range(12345)) + "\n"
+    )
+
+    row = summarize_case(root, case_dir, manifest)
+
+    assert row["last_eval_update"] == 10000
+    assert row["current_train_updates"] == 12345
+    assert row["is_complete"] is False
+    assert row["run_status"] == "partial"
+
 def test_pairwise_comparison_reports_tace_routing_ablation():
     rows = [
         {

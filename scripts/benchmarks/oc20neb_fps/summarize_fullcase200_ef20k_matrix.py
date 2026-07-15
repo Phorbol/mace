@@ -107,6 +107,36 @@ def _case_nvdmon(case_dir: Path) -> dict[str, Any] | None:
     return parse_nvdmon(nvdmon_files[-1])
 
 
+def _case_train_metrics_path(case_dir: Path) -> Path | None:
+    results_dir = case_dir / "results"
+    if not results_dir.is_dir():
+        return None
+    candidates = sorted(results_dir.glob("*_train.txt"))
+    return candidates[-1] if candidates else None
+
+
+def _count_nonempty_lines(path: Path) -> int:
+    count = 0
+    with path.open(errors="ignore") as handle:
+        for line in handle:
+            if line.strip():
+                count += 1
+    return count
+
+
+def _run_completion_status(
+    observed_updates: int | None, effective_updates: Any, target_steps: Any
+) -> tuple[bool | None, str]:
+    expected = effective_updates if effective_updates is not None else target_steps
+    if observed_updates is None:
+        return None, "unknown"
+    if expected is None:
+        return None, "unknown"
+    return int(observed_updates) >= int(expected), (
+        "complete" if int(observed_updates) >= int(expected) else "partial"
+    )
+
+
 def _best_metric_from_log(parsed: dict[str, Any], key: str) -> float | None:
     records = parsed.get("records") or parsed.get("epochs") or []
     values = [record.get(key) for record in records if record.get(key) is not None]
@@ -166,6 +196,11 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         "log": None,
         "final_epoch": None,
         "final_update": None,
+        "last_eval_update": None,
+        "current_train_updates": None,
+        "observed_updates": None,
+        "is_complete": None,
+        "run_status": "unknown",
         "mae_e_mev_atom": None,
         "mae_f_mev_a": None,
         "rmse_e_mev_atom": None,
@@ -206,6 +241,7 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         last = parsed.get("last") or {}
         row["final_epoch"] = last.get("epoch")
         row["final_update"] = last.get("update")
+        row["last_eval_update"] = last.get("update")
         row["mae_e_mev_atom"] = last.get("mae_e_mev_atom")
         row["mae_f_mev_a"] = last.get("mae_f_mev_a")
         row["rmse_e_mev_atom"] = last.get("rmse_e_mev_atom")
@@ -234,6 +270,19 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
             row["total_train_seconds_estimate"] = (
                 float(row["seconds_per_update"]) * int(row["effective_updates"])
             )
+
+    train_metrics_path = _case_train_metrics_path(case_dir)
+    if train_metrics_path is not None:
+        row["current_train_updates"] = _count_nonempty_lines(train_metrics_path)
+    observed_updates = row.get("current_train_updates")
+    if observed_updates is None:
+        observed_updates = row.get("last_eval_update")
+    elif row.get("last_eval_update") is not None:
+        observed_updates = max(int(observed_updates), int(row["last_eval_update"]))
+    row["observed_updates"] = observed_updates
+    row["is_complete"], row["run_status"] = _run_completion_status(
+        observed_updates, row.get("effective_updates"), row.get("target_steps")
+    )
 
     nvdmon = _case_nvdmon(case_dir)
     if nvdmon is not None:
@@ -290,6 +339,10 @@ def _comparison_row(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         "candidate_case": candidate.get("case"),
         "target_steps": candidate.get("target_steps") or baseline.get("target_steps"),
         "effective_updates": candidate.get("effective_updates") or baseline.get("effective_updates"),
+        "baseline_run_status": baseline.get("run_status"),
+        "candidate_run_status": candidate.get("run_status"),
+        "baseline_observed_updates": baseline.get("observed_updates"),
+        "candidate_observed_updates": candidate.get("observed_updates"),
         "baseline_final_update": baseline.get("final_update"),
         "candidate_final_update": candidate.get("final_update"),
         "same_final_update": (
@@ -413,6 +466,11 @@ def _ablation_row(
         "baseline_case": baseline_case if baseline is not None else None,
         "target_steps": row.get("target_steps"),
         "effective_updates": row.get("effective_updates"),
+        "run_status": row.get("run_status"),
+        "is_complete": row.get("is_complete"),
+        "observed_updates": row.get("observed_updates"),
+        "current_train_updates": row.get("current_train_updates"),
+        "last_eval_update": row.get("last_eval_update"),
         "final_update": row.get("final_update"),
         "same_final_update": comparison.get("same_final_update"),
         "cueq": row.get("cueq"),
