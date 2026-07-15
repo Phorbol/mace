@@ -242,6 +242,26 @@ def test_pairwise_comparison_reports_cueq_adamw_speed_ablation():
     assert comparison["final_mae_f_delta_mev_a"] == 0.0
 
 
+def test_pairwise_comparison_prefers_train_metrics_speed_for_live_runs():
+    rows = [
+        {
+            "root": "run",
+            "case": "cueq_adamw",
+            "seconds_per_update": 0.10,
+            "train_metrics_seconds_per_update": 0.05,
+        },
+        {
+            "root": "run",
+            "case": "cueq_hybrid_muon",
+            "seconds_per_update": 0.10,
+            "train_metrics_seconds_per_update": 0.06,
+        },
+    ]
+
+    [comparison] = summarize_pairwise_comparisons(rows)
+
+    assert comparison["speedup_vs_baseline"] == pytest.approx(0.05 / 0.06)
+
 def test_pairwise_comparison_uses_train_metrics_speed_when_epoch_timing_missing():
     rows = [
         {

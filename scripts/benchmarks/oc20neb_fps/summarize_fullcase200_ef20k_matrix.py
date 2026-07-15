@@ -375,8 +375,8 @@ def _numeric_ratio(numerator: Any, denominator: Any) -> float | None:
 
 def _speedup_vs_baseline(baseline: dict[str, Any], candidate: dict[str, Any]) -> float | None:
     for key in (
-        "seconds_per_update",
         "train_metrics_seconds_per_update",
+        "seconds_per_update",
         "mean_seconds_per_epoch",
     ):
         speedup = _numeric_ratio(baseline.get(key), candidate.get(key))
