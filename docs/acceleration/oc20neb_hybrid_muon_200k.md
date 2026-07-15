@@ -59,11 +59,13 @@ This supports continuing the CUEQ + HybridMuon line. It does not yet justify dee
 
 ## Follow-Up Sweep
 
-The next sweep tests whether less aggressive stage-2 energy weighting preserves final force while keeping energy close:
+The next sweep tests whether less aggressive stage-2 energy weighting preserves final force while keeping energy close. It should be submitted only after this documentation commit is in place, because the sbatch static source guard rejects jobs when the worktree HEAD or tracked files change during a multi-case run.
 
-| Stage 2 E:F | Job | Cases | Commit | Status at submission |
-| --- | --- | --- | --- | --- |
-| 50:1 | 673660 | `cueq_adamw,cueq_hybrid_muon` | `5d90fb4a1c9f7487f51494ecf96f37b71970deb2` | RUNNING |
-| 20:1 | 673662 | `cueq_adamw,cueq_hybrid_muon` | `5d90fb4a1c9f7487f51494ecf96f37b71970deb2` | RUNNING |
+Planned sweep cases:
 
-Both jobs explicitly set `MACE_OC20NEB_REPO_ROOT=/home/gengjianrui/worktrees/mace-update-boundary` and use the existing OC20NEB FPS data directory from the migrated data checkout.
+| Stage 2 E:F | Cases | HybridMuon settings |
+| --- | --- | --- |
+| 50:1 | `cueq_adamw,cueq_hybrid_muon` | `hybrid_muon_lr_factor=3.0`, `hybrid_muon_stage_two_route=adamw` |
+| 20:1 | `cueq_adamw,cueq_hybrid_muon` | `hybrid_muon_lr_factor=3.0`, `hybrid_muon_stage_two_route=adamw` |
+
+Both jobs should explicitly set `MACE_OC20NEB_REPO_ROOT=/home/gengjianrui/worktrees/mace-update-boundary` and use the existing OC20NEB FPS data directory from the migrated data checkout.
