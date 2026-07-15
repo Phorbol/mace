@@ -181,6 +181,64 @@ def test_summarize_case_reports_train_metrics_timing(tmp_path):
     assert row["train_metrics_updates_per_second"] == pytest.approx(1.0 / 0.06)
     assert row["train_metrics_optimizer_step_seconds"] == pytest.approx(0.003)
 
+def test_eval_history_comparison_reports_same_update_deltas():
+    from scripts.benchmarks.oc20neb_fps.summarize_fullcase200_ef20k_matrix import summarize_eval_history_comparisons
+
+    rows = [
+        {
+            "root": "run",
+            "case": "cueq_adamw",
+            "eval_history": [
+                {"update": 20000, "mae_e_mev_atom": 160.0, "mae_f_mev_a": 39.0},
+                {"update": 40000, "mae_e_mev_atom": 130.0, "mae_f_mev_a": 35.0},
+            ],
+        },
+        {
+            "root": "run",
+            "case": "cueq_hybrid_muon",
+            "eval_history": [
+                {"update": 20000, "mae_e_mev_atom": 126.0, "mae_f_mev_a": 41.0},
+                {"update": 40000, "mae_e_mev_atom": 89.0, "mae_f_mev_a": 37.0},
+            ],
+        },
+    ]
+
+    comparisons = summarize_eval_history_comparisons(rows)
+
+    assert [row["update"] for row in comparisons] == [20000, 40000]
+    assert comparisons[1]["baseline_case"] == "cueq_adamw"
+    assert comparisons[1]["candidate_case"] == "cueq_hybrid_muon"
+    assert comparisons[1]["mae_e_delta_mev_atom"] == pytest.approx(-41.0)
+    assert comparisons[1]["mae_f_delta_mev_a"] == pytest.approx(2.0)
+
+def test_eval_history_comparison_uses_cross_run_baseline():
+    from scripts.benchmarks.oc20neb_fps.summarize_fullcase200_ef20k_matrix import summarize_eval_history_comparisons
+
+    rows = [
+        {
+            "root": "adamw-root",
+            "case": "cueq_adamw",
+            "eval_history": [
+                {"update": 40000, "mae_e_mev_atom": 130.0, "mae_f_mev_a": 35.0},
+            ],
+        },
+        {
+            "root": "muon-root",
+            "case": "cueq_hybrid_muon",
+            "eval_history": [
+                {"update": 40000, "mae_e_mev_atom": 89.0, "mae_f_mev_a": 37.0},
+            ],
+        },
+    ]
+
+    [comparison] = summarize_eval_history_comparisons(rows)
+
+    assert comparison["baseline_root"] == "adamw-root"
+    assert comparison["candidate_root"] == "muon-root"
+    assert comparison["update"] == 40000
+    assert comparison["mae_e_delta_mev_atom"] == pytest.approx(-41.0)
+    assert comparison["mae_f_delta_mev_a"] == pytest.approx(2.0)
+
 def test_pairwise_comparison_reports_tace_routing_ablation():
     rows = [
         {

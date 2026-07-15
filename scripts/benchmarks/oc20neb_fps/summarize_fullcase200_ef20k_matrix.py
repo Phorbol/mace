@@ -239,6 +239,7 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         "final_epoch": None,
         "final_update": None,
         "last_eval_update": None,
+        "eval_history": [],
         "current_train_updates": None,
         "train_metrics_updates": None,
         "train_metrics_seconds_per_update": None,
@@ -288,6 +289,7 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         row["train_compile_fallback"] = parsed.get("train_compile_fallback")
         row["train_compile_fallback_count"] = parsed.get("train_compile_fallback_count")
         row["has_nan"] = parsed.get("has_nan")
+        row["eval_history"] = list(parsed.get("epochs") or [])
         last = parsed.get("last") or {}
         row["final_epoch"] = last.get("epoch")
         row["final_update"] = last.get("update")
@@ -478,6 +480,58 @@ def summarize_pairwise_comparisons(rows: list[dict[str, Any]]) -> list[dict[str,
     return comparisons
 
 
+def _eval_history_by_update(row: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    by_update: dict[int, dict[str, Any]] = {}
+    for record in row.get("eval_history") or []:
+        update = record.get("update")
+        if update is not None:
+            by_update[int(update)] = record
+    return by_update
+
+
+def _eval_history_comparison_row(
+    baseline: dict[str, Any], candidate: dict[str, Any], update: int
+) -> dict[str, Any]:
+    baseline_record = _eval_history_by_update(baseline)[update]
+    candidate_record = _eval_history_by_update(candidate)[update]
+    return {
+        "root": baseline.get("root"),
+        "baseline_root": baseline.get("root"),
+        "candidate_root": candidate.get("root"),
+        "baseline_case": baseline.get("case"),
+        "candidate_case": candidate.get("case"),
+        "update": update,
+        "baseline_mae_e_mev_atom": baseline_record.get("mae_e_mev_atom"),
+        "candidate_mae_e_mev_atom": candidate_record.get("mae_e_mev_atom"),
+        "mae_e_delta_mev_atom": _numeric_delta(
+            candidate_record.get("mae_e_mev_atom"), baseline_record.get("mae_e_mev_atom")
+        ),
+        "baseline_mae_f_mev_a": baseline_record.get("mae_f_mev_a"),
+        "candidate_mae_f_mev_a": candidate_record.get("mae_f_mev_a"),
+        "mae_f_delta_mev_a": _numeric_delta(
+            candidate_record.get("mae_f_mev_a"), baseline_record.get("mae_f_mev_a")
+        ),
+    }
+
+
+def summarize_eval_history_comparisons(
+    rows: list[dict[str, Any]], baseline_case: str = "cueq_adamw"
+) -> list[dict[str, Any]]:
+    comparisons: list[dict[str, Any]] = []
+    baseline = _select_ablation_baseline(rows, baseline_case)
+    if baseline is None:
+        return comparisons
+    baseline_updates = set(_eval_history_by_update(baseline))
+    for candidate in sorted(
+        (row for row in rows if row is not baseline),
+        key=lambda row: (str(row.get("case")), str(row.get("root"))),
+    ):
+        candidate_updates = set(_eval_history_by_update(candidate))
+        for update in sorted(baseline_updates & candidate_updates):
+            comparisons.append(_eval_history_comparison_row(baseline, candidate, update))
+    return comparisons
+
+
 def _format_label_value(value: Any) -> str:
     return str(value)
 
@@ -613,6 +667,8 @@ def main() -> None:
     parser.add_argument("--csv", type=Path, default=None)
     parser.add_argument("--comparisons-csv", type=Path, default=None)
     parser.add_argument("--comparisons-json", type=Path, default=None)
+    parser.add_argument("--eval-history-csv", type=Path, default=None)
+    parser.add_argument("--eval-history-json", type=Path, default=None)
     parser.add_argument("--ablation-csv", type=Path, default=None)
     parser.add_argument("--ablation-json", type=Path, default=None)
     parser.add_argument("--ablation-baseline-case", default="cueq_adamw")
@@ -627,6 +683,13 @@ def main() -> None:
         args.comparisons_json.write_text(json.dumps(comparisons, indent=2, sort_keys=True))
     if args.comparisons_csv is not None:
         _write_csv(comparisons, args.comparisons_csv)
+    eval_history = summarize_eval_history_comparisons(
+        rows, baseline_case=args.ablation_baseline_case
+    )
+    if args.eval_history_json is not None:
+        args.eval_history_json.write_text(json.dumps(eval_history, indent=2, sort_keys=True))
+    if args.eval_history_csv is not None:
+        _write_csv(eval_history, args.eval_history_csv)
     ablations = summarize_ablation_table(rows, baseline_case=args.ablation_baseline_case)
     if args.ablation_json is not None:
         args.ablation_json.write_text(json.dumps(ablations, indent=2, sort_keys=True))
