@@ -5,10 +5,12 @@ import torch
 import torch.nn.functional
 from torch import nn, optim
 
+import mace.tools.utils as tools_utils
 from mace.tools import (
     AtomicNumberTable,
     CheckpointHandler,
     CheckpointState,
+    MetricsLogger,
     atomic_numbers_to_indices,
 )
 
@@ -104,3 +106,21 @@ def test_update_checkpoint_uses_update_stage_two_boundary_for_swa():
     assert result.epoch == 2
     assert result.update == 12
     assert result.kind == "update"
+
+
+def test_metrics_logger_creates_directory_once(tmp_path, monkeypatch):
+    calls = []
+    real_makedirs = tools_utils.os.makedirs
+
+    def counting_makedirs(name, exist_ok=False):
+        calls.append((name, exist_ok))
+        return real_makedirs(name, exist_ok=exist_ok)
+
+    monkeypatch.setattr(tools_utils.os, "makedirs", counting_makedirs)
+
+    logger = MetricsLogger(directory=str(tmp_path / "metrics"), tag="train")
+    logger.log({"step": 1})
+    logger.log({"step": 2})
+
+    assert calls == [(str(tmp_path / "metrics"), True)]
+

@@ -140,9 +140,9 @@ class MetricsLogger:
         self.directory = directory
         self.filename = tag + ".txt"
         self.path = os.path.join(self.directory, self.filename)
+        os.makedirs(name=self.directory, exist_ok=True)
 
     def log(self, d: Dict[str, Any]) -> None:
-        os.makedirs(name=self.directory, exist_ok=True)
         with open(self.path, mode="a", encoding="utf-8") as f:
             f.write(json.dumps(d, cls=UniversalEncoder))
             f.write("\n")
