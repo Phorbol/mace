@@ -179,6 +179,49 @@ def _run_completion_status(
     )
 
 
+def _positive_int(value: Any) -> int | None:
+    if value in (None, 0):
+        return None
+    try:
+        integer = int(value)
+    except (TypeError, ValueError):
+        return None
+    return integer if integer > 0 else None
+
+
+def _estimate_progress_targets(row: dict[str, Any], manifest: dict[str, Any]) -> None:
+    observed = row.get("observed_updates")
+    if observed is None:
+        return
+    observed = int(observed)
+    interval = _positive_int(manifest.get("eval_interval_updates"))
+    seconds_per_update = row.get("train_metrics_seconds_per_update")
+    if seconds_per_update is None:
+        seconds_per_update = row.get("seconds_per_update")
+    if interval is not None:
+        next_eval = ((observed // interval) + 1) * interval
+        target = row.get("effective_updates") or row.get("target_steps")
+        if target is not None:
+            next_eval = min(next_eval, int(target))
+        updates_to_next = max(0, next_eval - observed)
+        row["next_eval_update"] = next_eval
+        row["updates_to_next_eval"] = updates_to_next
+        row["seconds_to_next_eval_estimate"] = (
+            float(seconds_per_update) * updates_to_next
+            if seconds_per_update is not None
+            else None
+        )
+    target = row.get("effective_updates") or row.get("target_steps")
+    if target is not None:
+        updates_to_target = max(0, int(target) - observed)
+        row["updates_to_target"] = updates_to_target
+        row["seconds_to_target_estimate"] = (
+            float(seconds_per_update) * updates_to_target
+            if seconds_per_update is not None
+            else None
+        )
+
+
 def _best_metric_from_log(parsed: dict[str, Any], key: str) -> float | None:
     records = parsed.get("records") or parsed.get("epochs") or []
     values = [record.get(key) for record in records if record.get(key) is not None]
@@ -252,6 +295,11 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         "observed_updates": None,
         "is_complete": None,
         "run_status": "unknown",
+        "next_eval_update": None,
+        "updates_to_next_eval": None,
+        "seconds_to_next_eval_estimate": None,
+        "updates_to_target": None,
+        "seconds_to_target_estimate": None,
         "mae_e_mev_atom": None,
         "mae_f_mev_a": None,
         "rmse_e_mev_atom": None,
@@ -337,6 +385,7 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
     row["is_complete"], row["run_status"] = _run_completion_status(
         observed_updates, row.get("effective_updates"), row.get("target_steps")
     )
+    _estimate_progress_targets(row, manifest)
 
     nvdmon = _case_nvdmon(case_dir)
     if nvdmon is not None:
@@ -623,6 +672,11 @@ def _ablation_row(
         "observed_updates": row.get("observed_updates"),
         "current_train_updates": row.get("current_train_updates"),
         "last_eval_update": row.get("last_eval_update"),
+        "next_eval_update": row.get("next_eval_update"),
+        "updates_to_next_eval": row.get("updates_to_next_eval"),
+        "seconds_to_next_eval_estimate": row.get("seconds_to_next_eval_estimate"),
+        "updates_to_target": row.get("updates_to_target"),
+        "seconds_to_target_estimate": row.get("seconds_to_target_estimate"),
         "train_metrics_seconds_per_update": row.get("train_metrics_seconds_per_update"),
         "train_metrics_updates_per_second": row.get("train_metrics_updates_per_second"),
         "train_metrics_optimizer_step_seconds": row.get("train_metrics_optimizer_step_seconds"),

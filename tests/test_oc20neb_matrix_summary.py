@@ -181,6 +181,31 @@ def test_summarize_case_reports_train_metrics_timing(tmp_path):
     assert row["train_metrics_updates_per_second"] == pytest.approx(1.0 / 0.06)
     assert row["train_metrics_optimizer_step_seconds"] == pytest.approx(0.003)
 
+def test_summarize_case_reports_next_eval_and_completion_eta(tmp_path):
+    manifest = {
+        "target_steps": 200000,
+        "max_num_updates": 200000,
+        "train_size": 5000,
+        "batch_size": 8,
+        "eval_interval_updates": 20000,
+    }
+    log_text = (
+        "2026-07-12 00:00:00.000 INFO: Epoch 95: update=60000, head: Default, loss=0.8, MAE_E_per_atom=100.00 meV, MAE_F=33.00 meV / A\n"
+    )
+    root, case_dir = _write_case(tmp_path, "cueq_adamw", log_text)
+    results_dir = case_dir / "results"
+    results_dir.mkdir()
+    metrics_path = results_dir / "demo_train.txt"
+    metrics_path.write_text("\n".join("{\"time\": 0.05, \"mode\": \"opt\"}" for _ in range(85000)) + "\n")
+
+    row = summarize_case(root, case_dir, manifest)
+
+    assert row["next_eval_update"] == 100000
+    assert row["updates_to_next_eval"] == 15000
+    assert row["seconds_to_next_eval_estimate"] == pytest.approx(750.0)
+    assert row["updates_to_target"] == 115000
+    assert row["seconds_to_target_estimate"] == pytest.approx(5750.0)
+
 def test_eval_history_intervals_report_per_case_improvement():
     from scripts.benchmarks.oc20neb_fps.summarize_fullcase200_ef20k_matrix import summarize_eval_history_intervals
 
