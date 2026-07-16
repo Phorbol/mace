@@ -139,3 +139,39 @@ budget. The next optimizer test should not simply scale this exact 20k recipe to
 200k. Better candidates are a 50:1 smooth schedule, a no-stage-two force-focused
 control, or a revised Muon routing/LR recipe before spending another long
 OC20NEB budget.
+
+## 2026-07-17 Smooth 50:1 WSD 20k Check
+
+SAI job `676044` repeated the same 20k quick matrix with the smooth stage-two
+prefactor ramp ending at `50:1`. The job used the same migrated OC20NEB
+fullcase-200 FPS split, single V100, CUEQ, WSD per-step scheduling, batch size
+`8`, `20,000` updates, and stage two from update `15,000` to `20,000`.
+HybridMuon used the same `hybrid_muon_lr_factor=3.0`,
+`lr_scale_mode=match_rms`, Magma-lite, and stage-two route-to-AdamW settings as
+the 20:1 check.
+
+The job completed successfully in `01:00:33` with Slurm MaxRSS `5,707,848K`.
+Both cases reported `20,006` observed updates and no NaNs. The structured output
+is in `runs/oc20neb_fullcase200_ef_20k/676044/matrix_summary.csv` and
+`matrix_comparisons.csv`.
+
+| Case | Final E MAE (meV/atom) | Final F MAE (meV/A) | Best E MAE | Best F MAE | Seconds/update | Max FB memory |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| CUEQ + AdamW | 54.78 | 52.02 | 54.78 | 40.63 | 0.05490 | 10160 MB |
+| CUEQ + HybridMuon | 36.51 | 47.84 | 36.51 | 43.65 | 0.05748 | 10162 MB |
+
+HybridMuon improved final energy MAE by `18.27 meV/atom` and final force MAE by
+`4.18 meV/A` at the end of the energy-heavy ramp. However, AdamW still reached
+the better best force during the force-heavy portion of the run: `40.63 meV/A`
+for AdamW versus `43.65 meV/A` for HybridMuon. HybridMuon was `4.7%` slower by
+wrapper seconds/update and `4.9%` slower by training-loop timing; its optimizer
+step was `0.00328 s/update` versus `0.00092 s/update` for AdamW.
+
+The 50:1 smooth schedule is better than the 20:1 smooth schedule for final
+energy and final force at 20k, but it still does not prove that HybridMuon
+accelerates force convergence throughout training. The improvement appears
+concentrated after the energy-weight ramp, while force-focused stage-one
+behavior remains worse than AdamW. A 200k follow-up should therefore use this as
+a balanced energy-oriented candidate, not as proof that the current Muon routing
+already solves force convergence. A no-stage-two or delayed-stage-two
+force-oriented control remains necessary.
