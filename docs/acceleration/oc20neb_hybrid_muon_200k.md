@@ -245,3 +245,65 @@ not merely lower the Muon LR. In particular, the current MACE routing only sends
 symmetric-contraction, skip, and readout weights on AdamW. The next candidate is
 a routing experiment, such as `hybrid_muon_routing=module` or a narrower radial
 subset, with the same no-stage force-focused setup.
+
+
+## 2026-07-17 No-Stage CUEQ Broad-Routing Check
+
+The first attempt to run `cueq_hybrid_muon_tace` exposed an important routing
+bug rather than a valid optimizer ablation. Job `676152` started from commit
+`07ab587` and was cancelled after the startup log showed that CUEQ+tace still
+routed only the 8 radial tensor-product MLP tensors to Muon, the same effective
+coverage as the conservative MACE route. The CUEQ conversion reshaped e3nn flat
+weights to singleton-leading tensors such as `(1, numel)` and did not preserve
+the original e3nn instruction metadata needed to recover MatrixSpec slices.
+
+Commit `728d6c4` fixes this measurement bug by preserving HybridMuon slice specs
+across e3nn-to-CUEQ conversion and by allowing `routing=tace` to consume those
+module-declared specs. The focused validation was:
+
+- `tests/test_hybrid_muon.py` plus the CUEQ converter tests: `44 passed`.
+- Tiny CUEQ routing probe: CUEQ+tace now routes flat `linear_up`, `linear`,
+  `skip_tp`, and product linear weights through module-declared MatrixSpecs.
+- Corrected OC20NEB startup: `Muon tensors: 16 (467,968 parameters)`, including
+  module-declared `linear_up`, `linear`, `skip_tp`, and `products.*.linear`
+  weights. This is the first valid CUEQ broad-routing measurement.
+
+Job `676174` was cancelled because it was scheduled on `16v100n03`, where Slurm
+step statistics timed out and no training log/GPU progress occurred. The same
+command was resubmitted with `--exclude=16v100n03` as job `676176`, which ran on
+`16v100n04` and completed normally.
+
+Job `676176` reused the no-stage force-focused setup from job `676083`: OC20NEB
+fullcase-200 FPS, single V100, CUEQ, WSD per-step scheduling, batch size `8`,
+`20,000` updates, `MACE_OC20NEB_STAGE_TWO=False`,
+`MACE_OC20NEB_LOSS_PREFACTOR_SCHEDULE=off`, and constant `energy:forces =
+1:100`. HybridMuon used `hybrid_muon_lr_factor=3.0`, `lr_scale_mode=match_rms`,
+Magma-lite, and `routing=tace` after the CUEQ metadata fix.
+
+The job completed successfully in `00:28:24` with Slurm MaxRSS `5,647,728K` and
+`20,006` observed updates. The structured output is in
+`runs/oc20neb_fullcase200_ef_20k/676176/matrix_summary.csv`.
+
+| Case | Routing | Final E MAE (meV/atom) | Final F MAE (meV/A) | Best F MAE | Seconds/update | Optimizer s/update | Max FB memory |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| CUEQ + AdamW no-stage (`676083`) | n/a | 159.00 | 38.09 | 38.09 | 0.05473 | 0.00086 | 10158 MB |
+| CUEQ + HybridMuon no-stage (`676083`) | mace/radial | 128.11 | 40.44 | 40.44 | 0.05814 | 0.00412 | 10156 MB |
+| CUEQ + HybridMuon no-stage (`676176`) | tace/broad | 112.74 | 39.00 | 39.00 | 0.06064 | 0.00859 | 10154 MB |
+
+Broad routing improved HybridMuon over radial-only routing by `15.37 meV/atom`
+in final energy and `1.44 meV/A` in final force. It therefore fixes a real
+coverage gap and partially closes the no-stage force deficit. However, it still
+did not beat AdamW on the force objective at 20k: final/best force remained
+`0.91 meV/A` worse than AdamW, while seconds/update was `10.8%` slower than
+AdamW and `4.3%` slower than radial-only HybridMuon. The optimizer step cost
+roughly doubled relative to radial-only HybridMuon because many more flat blocks
+were orthogonalized.
+
+The practical conclusion is that the previous `cueq_hybrid_muon_tace` case was
+not measuring broad Muon under CUEQ at all; that is now fixed. The corrected
+broad route is better than radial-only HybridMuon for both energy and force, but
+it is not yet a sufficient force-convergence win over AdamW. The next ablation
+should narrow the broad route rather than simply scale to 200k: likely compare
+`linear/skip_tp` without product linear, skip species blocks separately, and a
+lower LR specifically for module-declared flat specs while keeping radial TP MLP
+on the current settings.
