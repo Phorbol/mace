@@ -307,3 +307,56 @@ should narrow the broad route rather than simply scale to 200k: likely compare
 `linear/skip_tp` without product linear, skip species blocks separately, and a
 lower LR specifically for module-declared flat specs while keeping radial TP MLP
 on the current settings.
+
+
+## 2026-07-17 CUEQ TACE Route-Subset 20k Checks
+
+After CUEQ conversion was fixed to preserve module-declared HybridMuon slice
+specs, job `676176` showed that full broad `routing=tace` used 16 Muon tensors
+(`467,968` parameters) and improved energy over radial-only HybridMuon, but
+force was still slightly worse than AdamW. To isolate whether all CUEQ flat
+specs should be Muon-routed, commit `4e017b2` added
+`--hybrid_muon_tace_module_include`, a comma-separated fnmatch filter that only
+applies to module-declared specs under `routing=tace`. Filtered specs fall back
+to AdamW and are logged as `module-spec-filtered`.
+
+Two no-stage, force-focused `1:100` 20k checks were then run on the same
+OC20NEB fullcase-200 FPS split, single V100, CUEQ, WSD per-step schedule,
+`hybrid_muon_lr_factor=3.0`, `match_rms`, and Magma-lite:
+
+| Case | Job | TACE module include | Muon tensors / params | Final E MAE | Final F MAE | Seconds/update | Optimizer s/update | Peak FB memory |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| CUEQ + AdamW | 676083 | n/a | n/a | 159.00 | 38.09 | 0.05473 | 0.00086 | 10158 MB |
+| CUEQ + HybridMuon radial-only | 676083 | n/a | 8 / 74,752 | 128.11 | 40.44 | 0.05814 | 0.00412 | 10156 MB |
+| CUEQ + HybridMuon full TACE | 676176 | `*` | 16 / 467,968 | 112.74 | 39.00 | 0.06064 | 0.00859 | 10154 MB |
+| CUEQ + HybridMuon interactions | 676207 | `interactions.*` | 14 / 455,680 | 117.56 | 41.47 | 0.06049 | 0.00816 | 10154 MB |
+| CUEQ + HybridMuon linear-only | 676208 | `interactions.*.linear.weight,interactions.*.linear_up.weight` | 12 / 144,384 | 97.79 | 40.05 | 0.05910 | 0.00745 | 10156 MB |
+
+The route summaries confirmed the intended coverage:
+
+- `676207` routed `linear_up`, `linear`, `skip_tp`, and radial
+  `conv_tp_weights` through Muon, while `products.*.linear.weight` fell back to
+  AdamW as `module-spec-filtered`.
+- `676208` additionally filtered both `interactions.*.skip_tp.weight` tensors,
+  leaving only `linear_up`, `linear`, and radial `conv_tp_weights` on Muon.
+
+Interpretation:
+
+- Narrowing module-declared routing to interaction `linear/linear_up` improved
+  energy substantially versus full TACE (`97.79` vs `112.74 meV/atom`) but did
+  not improve force versus full TACE (`40.05` vs `39.00 meV/A`).
+- Full TACE remains the best HybridMuon force result among these no-stage 20k
+  checks, but it is still worse than AdamW by `0.91 meV/A` and about `10.8%`
+  slower by wrapper seconds/update.
+- Excluding products alone was negative for both energy and force relative to
+  full TACE. Excluding skip_tp as well helped energy but still failed to beat
+  AdamW force.
+- These results do not justify a 200k force-oriented run with the current TACE
+  routing recipe. The next optimizer changes should target LR/routing defaults
+  or a delayed energy ramp, not simply broader Muon coverage.
+
+Structured outputs used here:
+
+- `runs/oc20neb_fullcase200_ef_20k/676176/matrix_summary.csv`
+- `runs/oc20neb_fullcase200_ef_20k/676207/matrix_summary.csv`
+- `runs/oc20neb_fullcase200_ef_20k/676208/matrix_summary.csv`

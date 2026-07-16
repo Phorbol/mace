@@ -293,3 +293,42 @@ outputs and losses, rather than changing the semantics of existing keys.
 - Do not silently replace conservative MACE forces with `direct_forces`; direct
   outputs must be opt-in and separately logged.
 - Do not adopt Lightning wholesale just to get scheduler features.
+
+
+## 2026-07-17 Local Refresh
+
+The three reference repositories were cloned locally under
+`/home/gengjianrui/reference_repos/` for this work round:
+
+- NVIDIA ALCHEMI Toolkit-Ops: `2ae41e2`,
+  `/home/gengjianrui/reference_repos/nvalchemi-toolkit-ops`
+- DeePMD-kit: `6c3b985c`, `/home/gengjianrui/reference_repos/deepmd-kit`
+- TACE: `80d68e9`, `/home/gengjianrui/reference_repos/tace`
+
+Additional source checks from this refresh:
+
+- TACE direct-force training is implemented as a real model-output branch:
+  `target_property` containing `direct_forces` creates a `1o` tensor readout,
+  and the Lightning step copies label `forces` into `direct_forces` labels for
+  direct supervised losses. Conservative `forces` / `stress` / `virials` remain
+  energy-derived and require `energy` in the compile wrapper.
+- TACE has a draft `mse_direct_forces_curl` diagnostic, but it is marked TODO
+  and uses second derivatives through positions. For MACE this should be a
+  diagnostic or later regularizer, not part of the first direct-force prototype.
+- DeePMD-kit HybridMuon remains the best optimizer reference for the next MACE
+  polish pass: compiled Gram Newton-Schulz, zero-column padding by short side,
+  fp32 normalization with fp16/bf16 iterations, match-RMS scaling, Magma-lite,
+  foreach momentum/Adam/decay helpers, and explicit FSDP/DTensor guard behavior.
+- Toolkit-Ops exposes both padded neighbor matrices and COO-style edge output.
+  The padded matrix form is relevant to future fixed-shape compile kernels, but
+  the lowest-risk MACE prototype should first consume COO output or convert it
+  outside the model forward, leaving MACE energy semantics unchanged.
+- Toolkit-Ops PME/Ewald APIs are energy-first and autograd-friendly for forces;
+  this matches the MACELES direction better than direct force/virial wiring.
+
+Direct non-conservative force heads are therefore worth prototyping only as an
+explicit opt-in branch after the current CUEQ + HybridMuon experiments finish.
+They may provide a speed path because they avoid mixed second derivatives, but
+all reports must keep direct-force MAE separate from conservative force MAE and
+must include at least curl/integrability diagnostics before using them for MD or
+stress-sensitive workflows.
