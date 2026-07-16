@@ -373,3 +373,36 @@ ENABLE_CUEQ=True CUEQ_PROFILE=full TRAIN_TF32=True TRAIN_AMP_DTYPE=none \
 OPTIMIZER=adam SCHEDULER=WSD MAX_NUM_EPOCHS=32 BATCH_SIZE=8 VALID_BATCH_SIZE=8 \
 sbatch scripts/benchmarks/oc20neb_fps/run_mace_oc20neb_fps_sai.sh
 ```
+
+### 2026-07-17 Direct-Force Design Decision
+
+A TACE-like non-conservative `direct_forces` path is worth a design spike, but
+it should not replace the default MACE `forces` key. The implementation boundary
+should mirror TACE: conservative `forces`, `stress`, and `virials` remain
+derivatives of `energy`, while `direct_forces` is a separate opt-in readout
+target with separate labels, losses, metrics, and checkpoint metadata.
+
+The first useful prototype is not a production MD model. It should be a training
+throughput and pretraining experiment: add an equivariant vector readout that
+returns per-atom `direct_forces`, train it with the same force labels, and
+compare fixed-batch-budget and wall-clock convergence against conservative
+force training under CUEQ + HybridMuon. A reasonable recipe is direct-force
+warmup or pretraining followed by conservative energy-gradient fine-tuning,
+rather than a pure direct-force endpoint.
+
+Acceptance gates before treating it as more than an auxiliary head:
+
+- output contract preserves `forces` as conservative and logs `direct_forces`
+  independently;
+- force MAE/RMSE improves at equal batch budget or reaches the same accuracy
+  materially faster in wall-clock time;
+- energy MAE does not regress after conservative fine-tuning;
+- curl/integrability diagnostics and small displacement loop tests are reported;
+- ASE/MD/export paths do not consume `direct_forces` unless explicitly requested;
+- CUEQ and HybridMuon compatibility is tested with the same parameter-routing and
+  scheduler settings as the conservative baseline.
+
+Do not implement direct stress/virials in the first spike. They add cell-shape
+and symmetry surface area and are easier to misinterpret. If the force head is
+useful, direct stress/virials can be added later with separate labels and strain
+finite-difference checks.
