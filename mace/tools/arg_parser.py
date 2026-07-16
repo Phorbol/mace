@@ -1109,6 +1109,35 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         dest="swa_stress_weight",
     )
     parser.add_argument(
+        "--loss_prefactor_schedule",
+        help=(
+            "Optional smooth loss-prefactor schedule. 'off' keeps static loss "
+            "weights and existing Stage Two behavior. 'lr_factor' uses the "
+            "current LR factor, and 'step_linear' interpolates over update steps."
+        ),
+        type=str,
+        default="off",
+        choices=["off", "lr_factor", "step_linear"],
+    )
+    parser.add_argument(
+        "--loss_prefactor_start_update",
+        help=(
+            "Start update for step_linear loss-prefactor scheduling. If omitted, "
+            "uses --start_stage_two_update when available, otherwise 0."
+        ),
+        type=int,
+        default=None,
+    )
+    parser.add_argument(
+        "--loss_prefactor_end_update",
+        help=(
+            "End update for step_linear loss-prefactor scheduling. If omitted, "
+            "uses --max_num_updates."
+        ),
+        type=int,
+        default=None,
+    )
+    parser.add_argument(
         "--dipole_weight", help="weight of dipoles loss", type=float, default=1.0
     )
     parser.add_argument(

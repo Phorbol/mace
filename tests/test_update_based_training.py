@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from mace.tools import build_default_arg_parser
+from mace.tools.scripts_utils import LossPrefactorController
 
 
 class _MiniLoss(torch.nn.Module):
@@ -662,3 +663,58 @@ def test_update_based_training_reaches_max_updates_despite_boundary_splits(monke
 
     assert train_calls[-1]["global_step_start"] == 7
     assert sum(call["max_steps"] for call in train_calls) == 8
+
+
+def test_train_one_epoch_applies_loss_prefactor_before_each_step(monkeypatch):
+    train_module = importlib.import_module("mace.tools.train")
+    observed = []
+
+    class WeightedMiniLoss(_MiniLoss):
+        def __init__(self):
+            super().__init__()
+            self.register_buffer("energy_weight", torch.tensor(0.0))
+            self.register_buffer("forces_weight", torch.tensor(0.0))
+
+    def fake_take_step(**kwargs):
+        loss_fn = kwargs["loss_fn"]
+        observed.append((
+            kwargs["global_step"],
+            float(loss_fn.energy_weight),
+            float(loss_fn.forces_weight),
+        ))
+        return torch.tensor(0.0), {"loss": 0.0}
+
+    monkeypatch.setattr(train_module, "take_step", fake_take_step)
+    logger = _FakeLogger()
+    controller = LossPrefactorController(
+        mode="step_linear",
+        start={"energy": 1.0, "forces": 100.0},
+        limit={"energy": 20.0, "forces": 1.0},
+        start_step=10,
+        end_step=12,
+    )
+
+    steps = train_module.train_one_epoch(
+        model=torch.nn.Linear(1, 1),
+        loss_fn=WeightedMiniLoss(),
+        data_loader=[object(), object(), object()],
+        optimizer=torch.optim.SGD([torch.nn.Parameter(torch.tensor([1.0]))], lr=0.1),
+        epoch=2,
+        output_args={"forces": False, "virials": False, "stress": False},
+        max_grad_norm=None,
+        ema=None,
+        logger=logger,
+        device=torch.device("cpu"),
+        distributed=False,
+        global_step_start=10,
+        loss_prefactor_controller=controller,
+    )
+
+    assert steps == 3
+    assert observed == pytest.approx([
+        (10, 1.0, 100.0),
+        (11, 10.5, 50.5),
+        (12, 20.0, 1.0),
+    ])
+    assert logger.records[-1]["loss_prefactor_energy_weight"] == pytest.approx(20.0)
+    assert logger.records[-1]["loss_prefactor_forces_weight"] == pytest.approx(1.0)

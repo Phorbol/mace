@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from mace.tools import build_default_arg_parser
-from mace.tools.scripts_utils import LRScheduler
+from mace.tools.scripts_utils import LRScheduler, LossPrefactorController
 
 
 def _args(**overrides):
@@ -78,6 +78,24 @@ def test_arg_parser_accepts_wsd_scheduler_flags():
     assert args.lr_wsd_decay_phase_ratio == pytest.approx(0.15)
     assert args.lr_wsd_decay_type == "cosine"
     assert args.lr_scheduler_interval == "step"
+
+
+def test_arg_parser_accepts_loss_prefactor_schedule_flags():
+    parser = build_default_arg_parser()
+    args = parser.parse_args([
+        "--name",
+        "loss_prefactor_parser_test",
+        "--loss_prefactor_schedule",
+        "step_linear",
+        "--loss_prefactor_start_update",
+        "15000",
+        "--loss_prefactor_end_update",
+        "20000",
+    ])
+
+    assert args.loss_prefactor_schedule == "step_linear"
+    assert args.loss_prefactor_start_update == 15000
+    assert args.loss_prefactor_end_update == 20000
 
 
 def test_wsd_scheduler_defaults_to_per_step_with_train_loader_length():
@@ -171,3 +189,44 @@ def test_wsd_scheduler_state_dict_reloads_current_lr():
         source_optimizer.param_groups[0]["lr"]
     )
     assert target_scheduler.get_last_lr() == pytest.approx(source_scheduler.get_last_lr())
+
+
+def test_loss_prefactor_controller_interpolates_from_lr_factor():
+    controller = LossPrefactorController(
+        mode="lr_factor",
+        start={"energy": 1.0, "forces": 100.0, "stress": 0.5},
+        limit={"energy": 20.0, "forces": 1.0, "stress": 2.0},
+    )
+
+    assert controller.values(lr_factor=1.0) == pytest.approx(
+        {"energy": 1.0, "forces": 100.0, "stress": 0.5}
+    )
+    assert controller.values(lr_factor=0.0) == pytest.approx(
+        {"energy": 20.0, "forces": 1.0, "stress": 2.0}
+    )
+    assert controller.values(lr_factor=0.25) == pytest.approx(
+        {"energy": 15.25, "forces": 25.75, "stress": 1.625}
+    )
+
+
+def test_loss_prefactor_controller_updates_loss_buffers():
+    loss = torch.nn.Module()
+    loss.register_buffer("energy_weight", torch.tensor(0.0))
+    loss.register_buffer("forces_weight", torch.tensor(0.0))
+    loss.register_buffer("stress_weight", torch.tensor(0.0))
+    controller = LossPrefactorController(
+        mode="step_linear",
+        start={"energy": 1.0, "forces": 100.0, "stress": 0.5},
+        limit={"energy": 20.0, "forces": 1.0, "stress": 2.0},
+        start_step=10,
+        end_step=20,
+    )
+
+    applied = controller.apply(loss, global_step=15)
+
+    assert applied == pytest.approx(
+        {"energy": 10.5, "forces": 50.5, "stress": 1.25}
+    )
+    assert loss.energy_weight.item() == pytest.approx(10.5)
+    assert loss.forces_weight.item() == pytest.approx(50.5)
+    assert loss.stress_weight.item() == pytest.approx(1.25)

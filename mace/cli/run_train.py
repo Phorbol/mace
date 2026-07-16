@@ -59,6 +59,7 @@ from mace.tools.run_train_utils import (
 )
 from mace.tools.scripts_utils import (
     LRScheduler,
+    LossPrefactorController,
     SubsetCollection,
     check_path_ase_read,
     convert_to_json_format,
@@ -79,6 +80,46 @@ from mace.tools.scripts_utils import (
 )
 from mace.tools.tables_utils import create_error_table
 from mace.tools.utils import AtomicNumberTable
+
+
+def _loss_prefactor_controller_from_args(args):
+    mode = getattr(args, "loss_prefactor_schedule", "off")
+    if mode == "off":
+        return None
+    start = {
+        "energy": float(args.energy_weight),
+        "forces": float(args.forces_weight),
+        "stress": float(args.stress_weight),
+        "virials": float(args.virials_weight),
+    }
+    limit = {
+        "energy": float(args.swa_energy_weight),
+        "forces": float(args.swa_forces_weight),
+        "stress": float(args.swa_stress_weight),
+        "virials": float(args.swa_virials_weight),
+    }
+    start_update = getattr(args, "loss_prefactor_start_update", None)
+    if start_update is None:
+        start_update = getattr(args, "start_swa_update", None)
+    if start_update is None:
+        start_update = 0
+    end_update = getattr(args, "loss_prefactor_end_update", None)
+    if end_update is None:
+        end_update = getattr(args, "max_num_updates", None)
+    if mode == "step_linear" and end_update is None:
+        raise ValueError(
+            "--loss_prefactor_schedule=step_linear requires "
+            "--loss_prefactor_end_update or --max_num_updates"
+        )
+    controller = LossPrefactorController(
+        mode=mode,
+        start=start,
+        limit=limit,
+        start_step=int(start_update),
+        end_step=None if end_update is None else int(end_update),
+    )
+    logging.info("Loss prefactor schedule resolved config: %s", controller.summary())
+    return controller
 
 
 def _model_build_context_from_args(args):
@@ -1141,6 +1182,8 @@ def run(args) -> None:
             precision_config.float32_matmul_precision,
         )
 
+    loss_prefactor_controller = _loss_prefactor_controller_from_args(args)
+
     _train_loop(
         model=model,
         loss_fn=loss_fn,
@@ -1177,6 +1220,7 @@ def run(args) -> None:
         checkpoint_interval_updates=args.checkpoint_interval_updates,
         hybrid_muon_stage_two_lr_factor=args.hybrid_muon_stage_two_lr_factor,
         hybrid_muon_stage_two_route=args.hybrid_muon_stage_two_route,
+        loss_prefactor_controller=loss_prefactor_controller,
     )
 
     logging.info("")

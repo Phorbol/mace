@@ -122,6 +122,25 @@ def _apply_hybrid_muon_stage_two_lr_factor(
     return applied_groups
 
 
+def _current_lr_factor(lr_scheduler: Any) -> Optional[float]:
+    if lr_scheduler is None:
+        return None
+    scheduler = getattr(lr_scheduler, "lr_scheduler", lr_scheduler)
+    base_lrs = getattr(scheduler, "base_lrs", None)
+    if hasattr(lr_scheduler, "get_last_lr"):
+        last_lrs = lr_scheduler.get_last_lr()
+    elif hasattr(scheduler, "get_last_lr"):
+        last_lrs = scheduler.get_last_lr()
+    else:
+        last_lrs = getattr(scheduler, "_last_lr", None)
+    if not base_lrs or not last_lrs:
+        return None
+    base_lr = float(base_lrs[0])
+    if base_lr == 0.0:
+        return None
+    return float(last_lrs[0]) / base_lr
+
+
 def _apply_hybrid_muon_stage_two_route(
     optimizer: torch.optim.Optimizer,
     lr_scheduler: Any,
@@ -340,6 +359,7 @@ def train(
     start_update: Optional[int] = None,
     hybrid_muon_stage_two_lr_factor: float = 1.0,
     hybrid_muon_stage_two_route: str = "keep",
+    loss_prefactor_controller: Optional[Any] = None,
 ):
     lowest_loss = np.inf
     valid_loss = np.inf
@@ -515,6 +535,7 @@ def train(
             global_step_start=global_step_start,
             lr_scheduler=lr_scheduler,
             max_steps=max_steps_this_epoch,
+            loss_prefactor_controller=loss_prefactor_controller,
         )
         if steps_completed is None:
             steps_completed = train_loader_len if train_loader_len is not None else 1
@@ -689,6 +710,7 @@ def train_one_epoch(
     global_step_start: int = 0,
     lr_scheduler: Optional[Any] = None,
     max_steps: Optional[int] = None,
+    loss_prefactor_controller: Optional[Any] = None,
 ) -> int:
     if distributed_model is not None:
         model_to_train = distributed_model
@@ -879,6 +901,13 @@ def train_one_epoch(
         return 0
 
     if isinstance(optimizer, LBFGS):
+        loss_prefactor_values = None
+        if loss_prefactor_controller is not None:
+            loss_prefactor_values = loss_prefactor_controller.apply(
+                loss_fn,
+                global_step=global_step_start,
+                lr_factor=_current_lr_factor(lr_scheduler),
+            )
         _, opt_metrics = take_step_lbfgs(
             model=model_to_train,
             loss_fn=loss_fn,
@@ -894,6 +923,9 @@ def train_one_epoch(
         )
         opt_metrics["mode"] = "opt"
         opt_metrics["epoch"] = epoch
+        if loss_prefactor_values is not None:
+            for name, value in loss_prefactor_values.items():
+                opt_metrics[f"loss_prefactor_{name}_weight"] = value
         update_edge_force_summary(opt_metrics)
         if rank == 0:
             logger.log(opt_metrics)
@@ -904,6 +936,14 @@ def train_one_epoch(
         for step_index, batch in enumerate(data_loader):
             if max_steps is not None and step_index >= max_steps:
                 break
+            global_step = global_step_start + step_index
+            loss_prefactor_values = None
+            if loss_prefactor_controller is not None:
+                loss_prefactor_values = loss_prefactor_controller.apply(
+                    loss_fn,
+                    global_step=global_step,
+                    lr_factor=_current_lr_factor(lr_scheduler),
+                )
             _, opt_metrics = take_step(
                 model=model_to_train,
                 loss_fn=loss_fn,
@@ -918,10 +958,13 @@ def train_one_epoch(
                 guard_config=guard_config,
                 loss_skip_controller=loss_skip_controller,
                 nonfinite_grad_guard=nonfinite_grad_guard,
-                global_step=global_step_start + step_index,
+                global_step=global_step,
             )
             opt_metrics["mode"] = "opt"
             opt_metrics["epoch"] = epoch
+            if loss_prefactor_values is not None:
+                for name, value in loss_prefactor_values.items():
+                    opt_metrics[f"loss_prefactor_{name}_weight"] = value
             if (
                 lr_scheduler is not None
                 and getattr(lr_scheduler, "step_on_batch", False)

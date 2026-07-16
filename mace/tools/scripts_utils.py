@@ -1224,6 +1224,94 @@ class _WarmupStableDecayLR:
         self.step(epoch=self.last_epoch)
 
 
+class LossPrefactorController:
+    def __init__(
+        self,
+        *,
+        mode: str,
+        start: Dict[str, float],
+        limit: Dict[str, float],
+        start_step: int = 0,
+        end_step: int | None = None,
+    ) -> None:
+        if mode not in {"off", "lr_factor", "step_linear"}:
+            raise ValueError("loss prefactor mode must be off, lr_factor, or step_linear")
+        self.mode = mode
+        self.start = {str(key): float(value) for key, value in start.items()}
+        self.limit = {str(key): float(value) for key, value in limit.items()}
+        if set(self.start) != set(self.limit):
+            raise ValueError("loss prefactor start and limit keys must match")
+        self.start_step = int(start_step)
+        self.end_step = None if end_step is None else int(end_step)
+        if self.start_step < 0:
+            raise ValueError("loss prefactor start_step must be non-negative")
+        if self.end_step is not None and self.end_step <= self.start_step:
+            raise ValueError("loss prefactor end_step must be greater than start_step")
+
+    def _progress(self, *, global_step: int | None, lr_factor: float | None) -> float:
+        if self.mode == "off":
+            return 0.0
+        if self.mode == "lr_factor":
+            if lr_factor is None:
+                raise ValueError("lr_factor is required for lr_factor loss prefactor mode")
+            factor = min(max(float(lr_factor), 0.0), 1.0)
+            return 1.0 - factor
+        if global_step is None:
+            raise ValueError("global_step is required for step_linear loss prefactor mode")
+        if self.end_step is None:
+            raise ValueError("end_step is required for step_linear loss prefactor mode")
+        step = int(global_step)
+        if step <= self.start_step:
+            return 0.0
+        if step >= self.end_step:
+            return 1.0
+        return (step - self.start_step) / float(self.end_step - self.start_step)
+
+    def values(
+        self,
+        *,
+        global_step: int | None = None,
+        lr_factor: float | None = None,
+    ) -> Dict[str, float]:
+        progress = self._progress(global_step=global_step, lr_factor=lr_factor)
+        return {
+            key: self.start[key] + (self.limit[key] - self.start[key]) * progress
+            for key in self.start
+        }
+
+    def apply(
+        self,
+        loss_fn: torch.nn.Module,
+        *,
+        global_step: int | None = None,
+        lr_factor: float | None = None,
+    ) -> Dict[str, float]:
+        values = self.values(global_step=global_step, lr_factor=lr_factor)
+        applied = {}
+        for key, value in values.items():
+            attr_name = f"{key}_weight"
+            if not hasattr(loss_fn, attr_name):
+                continue
+            weight = getattr(loss_fn, attr_name)
+            if isinstance(weight, torch.Tensor):
+                weight.copy_(
+                    torch.as_tensor(value, dtype=weight.dtype, device=weight.device)
+                )
+            else:
+                setattr(loss_fn, attr_name, value)
+            applied[key] = value
+        return applied
+
+    def summary(self) -> Dict[str, object]:
+        return {
+            "mode": self.mode,
+            "start": dict(self.start),
+            "limit": dict(self.limit),
+            "start_step": self.start_step,
+            "end_step": self.end_step,
+        }
+
+
 class LRScheduler:
     def __init__(self, optimizer, args, steps_per_epoch: int | None = None) -> None:
         self.scheduler = args.scheduler
