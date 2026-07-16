@@ -208,6 +208,52 @@ def test_hybrid_muon_tace_routing_recovers_flattened_e3nn_linear_blocks(monkeypa
     assert calls == [(2, 4, 4)]
 
 
+def test_hybrid_muon_tace_routing_uses_cueq_module_slice_specs():
+    class FakeCueqLinear(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.arange(6.0).reshape(1, 6))
+            self.hybrid_muon_optim_specs = {
+                "weight": {
+                    "route": "muon",
+                    "slice_specs": (
+                        {
+                            "offset": 0,
+                            "numel": 6,
+                            "matrix_view_shape": (1, 2, 3),
+                        },
+                    ),
+                }
+            }
+
+    module = FakeCueqLinear()
+    groups, summary = build_hybrid_muon_param_groups(
+        [("interactions.0.linear.weight", module.weight)],
+        lr=1.0e-3,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        muon_mode="2d",
+        routing="tace",
+        module_map={"interactions.0.linear": module},
+    )
+
+    assert summary[0]["route"] == "muon"
+    assert summary[0]["reason"] == "module-declared"
+    assert summary[0]["matrix_batch"] == 1
+    assert summary[0]["matrix_shape"] == (2, 3)
+    muon_group = next(group for group in groups if group["route"] == "muon")
+    assert muon_group["matrix_specs"] == {
+        "interactions.0.linear.weight": [
+            {
+                "offset": 0,
+                "numel": 6,
+                "matrix_view_shape": (1, 2, 3),
+            }
+        ]
+    }
+
+
 def test_hybrid_muon_tace_flat_specs_survive_optimizer_resume(monkeypatch):
     class FakeInstruction:
         path_shape = (2, 3)

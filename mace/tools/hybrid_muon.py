@@ -678,16 +678,30 @@ def build_hybrid_muon_param_groups(
             if routing == "tace" and not any(
                 token in lower_name for token in _MACE_HARD_ADAM_NAME_TOKENS
             ):
-                flat_spec_result = _flat_e3nn_linear_matrix_specs(name, param, module_map)
-                if flat_spec_result is not None:
-                    flat_specs, flat_reason = flat_spec_result
-            if flat_specs is not None:
-                route, reason = "muon", flat_reason
-                muon_matrix_specs[name] = flat_specs
-            else:
-                route, reason = _route_parameter(
-                    name, param, muon_mode=muon_mode, routing=routing
-                )
+                if module_map is not None:
+                    optim_spec = _module_declared_optim_spec(name, param, module_map)
+                if optim_spec is not None:
+                    route, reason = optim_spec.route, "module-declared"
+                    flat_specs = _normalize_optim_spec_slice_specs(name, param, optim_spec)
+                    matrix_layout = _optim_spec_matrix_layout(name, param, optim_spec)
+                    if flat_specs is not None:
+                        muon_matrix_specs[name] = flat_specs
+                    if optim_spec.route in _ADAM_VARIANTS:
+                        adam_variant_override = optim_spec.route
+                else:
+                    flat_spec_result = _flat_e3nn_linear_matrix_specs(
+                        name, param, module_map
+                    )
+                    if flat_spec_result is not None:
+                        flat_specs, flat_reason = flat_spec_result
+            if optim_spec is None:
+                if flat_specs is not None:
+                    route, reason = "muon", flat_reason
+                    muon_matrix_specs[name] = flat_specs
+                else:
+                    route, reason = _route_parameter(
+                        name, param, muon_mode=muon_mode, routing=routing
+                    )
         if route == "frozen":
             continue
         if route == "muon" and _is_sharded_or_distributed_parameter(param):

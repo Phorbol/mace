@@ -4120,6 +4120,60 @@ def test_e3nn_to_cueq_skips_missing_symmetric_contraction_target_key():
     assert "products.0.symmetric_contractions.weight" not in target_dict
 
 
+def test_e3nn_to_cueq_preserves_hybrid_muon_flat_linear_specs():
+    import torch
+
+    from mace.cli.convert_e3nn_cueq import transfer_hybrid_muon_optim_specs
+
+    class FakeInstruction:
+        def __init__(self, path_shape):
+            self.path_shape = path_shape
+
+    class FakeE3nnLinear(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.zeros(18))
+            self.instructions = [
+                FakeInstruction((2, 3)),
+                FakeInstruction((3, 4)),
+            ]
+
+    class FakeCueqLinear(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.zeros(1, 18))
+
+    class FakeModel(torch.nn.Module):
+        def __init__(self, linear):
+            super().__init__()
+            self.interactions = torch.nn.ModuleList(
+                [torch.nn.ModuleDict({"linear": linear})]
+            )
+
+    target_linear = FakeCueqLinear()
+    transfer_hybrid_muon_optim_specs(
+        FakeModel(FakeE3nnLinear()),
+        FakeModel(target_linear),
+    )
+
+    assert target_linear.hybrid_muon_optim_specs == {
+        "weight": {
+            "route": "muon",
+            "slice_specs": (
+                {
+                    "offset": 0,
+                    "numel": 6,
+                    "matrix_view_shape": (1, 2, 3),
+                },
+                {
+                    "offset": 6,
+                    "numel": 12,
+                    "matrix_view_shape": (1, 3, 4),
+                },
+            ),
+        }
+    }
+
 
 def test_e3nn_to_cueq_no_optimized_preserves_e3nn_layout_and_weights():
     from copy import deepcopy

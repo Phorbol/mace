@@ -157,6 +157,94 @@ def transfer_symmetric_contractions(
             )
 
 
+def _hybrid_muon_flat_slice_specs_from_instructions(
+    module_name: str, module: torch.nn.Module
+) -> tuple[dict, ...] | None:
+    weight = getattr(module, "weight", None)
+    instructions = getattr(module, "instructions", None)
+    if weight is None or instructions is None:
+        return None
+
+    specs = []
+    offset = 0
+    for instruction in instructions:
+        path_shape = tuple(int(dim) for dim in getattr(instruction, "path_shape", ()))
+        numel = 1
+        for dim in path_shape:
+            numel *= dim
+        if numel <= 0:
+            return None
+        if len(path_shape) == 2:
+            rows, cols = path_shape
+            specs.append(
+                {
+                    "offset": int(offset),
+                    "numel": int(numel),
+                    "matrix_view_shape": (1, int(rows), int(cols)),
+                }
+            )
+        elif len(path_shape) == 3 and module_name and module_name.endswith("skip_tp"):
+            channels_in, num_species, channels_out = path_shape
+            specs.append(
+                {
+                    "offset": int(offset),
+                    "numel": int(numel),
+                    "source_shape": (
+                        int(channels_in),
+                        int(num_species),
+                        int(channels_out),
+                    ),
+                    "permute": (1, 0, 2),
+                    "inverse_permute": (1, 0, 2),
+                    "matrix_view_shape": (
+                        int(num_species),
+                        int(channels_in),
+                        int(channels_out),
+                    ),
+                }
+            )
+        else:
+            return None
+        offset += numel
+
+    if offset != weight.numel() or not specs:
+        return None
+    return tuple(specs)
+
+
+def transfer_hybrid_muon_optim_specs(
+    source_model: torch.nn.Module, target_model: torch.nn.Module
+) -> None:
+    """Preserve e3nn flat-weight Muon slice metadata across CUEQ conversion."""
+    target_modules = dict(target_model.named_modules())
+    for module_name, source_module in source_model.named_modules():
+        target_module = target_modules.get(module_name)
+        if target_module is None:
+            continue
+        source_specs = _hybrid_muon_flat_slice_specs_from_instructions(
+            module_name, source_module
+        )
+        if source_specs is None:
+            continue
+        target_weight = getattr(target_module, "weight", None)
+        source_weight = getattr(source_module, "weight", None)
+        if (
+            target_weight is None
+            or source_weight is None
+            or target_weight.numel() != source_weight.numel()
+        ):
+            continue
+        optim_specs = dict(getattr(target_module, "hybrid_muon_optim_specs", {}) or {})
+        optim_specs.setdefault(
+            "weight",
+            {
+                "route": "muon",
+                "slice_specs": source_specs,
+            },
+        )
+        target_module.hybrid_muon_optim_specs = optim_specs
+
+
 def transfer_weights(
     source_model: torch.nn.Module,
     target_model: torch.nn.Module,
@@ -216,6 +304,7 @@ def transfer_weights(
 
     # Load state dict into target model
     target_model.load_state_dict(target_dict)
+    transfer_hybrid_muon_optim_specs(source_model, target_model)
 
 
 def run(
