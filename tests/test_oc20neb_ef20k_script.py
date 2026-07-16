@@ -26,3 +26,17 @@ def test_oc20neb_20k_defaults_to_non_compile_adamw_muon_matrix():
         line for line in text.splitlines() if line.startswith("CASES=${MACE_OC20NEB_CASES:-")
     )
     assert "compile" not in default_line
+
+
+def test_oc20neb_20k_uses_smooth_loss_prefactor_schedule_by_default():
+    text = SCRIPT.read_text()
+
+    assert "LOSS_PREFACTOR_SCHEDULE=${MACE_OC20NEB_LOSS_PREFACTOR_SCHEDULE:-step_linear}" in text
+    assert "LOSS_PREFACTOR_START_UPDATE=${MACE_OC20NEB_LOSS_PREFACTOR_START_UPDATE:-${START_STAGE_TWO_UPDATE}}" in text
+    assert "LOSS_PREFACTOR_END_UPDATE=${MACE_OC20NEB_LOSS_PREFACTOR_END_UPDATE:-${TARGET_STEPS}}" in text
+    assert '"loss_prefactor_schedule": "${LOSS_PREFACTOR_SCHEDULE}"' in text
+    assert '"loss_prefactor_start_update": ${LOSS_PREFACTOR_START_UPDATE}' in text
+    assert '"loss_prefactor_end_update": ${LOSS_PREFACTOR_END_UPDATE}' in text
+    assert '--loss_prefactor_schedule="${LOSS_PREFACTOR_SCHEDULE}"' in text
+    assert '--loss_prefactor_start_update="${LOSS_PREFACTOR_START_UPDATE}"' in text
+    assert '--loss_prefactor_end_update="${LOSS_PREFACTOR_END_UPDATE}"' in text

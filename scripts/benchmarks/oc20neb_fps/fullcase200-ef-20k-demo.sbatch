@@ -29,6 +29,7 @@ STAGE1_ENERGY_WEIGHT=${MACE_OC20NEB_STAGE1_ENERGY_WEIGHT:-1.0}
 STAGE1_FORCES_WEIGHT=${MACE_OC20NEB_STAGE1_FORCES_WEIGHT:-100.0}
 STAGE2_ENERGY_WEIGHT=${MACE_OC20NEB_STAGE2_ENERGY_WEIGHT:-100.0}
 STAGE2_FORCES_WEIGHT=${MACE_OC20NEB_STAGE2_FORCES_WEIGHT:-1.0}
+LOSS_PREFACTOR_SCHEDULE=${MACE_OC20NEB_LOSS_PREFACTOR_SCHEDULE:-step_linear}
 CASES=${MACE_OC20NEB_CASES:-adamw,hybrid_muon,cueq_adamw,cueq_hybrid_muon}
 BASE_OPTIMIZER=${MACE_OC20NEB_BASE_OPTIMIZER:-adamw}
 ENFORCE_STATIC_SOURCE=${MACE_OC20NEB_ENFORCE_STATIC_SOURCE:-True}
@@ -136,6 +137,8 @@ start_stage_two_update = min(target_steps, max(1, math.floor(target_steps * stag
 print(train_size, max_epochs, eval_interval, eval_interval_updates, checkpoint_interval_updates, start_stage_two_update)
 INNERPY
 )
+LOSS_PREFACTOR_START_UPDATE=${MACE_OC20NEB_LOSS_PREFACTOR_START_UPDATE:-${START_STAGE_TWO_UPDATE}}
+LOSS_PREFACTOR_END_UPDATE=${MACE_OC20NEB_LOSS_PREFACTOR_END_UPDATE:-${TARGET_STEPS}}
 
 cat > "${RUN_ROOT}/manifest.json" <<JSON
 {
@@ -153,6 +156,9 @@ cat > "${RUN_ROOT}/manifest.json" <<JSON
   "stage_two": "${STAGE_TWO}",
   "stage_two_fraction": ${STAGE_TWO_FRACTION},
   "stage_two_start_update": ${START_STAGE_TWO_UPDATE},
+  "loss_prefactor_schedule": "${LOSS_PREFACTOR_SCHEDULE}",
+  "loss_prefactor_start_update": ${LOSS_PREFACTOR_START_UPDATE},
+  "loss_prefactor_end_update": ${LOSS_PREFACTOR_END_UPDATE},
   "scheduler": "${SCHEDULER}",
   "lr_scheduler_interval": "${LR_SCHEDULER_INTERVAL}",
   "lr_wsd_warmup_ratio": ${LR_WSD_WARMUP_RATIO},
@@ -253,6 +259,9 @@ common_args=(
   --loss=weighted
   --energy_weight="${STAGE1_ENERGY_WEIGHT}"
   --forces_weight="${STAGE1_FORCES_WEIGHT}"
+  --loss_prefactor_schedule="${LOSS_PREFACTOR_SCHEDULE}"
+  --loss_prefactor_start_update="${LOSS_PREFACTOR_START_UPDATE}"
+  --loss_prefactor_end_update="${LOSS_PREFACTOR_END_UPDATE}"
   "${stage_two_args[@]}"
   --clip_grad="${MACE_OC20NEB_CLIP_GRAD:-10.0}"
 )
