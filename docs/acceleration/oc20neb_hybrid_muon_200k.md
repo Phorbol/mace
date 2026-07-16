@@ -211,3 +211,37 @@ force objective. Before any 200k force-oriented run, the next engineering work
 should target HybridMuon routing/LR/defaults, or test a delayed-stage schedule
 that preserves force-heavy training longer while using the 50:1 ramp only near
 the end.
+
+## 2026-07-17 No-Stage HybridMuon LR-Factor 1.0 Check
+
+SAI job `676131` tested whether the no-stage force regression was caused by an
+overly aggressive Muon learning-rate multiplier. It reused the same no-stage
+force-focused setup as job `676083`: OC20NEB fullcase-200 FPS, single V100,
+CUEQ, WSD per-step scheduling, batch size `8`, `20,000` updates,
+`MACE_OC20NEB_STAGE_TWO=False`, and `MACE_OC20NEB_LOSS_PREFACTOR_SCHEDULE=off`.
+Only `cueq_hybrid_muon` was run, with `hybrid_muon_lr_factor=1.0` instead of
+`3.0`; all other HybridMuon settings stayed the same.
+
+The job completed successfully in `00:27:36` with Slurm MaxRSS `5,589,404K` and
+`20,006` observed updates. The structured output is in
+`runs/oc20neb_fullcase200_ef_20k/676131/matrix_summary.csv`.
+
+| Case | Muon LR factor | Final E MAE (meV/atom) | Final F MAE (meV/A) | Best F MAE | Seconds/update | Max FB memory |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| CUEQ + AdamW no-stage (`676083`) | n/a | 159.00 | 38.09 | 38.09 | 0.05473 | 10158 MB |
+| CUEQ + HybridMuon no-stage (`676083`) | 3.0 | 128.11 | 40.44 | 40.44 | 0.05814 | 10156 MB |
+| CUEQ + HybridMuon no-stage (`676131`) | 1.0 | 128.24 | 42.26 | 42.26 | 0.05791 | 10156 MB |
+
+Lowering the Muon LR factor from `3.0` to `1.0` did not recover force accuracy.
+Energy MAE stayed essentially unchanged, while final/best force worsened by
+`1.82 meV/A` relative to the `3.0` run and by `4.17 meV/A` relative to AdamW.
+The runtime cost also remained around `5.8%` slower than AdamW, dominated by the
+HybridMuon optimizer step.
+
+This makes LR factor alone an unlikely root cause for the no-stage force gap.
+The next useful ablation should change which parameters are routed through Muon,
+not merely lower the Muon LR. In particular, the current MACE routing only sends
+8 radial tensor-product MLP matrices to Muon while keeping the large equivariant,
+symmetric-contraction, skip, and readout weights on AdamW. The next candidate is
+a routing experiment, such as `hybrid_muon_routing=module` or a narrower radial
+subset, with the same no-stage force-focused setup.
