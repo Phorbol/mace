@@ -878,6 +878,8 @@ def summarize_hybrid_muon_routes(summary: list[dict]) -> str:
                     f" matrix_batch={item.get('matrix_batch')}"
                     f" matrix_shape={item.get('matrix_shape')}"
                 )
+            if item.get("lr_scale") is not None:
+                suffix += f" lr_scale={item.get('lr_scale')}"
             lines.append(
                 f"{title}: {item['name']} shape={item['shape']} reason={item['reason']}{suffix}"
             )

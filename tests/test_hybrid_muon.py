@@ -1426,6 +1426,26 @@ def test_hybrid_muon_route_summary_is_loggable():
     assert "radial_embedding.0.weight" in text
 
 
+def test_hybrid_muon_route_summary_logs_per_parameter_lr_scale():
+    text = summarize_hybrid_muon_routes(
+        [
+            {
+                "name": "interactions.0.linear.weight",
+                "shape": (1, 4096),
+                "numel": 4096,
+                "route": "muon",
+                "reason": "module-declared",
+                "muon_mode": "2d",
+                "matrix_batch": 1,
+                "matrix_shape": (64, 64),
+                "lr_scale": 0.25,
+            }
+        ]
+    )
+
+    assert "lr_scale=0.25" in text
+
+
 def test_hybrid_muon_step_updates_params_and_state_dict_reloads():
     torch.manual_seed(5)
     model = TinyMaceLike()
