@@ -304,6 +304,77 @@ def test_hybrid_muon_tace_module_include_filters_declared_specs():
     assert adam_group["param_names"] == ["products.0.linear.weight"]
 
 
+def test_hybrid_muon_tace_module_lr_scale_only_scales_declared_specs():
+    class FakeCueqLinear(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.arange(6.0).reshape(1, 6))
+            self.hybrid_muon_optim_specs = {
+                "weight": {
+                    "route": "muon",
+                    "slice_specs": (
+                        {
+                            "offset": 0,
+                            "numel": 6,
+                            "matrix_view_shape": (1, 2, 3),
+                        },
+                    ),
+                }
+            }
+
+    class FakeDense(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(4, 8))
+
+    declared = FakeCueqLinear()
+    dense = FakeDense()
+    groups, summary = build_hybrid_muon_param_groups(
+        [
+            ("interactions.0.linear.weight", declared.weight),
+            ("interactions.0.conv_tp_weights.layer0.weight", dense.weight),
+        ],
+        lr=1.0e-3,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        muon_mode="2d",
+        routing="tace",
+        module_map={
+            "interactions.0.linear": declared,
+            "interactions.0.conv_tp_weights.layer0": dense,
+        },
+        tace_module_lr_scale=0.25,
+    )
+
+    muon_group = next(group for group in groups if group["route"] == "muon")
+    assert muon_group["param_lr_scales"] == {"interactions.0.linear.weight": 0.25}
+    by_name = {entry["name"]: entry for entry in summary}
+    assert by_name["interactions.0.linear.weight"]["lr_scale"] == 0.25
+    assert "lr_scale" not in by_name[
+        "interactions.0.conv_tp_weights.layer0.weight"
+    ]
+
+
+def test_hybrid_muon_rejects_nonpositive_tace_module_lr_scale():
+    weight = torch.nn.Parameter(torch.ones(2, 2))
+
+    try:
+        build_hybrid_muon_param_groups(
+            [("interactions.0.linear.weight", weight)],
+            lr=1.0e-3,
+            weight_decay=0.0,
+            muon_weight_decay=0.0,
+            muon_lr_factor=0.1,
+            routing="tace",
+            tace_module_lr_scale=0.0,
+        )
+    except ValueError as exc:
+        assert "tace_module_lr_scale must be positive" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
 def test_hybrid_muon_tace_flat_specs_survive_optimizer_resume(monkeypatch):
     class FakeInstruction:
         path_shape = (2, 3)
@@ -1428,6 +1499,8 @@ def test_arg_parser_accepts_hybrid_muon_magma_lite_flag():
             "adamw",
             "--hybrid_muon_tace_module_include",
             "interactions.*,products.*.linear.weight",
+            "--hybrid_muon_tace_module_lr_scale",
+            "0.25",
         ]
     )
 
@@ -1445,6 +1518,7 @@ def test_arg_parser_accepts_hybrid_muon_magma_lite_flag():
         args.hybrid_muon_tace_module_include
         == "interactions.*,products.*.linear.weight"
     )
+    assert args.hybrid_muon_tace_module_lr_scale == 0.25
 
 
 def test_get_optimizer_builds_hybrid_muon():

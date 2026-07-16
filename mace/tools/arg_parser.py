@@ -1292,6 +1292,17 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default="*",
     )
     parser.add_argument(
+        "--hybrid_muon_tace_module_lr_scale",
+        help=(
+            "Additional positive LR multiplier for module-declared Muon "
+            "parameters when hybrid_muon_routing=tace. This only affects "
+            "OptimSpec-declared TACE/CUEQ flat weights; default 1.0 preserves "
+            "existing routing behavior."
+        ),
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
         "--hybrid_muon_magma_lite",
         help=(
             "Enable DPA4/TACE-style Magma-lite damping for Muon-routed matrix "

@@ -379,10 +379,16 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
         '--hybrid_muon_tace_module_include="${HYBRID_MUON_TACE_MODULE_INCLUDE}"'
         in text
     )
+    assert (
+        '--hybrid_muon_tace_module_lr_scale="${HYBRID_MUON_TACE_MODULE_LR_SCALE}"'
+        in text
+    )
     assert '--hybrid_muon_lr_factor="${HYBRID_MUON_LR_FACTOR}"' in text
     assert '--hybrid_muon_stage_two_lr_factor="${HYBRID_MUON_STAGE_TWO_LR_FACTOR}"' in text
     assert "MACE_OC20NEB_HYBRID_MUON_TACE_MODULE_INCLUDE" in text
+    assert "MACE_OC20NEB_HYBRID_MUON_TACE_MODULE_LR_SCALE" in text
     assert '"hybrid_muon_tace_module_include"' in text
+    assert '"hybrid_muon_tace_module_lr_scale"' in text
     assert "parse_metrics.py" in text
     assert "summarize_fullcase200_ef20k_matrix.py" in text
     assert "--comparisons-csv" in text
@@ -588,7 +594,7 @@ def test_summarize_fullcase200_ef20k_matrix_reports_case_config_and_metrics(tmp_
     log_dir = case_dir / "logs"
     log_dir.mkdir(parents=True)
     (root / "manifest.json").write_text(
-        '{\n  "batch_size": 8,\n  "target_steps": 20000,\n  "train_size": 5000,\n  "max_num_epochs": 32,\n  "max_num_updates": 20000,\n  "stage_two_start_update": 15000,\n  "scheduler": "WSD",\n  "lr_scheduler_interval": "step",\n  "lr_wsd_warmup_ratio": 0.03,\n  "lr_wsd_stop_lr_ratio": 0.001,\n  "lr_wsd_decay_phase_ratio": 0.1,\n  "lr_wsd_decay_type": "inverse_linear",\n  "lr": 0.001,\n  "weight_decay": 0.001,\n  "hybrid_muon_mode": "2d",\n  "hybrid_muon_routing": "mace",\n  "hybrid_muon_tace_module_include": "interactions.*",\n  "hybrid_muon_lr_factor": 0.1,\n  "hybrid_muon_stage_two_lr_factor": 0.25,\n  "hybrid_muon_weight_decay": 0.0,\n  "hybrid_muon_adam_variant": "adamw",\n  "hybrid_muon_lr_scale_mode": "match_rms",\n  "hybrid_muon_match_rms_coeff": 0.18,\n  "hybrid_muon_magma_lite": "True",\n  "hybrid_muon_magma_initial_score": 0.5,\n  "hybrid_muon_magma_warmup_steps": 3,\n  "hybrid_muon_magma_bypass_first_step": "True",\n  "stage1_energy_weight": 1.0,\n  "stage1_forces_weight": 100.0,\n  "stage2_energy_weight": 100.0,\n  "stage2_forces_weight": 1.0,\n  "compile_setup_gate": "strict",\n  "compile_max_cache_entries": 2,\n  "compile_parity_gradients": "False",\n  "compile_parity_check_strict": "False"\n}\n'
+        '{\n  "batch_size": 8,\n  "target_steps": 20000,\n  "train_size": 5000,\n  "max_num_epochs": 32,\n  "max_num_updates": 20000,\n  "stage_two_start_update": 15000,\n  "scheduler": "WSD",\n  "lr_scheduler_interval": "step",\n  "lr_wsd_warmup_ratio": 0.03,\n  "lr_wsd_stop_lr_ratio": 0.001,\n  "lr_wsd_decay_phase_ratio": 0.1,\n  "lr_wsd_decay_type": "inverse_linear",\n  "lr": 0.001,\n  "weight_decay": 0.001,\n  "hybrid_muon_mode": "2d",\n  "hybrid_muon_routing": "mace",\n  "hybrid_muon_tace_module_include": "interactions.*",\n  "hybrid_muon_tace_module_lr_scale": 0.25,\n  "hybrid_muon_lr_factor": 0.1,\n  "hybrid_muon_stage_two_lr_factor": 0.25,\n  "hybrid_muon_weight_decay": 0.0,\n  "hybrid_muon_adam_variant": "adamw",\n  "hybrid_muon_lr_scale_mode": "match_rms",\n  "hybrid_muon_match_rms_coeff": 0.18,\n  "hybrid_muon_magma_lite": "True",\n  "hybrid_muon_magma_initial_score": 0.5,\n  "hybrid_muon_magma_warmup_steps": 3,\n  "hybrid_muon_magma_bypass_first_step": "True",\n  "stage1_energy_weight": 1.0,\n  "stage1_forces_weight": 100.0,\n  "stage2_energy_weight": 100.0,\n  "stage2_forces_weight": 1.0,\n  "compile_setup_gate": "strict",\n  "compile_max_cache_entries": 2,\n  "compile_parity_gradients": "False",\n  "compile_parity_check_strict": "False"\n}\n'
     )
     (log_dir / "train.log").write_text(
         "2026-07-12 10:20:00.000 INFO: Epoch 0: head: Default, loss=0.12, "
@@ -624,6 +630,7 @@ def test_summarize_fullcase200_ef20k_matrix_reports_case_config_and_metrics(tmp_
     assert row["hybrid_muon_mode"] == "2d"
     assert row["hybrid_muon_routing"] == "mace"
     assert row["hybrid_muon_tace_module_include"] == "interactions.*"
+    assert row["hybrid_muon_tace_module_lr_scale"] == 0.25
     assert row["hybrid_muon_lr_factor"] == 0.1
     assert row["hybrid_muon_stage_two_lr_factor"] == 0.25
     assert row["hybrid_muon_lr_scale_mode"] == "match_rms"

@@ -51,6 +51,7 @@ class RouteRecord:
     muon_mode: str | None = None
     matrix_shape: tuple[int, int] | None = None
     matrix_batch: int | None = None
+    lr_scale: float | None = None
 
     def as_summary(self) -> dict:
         item = {
@@ -64,6 +65,8 @@ class RouteRecord:
             item["muon_mode"] = self.muon_mode
             item["matrix_shape"] = self.matrix_shape
             item["matrix_batch"] = self.matrix_batch
+            if self.lr_scale is not None:
+                item["lr_scale"] = self.lr_scale
         return item
 
 
@@ -615,6 +618,7 @@ def build_hybrid_muon_param_groups(
     routing: str = "mace",
     module_map: dict[str, torch.nn.Module] | None = None,
     tace_module_include: str | Iterable[str] | None = "*",
+    tace_module_lr_scale: float = 1.0,
     magma_lite: bool = False,
     magma_initial_score: float = 0.5,
     magma_warmup_steps: int = 0,
@@ -637,6 +641,8 @@ def build_hybrid_muon_param_groups(
         )
     if muon_match_rms_coeff <= 0.0:
         raise ValueError("muon_match_rms_coeff must be positive")
+    if tace_module_lr_scale <= 0.0:
+        raise ValueError("tace_module_lr_scale must be positive")
     if not 0.0 <= magma_initial_score <= 1.0:
         raise ValueError("magma_initial_score must be in [0, 1]")
     if magma_warmup_steps < 0:
@@ -671,6 +677,7 @@ def build_hybrid_muon_param_groups(
         adam_variant_override = None
         optim_spec = None
         matrix_layout = None
+        effective_muon_lr_scale: float | None = None
         lower_name = name.lower()
         if routing == "module":
             if not param.requires_grad:
@@ -708,6 +715,10 @@ def build_hybrid_muon_param_groups(
                         adam_variant_override = "adamw"
                     else:
                         route, reason = optim_spec.route, "module-declared"
+                        if optim_spec.route == "muon":
+                            effective_muon_lr_scale = (
+                                float(optim_spec.lr_scale) * float(tace_module_lr_scale)
+                            )
                         flat_specs = _normalize_optim_spec_slice_specs(
                             name, param, optim_spec
                         )
@@ -744,8 +755,10 @@ def build_hybrid_muon_param_groups(
             muon_params.append(param)
             muon_param_names.append(name)
             if optim_spec is not None:
-                if optim_spec.lr_scale != 1.0:
-                    muon_param_lr_scales[name] = float(optim_spec.lr_scale)
+                if effective_muon_lr_scale is None:
+                    effective_muon_lr_scale = float(optim_spec.lr_scale)
+                if effective_muon_lr_scale != 1.0:
+                    muon_param_lr_scales[name] = float(effective_muon_lr_scale)
                 if optim_spec.weight_decay is not None:
                     muon_param_weight_decays[name] = float(optim_spec.weight_decay)
                 if matrix_layout is not None:
@@ -808,6 +821,13 @@ def build_hybrid_muon_param_groups(
                 muon_mode=muon_mode if route == "muon" else None,
                 matrix_shape=matrix_shape,
                 matrix_batch=matrix_batch,
+                lr_scale=(
+                    float(effective_muon_lr_scale)
+                    if route == "muon"
+                    and effective_muon_lr_scale is not None
+                    and effective_muon_lr_scale != 1.0
+                    else None
+                ),
             ).as_summary()
         )
 

@@ -38,6 +38,7 @@ def test_summarize_case_reports_update_runtime_and_manifest_metadata(tmp_path):
         "weight_decay": 0.001,
         "hybrid_muon_mode": "2d",
         "hybrid_muon_routing": "mace",
+        "hybrid_muon_tace_module_lr_scale": 0.25,
         "hybrid_muon_lr_factor": 0.1,
         "hybrid_muon_weight_decay": 0.0,
         "hybrid_muon_adam_variant": "adamw",
@@ -60,6 +61,7 @@ def test_summarize_case_reports_update_runtime_and_manifest_metadata(tmp_path):
     assert row["lr"] == 0.001
     assert row["weight_decay"] == 0.001
     assert row["hybrid_muon_adam_variant"] == "adamw"
+    assert row["hybrid_muon_tace_module_lr_scale"] == 0.25
     assert row["final_update"] == 1250
     assert row["final_mae_e_mev_atom"] == pytest.approx(19.0)
     assert row["final_mae_f_mev_a"] == pytest.approx(110.0)
@@ -418,6 +420,7 @@ def test_pairwise_comparison_reports_final_best_and_update_speed():
             "lr_scheduler_interval": "step",
             "hybrid_muon_mode": "2d",
             "hybrid_muon_routing": "mace",
+            "hybrid_muon_tace_module_lr_scale": 0.25,
             "hybrid_muon_lr_factor": 0.1,
             "hybrid_muon_stage_two_lr_factor": 0.5,
             "final_mae_e_mev_atom": 17.0,
@@ -462,6 +465,7 @@ def test_ablation_table_compares_cross_run_hybrid_muon_to_cueq_adamw():
             "case": "cueq_hybrid_muon",
             "final_update": 20000,
             "hybrid_muon_routing": "mace",
+            "hybrid_muon_tace_module_lr_scale": 0.25,
             "hybrid_muon_lr_factor": 0.1,
             "hybrid_muon_stage_two_lr_factor": 0.0,
             "hybrid_muon_stage_two_route": "adamw",
@@ -480,12 +484,13 @@ def test_ablation_table_compares_cross_run_hybrid_muon_to_cueq_adamw():
 
     assert [row["label"] for row in table] == [
         "cueq_adamw",
-        "cueq_hybrid_muon/routing=mace/lr_factor=0.1/stage2_lr_factor=0.0/stage2_route=adamw/scale=original",
+        "cueq_hybrid_muon/routing=mace/tace_module_lr_scale=0.25/lr_factor=0.1/stage2_lr_factor=0.0/stage2_route=adamw/scale=original",
     ]
     baseline, candidate = table
     assert baseline["is_baseline"] is True
     assert candidate["is_baseline"] is False
     assert candidate["baseline_case"] == "cueq_adamw"
+    assert candidate["hybrid_muon_tace_module_lr_scale"] == 0.25
     assert candidate["same_final_update"] is True
     assert candidate["final_mae_e_delta_mev_atom"] == pytest.approx(7.0)
     assert candidate["final_mae_f_delta_mev_a"] == pytest.approx(-5.6)
