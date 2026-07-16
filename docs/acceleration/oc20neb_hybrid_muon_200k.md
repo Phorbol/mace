@@ -175,3 +175,39 @@ behavior remains worse than AdamW. A 200k follow-up should therefore use this as
 a balanced energy-oriented candidate, not as proof that the current Muon routing
 already solves force convergence. A no-stage-two or delayed-stage-two
 force-oriented control remains necessary.
+
+## 2026-07-17 No-Stage Force-Focused WSD 20k Check
+
+SAI job `676083` ran the force-focused control requested by the 20:1 and 50:1
+smooth checks. It used the same OC20NEB fullcase-200 FPS split, single V100,
+CUEQ, WSD per-step scheduling, batch size `8`, and `20,000` updates, but set
+`MACE_OC20NEB_STAGE_TWO=False` and `MACE_OC20NEB_LOSS_PREFACTOR_SCHEDULE=off`.
+The loss therefore stayed at `energy:forces = 1:100` for the whole run.
+HybridMuon used the same `hybrid_muon_lr_factor=3.0`, `lr_scale_mode=match_rms`,
+Magma-lite, and MACE routing settings as the smooth-schedule checks.
+
+The job completed successfully in `00:54:06` with Slurm MaxRSS `5,646,404K`.
+Both cases reported `20,006` observed updates and no NaNs. The structured output
+is in `runs/oc20neb_fullcase200_ef_20k/676083/matrix_summary.csv` and
+`matrix_comparisons.csv`.
+
+| Case | Final E MAE (meV/atom) | Final F MAE (meV/A) | Best E MAE | Best F MAE | Seconds/update | Max FB memory |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| CUEQ + AdamW | 159.00 | 38.09 | 158.30 | 38.09 | 0.05473 | 10158 MB |
+| CUEQ + HybridMuon | 128.11 | 40.44 | 128.11 | 40.44 | 0.05814 | 10156 MB |
+
+HybridMuon again improved energy MAE, by `30.89 meV/atom`, but force MAE was
+worse by `2.35 meV/A` for both final and best force because the no-stage run
+kept improving force to the final checkpoint. HybridMuon was `6.2%` slower by
+wrapper seconds/update and `5.7%` slower by training-loop timing. The optimizer
+step cost was `0.00412 s/update` versus `0.00086 s/update` for AdamW.
+
+This control separates the optimizer effect from the energy-heavy stage-two
+ramp. Under a pure force-heavy `1:100` budget, the current HybridMuon routing and
+LR recipe does not improve force convergence at 20k; it only improves energy.
+The smooth 50:1 run therefore should be interpreted as an energy-ramp-assisted
+final-force improvement, not proof that HybridMuon itself is better for the
+force objective. Before any 200k force-oriented run, the next engineering work
+should target HybridMuon routing/LR/defaults, or test a delayed-stage schedule
+that preserves force-heavy training longer while using the 50:1 ramp only near
+the end.
