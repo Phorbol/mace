@@ -15,24 +15,33 @@ Date: 2026-07-16
 - Target: 200,000 optimizer updates.
 - Stage 1 loss: energy:forces = 1:100.
 - Stage 2 starts at 150,000 updates.
-- Stage 2 loss for this run: energy:forces = 100:1.
+- Stage 2 loss sweep: energy:forces = 20:1, 50:1, 100:1.
 - HybridMuon config: `hybrid_muon_lr_factor=3.0`, `hybrid_muon_stage_two_route=adamw`, `hybrid_muon_adam_variant=adamw`.
 
 ## Completed Jobs
 
-| Case | Job | State | Final E MAE (meV/atom) | Final F MAE (meV/A) | Train s/update | Peak FB mem (MB) |
-| --- | --- | --- | ---: | ---: | ---: | ---: |
-| CUEQ + AdamW | 673484 | COMPLETED 0:0 | 2.35 | 40.57 | 0.05323 | 10162 |
-| CUEQ + HybridMuon | 673485 | COMPLETED 0:0 | 2.31 | 37.73 | 0.05439 | 10162 |
+| Stage 2 E:F | Case | Job | State | Final E MAE (meV/atom) | Final F MAE (meV/A) | Train s/update | Peak FB mem (MB) |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: |
+| 20:1 | CUEQ + AdamW | 673670 | COMPLETED before timeout wrapper | 3.92 | 37.96 | 0.05107 | 10162 |
+| 20:1 | CUEQ + HybridMuon | 674544 | COMPLETED 0:0 | 3.22 | 33.79 | 0.05433 | 10162 |
+| 50:1 | CUEQ + AdamW | 673671 | COMPLETED before timeout wrapper | 2.85 | 39.17 | 0.05220 | 10162 |
+| 50:1 | CUEQ + HybridMuon | 674543 | COMPLETED 0:0 | 2.63 | 35.44 | 0.05270 | 10162 |
+| 100:1 | CUEQ + AdamW | 673484 | COMPLETED 0:0 | 2.35 | 40.57 | 0.05323 | 10162 |
+| 100:1 | CUEQ + HybridMuon | 673485 | COMPLETED 0:0 | 2.31 | 37.73 | 0.05439 | 10162 |
 
 Final delta, HybridMuon minus AdamW:
 
-- Energy MAE: -0.04 meV/atom.
-- Force MAE: -2.84 meV/A.
-- Step time: +0.00116 s/update, about 2.2% slower.
-- Peak memory: no measured difference.
+| Stage 2 E:F | Delta E MAE (meV/atom) | Delta F MAE (meV/A) | Delta train s/update | Relative train speed |
+| --- | ---: | ---: | ---: | ---: |
+| 20:1 | -0.70 | -4.17 | +0.00326 | 6.4% slower |
+| 50:1 | -0.22 | -3.73 | +0.00050 | 1.0% slower |
+| 100:1 | -0.04 | -2.84 | +0.00116 | 2.2% slower |
+
+Peak memory was unchanged in these runs at 10162 MB.
 
 ## Evaluation History
+
+100:1 stage-2 loss:
 
 | Update | AdamW E | HybridMuon E | Delta E | AdamW F | HybridMuon F | Delta F |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -49,23 +58,48 @@ Final delta, HybridMuon minus AdamW:
 
 Lower is better. Delta is HybridMuon minus AdamW.
 
+HybridMuon-only completed follow-up histories:
+
+| Stage 2 E:F | Update | E MAE (meV/atom) | F MAE (meV/A) |
+| --- | ---: | ---: | ---: |
+| 20:1 | 20k | 126.34 | 41.17 |
+| 20:1 | 40k | 88.59 | 37.11 |
+| 20:1 | 60k | 66.76 | 35.35 |
+| 20:1 | 80k | 54.86 | 33.42 |
+| 20:1 | 100k | 46.22 | 32.41 |
+| 20:1 | 120k | 39.53 | 31.47 |
+| 20:1 | 140k | 35.96 | 30.18 |
+| 20:1 | 160k | 7.81 | 36.00 |
+| 20:1 | 180k | 5.56 | 33.90 |
+| 20:1 | 200k | 3.22 | 33.79 |
+| 50:1 | 20k | 126.34 | 41.17 |
+| 50:1 | 40k | 88.59 | 37.11 |
+| 50:1 | 60k | 66.43 | 35.41 |
+| 50:1 | 80k | 54.62 | 33.42 |
+| 50:1 | 100k | 45.95 | 32.43 |
+| 50:1 | 120k | 40.43 | 31.33 |
+| 50:1 | 140k | 35.61 | 30.21 |
+| 50:1 | 160k | 5.96 | 38.21 |
+| 50:1 | 180k | 6.50 | 35.33 |
+| 50:1 | 200k | 2.63 | 35.44 |
+
 ## Interpretation
 
-Before stage 2, HybridMuon strongly reduces energy MAE but force MAE remains slightly worse. At 140k, immediately before the stage-2 switch, HybridMuon is much better on energy but still 0.32 meV/A worse on force.
+Before stage 2, HybridMuon strongly reduces energy MAE but force MAE remains slightly worse in the 100:1 paired run. In the HybridMuon-only 20:1 and 50:1 completions, the best force MAE is reached immediately before the stage-2 switch, around 30.2 meV/A at 140k.
 
-The 100:1 stage-2 loss sharply reduces energy MAE for both optimizers but increases force MAE. HybridMuon, after switching its Muon group to AdamW for stage 2, shows a smaller force regression and finishes with better force MAE and similar energy MAE.
+The stage-2 switch reduces energy MAE and increases force MAE. The larger the stage-2 energy weight, the better the final energy and the worse the final force. Among the completed HybridMuon runs, 20:1 gives the best final force, 100:1 gives the best final energy, and 50:1 is the middle point.
 
-This supports continuing the CUEQ + HybridMuon line. It does not yet justify deeper optimizer kernel work by itself, because the measured speed penalty is small but nonzero and the result is from one seed and one 5k/10k subset.
+Across all three stage-2 weights, HybridMuon improves final energy and force MAE over AdamW at the same batch budget. The speed cost is small but nonzero: about 1.0% to 6.4% slower by train-metrics seconds/update in these single-V100 runs.
 
-## Follow-Up Sweep
+This supports continuing the CUEQ + HybridMuon line and moving the next engineering effort toward update-based training control, LR warmup/WSD, loss-prefactor scheduling, and HybridMuon defaults. It does not yet justify compile work, because compile was disabled in this matrix and the current priority is to prove Muon convergence benefits under stable CUEQ training.
 
-The next sweep tests whether less aggressive stage-2 energy weighting preserves final force while keeping energy close. It should be submitted only after this documentation commit is in place, because the sbatch static source guard rejects jobs when the worktree HEAD or tracked files change during a multi-case run.
+## Next Experiments
 
-Planned sweep cases:
+Recommended next matrix:
 
-| Stage 2 E:F | Cases | HybridMuon settings |
-| --- | --- | --- |
-| 50:1 | `cueq_adamw,cueq_hybrid_muon` | `hybrid_muon_lr_factor=3.0`, `hybrid_muon_stage_two_route=adamw` |
-| 20:1 | `cueq_adamw,cueq_hybrid_muon` | `hybrid_muon_lr_factor=3.0`, `hybrid_muon_stage_two_route=adamw` |
+- Keep 20:1 as the force-oriented default and 50:1 as the balanced default.
+- Re-run a 20k quick matrix after adding warmup/WSD and smooth loss-prefactor scheduling.
+- If the 20k matrix preserves the same ordering, run 200k for AdamW vs HybridMuon under the new schedule.
+- Add stress once the selected dataset has reliable stress labels and matching loss terms.
 
-Both jobs should explicitly set `MACE_OC20NEB_REPO_ROOT=/home/gengjianrui/worktrees/mace-update-boundary` and use the existing OC20NEB FPS data directory from the migrated data checkout.
+All jobs should explicitly set `MACE_OC20NEB_REPO_ROOT=/home/gengjianrui/worktrees/mace-update-boundary` and use the existing OC20NEB FPS data directory from the migrated data checkout.

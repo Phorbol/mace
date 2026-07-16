@@ -202,6 +202,38 @@ MACE implications:
 - Consider EMA as an explicit experimental option after HybridMuon baseline
   conclusions are stable.
 
+### Direct Non-Conservative Outputs
+
+TACE has first-class `direct_forces`, `direct_stress`, and `direct_virials`
+properties in the model, compile wrapper, losses, and metrics. Its compile
+wrapper explicitly distinguishes two modes: direct outputs can be compiled as
+ordinary readout tensors, while conservative `forces`, `stress`, and `virials`
+require `energy` so they can be derived from first derivatives.
+
+This is worth considering for MACE, but it should be treated as a separate
+training objective, not as a hidden replacement for force-from-energy training.
+The practical design would be:
+
+- keep the existing conservative path as the default: energy is the source of
+  truth, forces/stress are obtained by autograd, and this is the path required
+  for strict energy conservation;
+- add an optional `direct_forces` head for supervised force fitting when speed
+  or non-conservative teacher labels are the experiment target;
+- optionally add `direct_stress` / `direct_virials` heads only after force-head
+  parity and metric logging are stable;
+- keep labels and metrics separate: report conservative `forces` and direct
+  `direct_forces` independently, and never mix their loss keys implicitly;
+- evaluate curl / integrability diagnostics for the direct force field, because
+  lower force MAE can still produce non-conservative dynamics;
+- benchmark against the conservative path at fixed batch budget and wall-clock,
+  especially with CUEQ + HybridMuon enabled.
+
+The main upside is that direct force loss avoids the expensive mixed second
+partial derivatives of force training, so it may be a real speed path even if
+compile is abandoned. The main downside is that it can break energy-force
+consistency. For MACELES, long-range electrostatics, cell relaxation, and any
+stress-sensitive workflow, the conservative path should remain the reference.
+
 ## Proposed Priority Order
 
 1. Training framework cleanup:
@@ -210,13 +242,16 @@ MACE implications:
 2. Loss schedule:
    support both hard stage switch and smooth LR-coupled E/F/stress prefactors.
    Re-run the 20k then 200k OC20NEB AdamW vs HybridMuon matrix under both.
-3. HybridMuon polish:
+3. Direct-force design spike:
+   prototype the config, output keys, losses, metrics, and curl diagnostics for
+   optional non-conservative `direct_forces`, but do not make it default.
+4. HybridMuon polish:
    compare current MACE implementation against latest DeepMD/TACE HybridMuon
    for foreach coverage, Magma defaults, and DTensor/FSDP guard behavior.
-4. NVIDIA neighbor backend prototype:
+5. NVIDIA neighbor backend prototype:
    optional preprocessing/inference backend first; training path only after
    parity and speed are measured.
-5. MACELES long-range prototype:
+6. MACELES long-range prototype:
    scalar-charge Ewald/PME energy-only training contract first; forces/stress
    derived by autograd and validated by finite differences.
 
@@ -227,4 +262,6 @@ MACE implications:
   ABACUS dataset benchmarks.
 - Do not use direct PME force or virial outputs in training before
   second-derivative tests pass.
+- Do not silently replace conservative MACE forces with `direct_forces`; direct
+  outputs must be opt-in and separately logged.
 - Do not adopt Lightning wholesale just to get scheduler features.
