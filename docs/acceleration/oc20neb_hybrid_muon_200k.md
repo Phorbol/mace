@@ -360,3 +360,59 @@ Structured outputs used here:
 - `runs/oc20neb_fullcase200_ef_20k/676176/matrix_summary.csv`
 - `runs/oc20neb_fullcase200_ef_20k/676207/matrix_summary.csv`
 - `runs/oc20neb_fullcase200_ef_20k/676208/matrix_summary.csv`
+
+
+## 2026-07-17 CUEQ TACE Module-LR-Scale 20k Checks
+
+The route-subset checks left one plausible explanation for the broad TACE force
+shortfall: the module-declared CUEQ flat specs might need a smaller Muon LR than
+the radial tensor-product MLP matrices. Commit `2231efe` added
+`--hybrid_muon_tace_module_lr_scale`, an extra positive per-parameter LR
+multiplier that applies only to module-declared Muon specs under
+`routing=tace`. Radial `tace-matrix-muon` dense matrices keep the base
+`hybrid_muon_lr_factor=3.0` setting. Commit `610b900` then made non-default
+per-parameter LR scales visible in the HybridMuon route summary for future runs.
+
+Jobs `676250` and `676251` reran the no-stage, force-focused `1:100` 20k setup
+with CUEQ, WSD per-step scheduling, `routing=tace`, full module include `*`,
+`match_rms`, and Magma-lite. The only changed parameter was
+`MACE_OC20NEB_HYBRID_MUON_TACE_MODULE_LR_SCALE`.
+
+| Case | Job | TACE module LR scale | Final E MAE | Final F MAE | Best F MAE | Seconds/update | Optimizer s/update | Peak FB memory |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| CUEQ + AdamW | 676083 | n/a | 159.00 | 38.09 | 38.09 | 0.05473 | 0.00086 | 10158 MB |
+| CUEQ + HybridMuon full TACE | 676176 | 1.0 | 112.74 | 39.00 | 39.00 | 0.06064 | 0.00859 | 10154 MB |
+| CUEQ + HybridMuon linear-only | 676208 | n/a | 97.79 | 40.05 | 40.05 | 0.05910 | 0.00745 | 10156 MB |
+| CUEQ + HybridMuon full TACE, scaled modules | 676250 | 0.5 | 123.35 | 41.45 | 41.45 | 0.06192 | 0.00881 | 9420 MB |
+| CUEQ + HybridMuon full TACE, scaled modules | 676251 | 0.25 | 136.86 | 43.75 | 42.67 | 0.06204 | 0.00881 | 9418 MB |
+
+Matched-update validation showed the same ordering by mid-run:
+
+| Job | Module LR scale | F MAE @4k | F MAE @8k | F MAE @12k | F MAE @16k | F MAE @20k |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 676176 | 1.0 | 45.11 | 46.73 | 43.54 | 41.09 | 39.00 |
+| 676250 | 0.5 | 43.73 | 47.83 | 46.27 | 43.36 | 41.45 |
+| 676251 | 0.25 | 42.67 | 47.79 | 47.97 | 45.82 | 43.75 |
+
+Interpretation:
+
+- Lowering the LR only for module-declared flat specs did not fix the force gap.
+  The `0.5` run briefly looked better at 4k, but by 12k/16k it lagged full TACE
+  and finished `2.45 meV/A` worse in force. The `0.25` run was worse still.
+- Energy also degraded as the module LR scale decreased: final energy went from
+  `112.74` for full TACE to `123.35` at scale `0.5` and `136.86` at scale
+  `0.25`.
+- Runtime did not improve. Both scaled runs were slightly slower than full TACE
+  by wrapper seconds/update and had essentially the same optimizer-step cost.
+- This makes per-module LR damping an unlikely standalone fix. The remaining
+  HybridMuon path should change routing semantics or scheduling, not just lower
+  the CUEQ flat-spec LR. In this no-stage 20k matrix, AdamW is still the best
+  force baseline, full TACE is the best broad-HybridMuon force result, and
+  linear-only is the best energy result.
+
+Structured outputs used here:
+
+- `runs/oc20neb_fullcase200_ef_20k/676250/matrix_summary.csv`
+- `runs/oc20neb_fullcase200_ef_20k/676251/matrix_summary.csv`
+- `runs/oc20neb_fullcase200_ef_20k/676250/cueq_hybrid_muon_tace/logs/oc20neb_fullcase200_ef20k_cueq_hybrid_muon_tace_run-456.log`
+- `runs/oc20neb_fullcase200_ef_20k/676251/cueq_hybrid_muon_tace/logs/oc20neb_fullcase200_ef20k_cueq_hybrid_muon_tace_run-456.log`
