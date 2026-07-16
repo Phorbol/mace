@@ -254,6 +254,56 @@ def test_hybrid_muon_tace_routing_uses_cueq_module_slice_specs():
     }
 
 
+def test_hybrid_muon_tace_module_include_filters_declared_specs():
+    class FakeCueqLinear(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.arange(6.0).reshape(1, 6))
+            self.hybrid_muon_optim_specs = {
+                "weight": {
+                    "route": "muon",
+                    "slice_specs": (
+                        {
+                            "offset": 0,
+                            "numel": 6,
+                            "matrix_view_shape": (1, 2, 3),
+                        },
+                    ),
+                }
+            }
+
+    interactions_linear = FakeCueqLinear()
+    product_linear = FakeCueqLinear()
+    groups, summary = build_hybrid_muon_param_groups(
+        [
+            ("interactions.0.linear.weight", interactions_linear.weight),
+            ("products.0.linear.weight", product_linear.weight),
+        ],
+        lr=1.0e-3,
+        weight_decay=0.0,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        muon_mode="2d",
+        routing="tace",
+        module_map={
+            "interactions.0.linear": interactions_linear,
+            "products.0.linear": product_linear,
+        },
+        tace_module_include=("interactions.*",),
+    )
+
+    by_name = {entry["name"]: entry for entry in summary}
+    assert by_name["interactions.0.linear.weight"]["route"] == "muon"
+    assert by_name["interactions.0.linear.weight"]["reason"] == "module-declared"
+    assert by_name["products.0.linear.weight"]["route"] == "adamw"
+    assert by_name["products.0.linear.weight"]["reason"] == "module-spec-filtered"
+
+    muon_group = next(group for group in groups if group["route"] == "muon")
+    assert muon_group["param_names"] == ["interactions.0.linear.weight"]
+    adam_group = next(group for group in groups if group["route"] == "adam")
+    assert adam_group["param_names"] == ["products.0.linear.weight"]
+
+
 def test_hybrid_muon_tace_flat_specs_survive_optimizer_resume(monkeypatch):
     class FakeInstruction:
         path_shape = (2, 3)
@@ -1376,6 +1426,8 @@ def test_arg_parser_accepts_hybrid_muon_magma_lite_flag():
             "0.25",
             "--hybrid_muon_stage_two_route",
             "adamw",
+            "--hybrid_muon_tace_module_include",
+            "interactions.*,products.*.linear.weight",
         ]
     )
 
@@ -1389,6 +1441,10 @@ def test_arg_parser_accepts_hybrid_muon_magma_lite_flag():
     assert args.hybrid_muon_magma_bypass_first_step is True
     assert args.hybrid_muon_stage_two_lr_factor == 0.25
     assert args.hybrid_muon_stage_two_route == "adamw"
+    assert (
+        args.hybrid_muon_tace_module_include
+        == "interactions.*,products.*.linear.weight"
+    )
 
 
 def test_get_optimizer_builds_hybrid_muon():

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import math
 from dataclasses import dataclass
 from typing import Iterable
@@ -117,6 +118,23 @@ _MACE_HARD_ADAM_NAME_TOKENS = (
     "beta",
     "affine",
 )
+
+
+def _normalize_tace_module_include(
+    patterns: str | Iterable[str] | None,
+) -> tuple[str, ...]:
+    if patterns is None:
+        return ("*",)
+    if isinstance(patterns, str):
+        items = patterns.split(",")
+    else:
+        items = list(patterns)
+    normalized = tuple(str(item).strip() for item in items if str(item).strip())
+    return normalized or ("*",)
+
+
+def _matches_tace_module_include(name: str, patterns: tuple[str, ...]) -> bool:
+    return any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
 
 
 def _effective_shape(param: torch.nn.Parameter | torch.Tensor) -> tuple[int, ...]:
@@ -596,6 +614,7 @@ def build_hybrid_muon_param_groups(
     muon_mode: str = "2d",
     routing: str = "mace",
     module_map: dict[str, torch.nn.Module] | None = None,
+    tace_module_include: str | Iterable[str] | None = "*",
     magma_lite: bool = False,
     magma_initial_score: float = 0.5,
     magma_warmup_steps: int = 0,
@@ -622,6 +641,7 @@ def build_hybrid_muon_param_groups(
         raise ValueError("magma_initial_score must be in [0, 1]")
     if magma_warmup_steps < 0:
         raise ValueError("magma_warmup_steps must be non-negative")
+    tace_module_include_patterns = _normalize_tace_module_include(tace_module_include)
 
     muon_params: list[torch.nn.Parameter] = []
     muon_param_names: list[str] = []
@@ -681,13 +701,23 @@ def build_hybrid_muon_param_groups(
                 if module_map is not None:
                     optim_spec = _module_declared_optim_spec(name, param, module_map)
                 if optim_spec is not None:
-                    route, reason = optim_spec.route, "module-declared"
-                    flat_specs = _normalize_optim_spec_slice_specs(name, param, optim_spec)
-                    matrix_layout = _optim_spec_matrix_layout(name, param, optim_spec)
-                    if flat_specs is not None:
-                        muon_matrix_specs[name] = flat_specs
-                    if optim_spec.route in _ADAM_VARIANTS:
-                        adam_variant_override = optim_spec.route
+                    if not _matches_tace_module_include(
+                        name, tace_module_include_patterns
+                    ):
+                        route, reason = "adamw", "module-spec-filtered"
+                        adam_variant_override = "adamw"
+                    else:
+                        route, reason = optim_spec.route, "module-declared"
+                        flat_specs = _normalize_optim_spec_slice_specs(
+                            name, param, optim_spec
+                        )
+                        matrix_layout = _optim_spec_matrix_layout(
+                            name, param, optim_spec
+                        )
+                        if flat_specs is not None:
+                            muon_matrix_specs[name] = flat_specs
+                        if optim_spec.route in _ADAM_VARIANTS:
+                            adam_variant_override = optim_spec.route
                 else:
                     flat_spec_result = _flat_e3nn_linear_matrix_specs(
                         name, param, module_map

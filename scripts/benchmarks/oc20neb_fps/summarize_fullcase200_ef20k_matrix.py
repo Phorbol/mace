@@ -268,6 +268,9 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         "weight_decay": manifest.get("weight_decay"),
         "hybrid_muon_mode": manifest.get("hybrid_muon_mode"),
         "hybrid_muon_routing": _hybrid_muon_routing_from_case(case_name, manifest),
+        "hybrid_muon_tace_module_include": manifest.get(
+            "hybrid_muon_tace_module_include"
+        ),
         "hybrid_muon_lr_factor": manifest.get("hybrid_muon_lr_factor"),
         "hybrid_muon_stage_two_lr_factor": manifest.get("hybrid_muon_stage_two_lr_factor"),
         "hybrid_muon_stage_two_route": manifest.get("hybrid_muon_stage_two_route"),
@@ -463,6 +466,7 @@ def _comparison_row(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         "lr_scheduler_interval": candidate.get("lr_scheduler_interval") or baseline.get("lr_scheduler_interval"),
         "hybrid_muon_mode": candidate.get("hybrid_muon_mode"),
         "hybrid_muon_routing": candidate.get("hybrid_muon_routing"),
+        "hybrid_muon_tace_module_include": candidate.get("hybrid_muon_tace_module_include"),
         "hybrid_muon_lr_factor": candidate.get("hybrid_muon_lr_factor"),
         "hybrid_muon_stage_two_lr_factor": candidate.get("hybrid_muon_stage_two_lr_factor"),
         "hybrid_muon_stage_two_route": candidate.get("hybrid_muon_stage_two_route"),
@@ -629,6 +633,7 @@ def _ablation_label(row: dict[str, Any]) -> str:
         parts: list[str] = []
         for key, name in (
             ("hybrid_muon_routing", "routing"),
+            ("hybrid_muon_tace_module_include", "tace_include"),
             ("hybrid_muon_lr_factor", "lr_factor"),
             ("hybrid_muon_stage_two_lr_factor", "stage2_lr_factor"),
             ("hybrid_muon_stage_two_route", "stage2_route"),
@@ -693,6 +698,7 @@ def _ablation_row(
         "cueq": row.get("cueq"),
         "hybrid_muon": row.get("hybrid_muon"),
         "hybrid_muon_routing": row.get("hybrid_muon_routing"),
+        "hybrid_muon_tace_module_include": row.get("hybrid_muon_tace_module_include"),
         "hybrid_muon_lr_factor": row.get("hybrid_muon_lr_factor"),
         "hybrid_muon_stage_two_lr_factor": row.get("hybrid_muon_stage_two_lr_factor"),
         "hybrid_muon_stage_two_route": row.get("hybrid_muon_stage_two_route"),

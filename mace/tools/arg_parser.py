@@ -1281,6 +1281,17 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         choices=["mace", "tace", "module"],
     )
     parser.add_argument(
+        "--hybrid_muon_tace_module_include",
+        help=(
+            "Comma-separated fnmatch patterns for module-declared OptimSpec "
+            "parameters when hybrid_muon_routing=tace. Unmatched declared "
+            "parameters fall back to AdamW; default '*' preserves broad TACE "
+            "routing."
+        ),
+        type=str,
+        default="*",
+    )
+    parser.add_argument(
         "--hybrid_muon_magma_lite",
         help=(
             "Enable DPA4/TACE-style Magma-lite damping for Muon-routed matrix "

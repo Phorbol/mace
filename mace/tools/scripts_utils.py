@@ -1011,6 +1011,7 @@ def get_optimizer(
             muon_mode=getattr(args, "hybrid_muon_mode", "2d"),
             routing=getattr(args, "hybrid_muon_routing", "mace"),
             module_map=dict(named_modules) if named_modules is not None else None,
+            tace_module_include=getattr(args, "hybrid_muon_tace_module_include", "*"),
             magma_lite=bool(getattr(args, "hybrid_muon_magma_lite", False)),
             magma_initial_score=getattr(args, "hybrid_muon_magma_initial_score", 0.5),
             magma_warmup_steps=getattr(args, "hybrid_muon_magma_warmup_steps", 0),
