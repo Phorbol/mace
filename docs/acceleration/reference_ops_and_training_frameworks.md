@@ -234,6 +234,34 @@ compile is abandoned. The main downside is that it can break energy-force
 consistency. For MACELES, long-range electrostatics, cell relaxation, and any
 stress-sensitive workflow, the conservative path should remain the reference.
 
+## Current MACE Branch Baseline
+
+Source check after this comparison shows that part of the intended training
+framework work is already present in the current branch:
+
+- `mace.tools.scripts_utils.LRScheduler` already supports a WSD scheduler with
+  warmup steps/ratio, warmup start factor, stop LR ratio, decay phase ratio,
+  and `inverse_linear|cosine|linear` decay.
+- `--lr_scheduler_interval=auto` already defaults WSD to per-step updates, and
+  `train_one_epoch()` calls `step_batch(global_step=...)` after non-skipped
+  optimizer steps.
+- `max_num_updates` is already preferred over epoch-derived step counts for
+  per-step WSD, which matches the update-budget experiments.
+- Tests already cover parser flags, per-step WSD, `max_num_updates`, and
+  summary reporting.
+
+The remaining training-control gap is therefore not a wholesale scheduler
+rewrite. The next useful change is a loss-prefactor controller that can update
+energy/force/stress weights from the current global step or LR factor, while
+preserving the existing hard stage-two switch as an ablation. Current loss
+classes store static weight buffers, and stage two swaps the whole loss object.
+That is adequate for hard switches but not for DeePMD-style smooth prefactors.
+
+The current model-output gap is also clear: `mace.modules.utils.get_outputs()`
+only derives conservative `forces`, `stress`, and `virials` from energy. A
+TACE-like direct path should add separate `direct_forces` / `direct_stress`
+outputs and losses, rather than changing the semantics of existing keys.
+
 ## Proposed Priority Order
 
 1. Training framework cleanup:
