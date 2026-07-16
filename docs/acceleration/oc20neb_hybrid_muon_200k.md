@@ -103,3 +103,39 @@ Recommended next matrix:
 - Add stress once the selected dataset has reliable stress labels and matching loss terms.
 
 All jobs should explicitly set `MACE_OC20NEB_REPO_ROOT=/home/gengjianrui/worktrees/mace-update-boundary` and use the existing OC20NEB FPS data directory from the migrated data checkout.
+
+## 2026-07-17 Smooth 20:1 WSD 20k Check
+
+SAI job `675964` reran the 20k OC20NEB FPS quick matrix after adding smooth
+loss-prefactor scheduling. The job used the migrated extxyz split under
+`/home/gengjianrui/workdir_sjtu-caoxiaoming/gengjianrui/Phorbol-mace-dpa4-training-accel/runs/oc20neb_fullcase200_fps_extxyz`,
+single V100, CUEQ, WSD with per-step scheduling, batch size `8`, `20,000`
+updates, stage two starting at update `15,000`, and a linear prefactor ramp from
+`1:100` to `20:1` between updates `15,000` and `20,000`. HybridMuon used
+`hybrid_muon_lr_factor=3.0`, `lr_scale_mode=match_rms`, Magma-lite, and switched
+Muon-routed parameters to AdamW in stage two.
+
+The job completed successfully in `01:00:00` with Slurm MaxRSS `5,672,984K`.
+Both cases reported `20,006` observed updates and no NaNs. The structured output
+is in `runs/oc20neb_fullcase200_ef_20k/675964/matrix_summary.csv` and
+`matrix_comparisons.csv`.
+
+| Case | Final E MAE (meV/atom) | Final F MAE (meV/A) | Best E MAE | Best F MAE | Seconds/update | Max FB memory |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| CUEQ + AdamW | 96.10 | 45.90 | 96.10 | 39.63 | 0.05488 | 10160 MB |
+| CUEQ + HybridMuon | 60.42 | 46.27 | 60.42 | 42.11 | 0.05620 | 10160 MB |
+
+HybridMuon improved final energy MAE by `35.68 meV/atom` (`0.63x` of AdamW),
+but final force MAE was essentially unchanged and slightly worse by
+`0.37 meV/A`; best force over the run was also worse by `2.48 meV/A`. It was
+about `2.4%` slower by wrapper seconds/update and about `3.5%` slower by the
+training-loop timing. The extra optimizer-step cost is visible:
+`0.00324 s/update` for HybridMuon versus `0.00086 s/update` for AdamW.
+
+This is a useful negative/neutral force result for the current 20k recipe. The
+smooth `20:1` stage-two schedule avoids a hard loss jump and improves energy,
+but it does not prove HybridMuon accelerates force convergence at this short
+budget. The next optimizer test should not simply scale this exact 20k recipe to
+200k. Better candidates are a 50:1 smooth schedule, a no-stage-two force-focused
+control, or a revised Muon routing/LR recipe before spending another long
+OC20NEB budget.
