@@ -55,6 +55,11 @@ HYBRID_MUON_STAGE_TWO_ROUTE=${MACE_OC20NEB_HYBRID_MUON_STAGE_TWO_ROUTE:-keep}
 HYBRID_MUON_WEIGHT_DECAY=${MACE_OC20NEB_HYBRID_MUON_WEIGHT_DECAY:-0.0}
 HYBRID_MUON_ADAM_VARIANT=${MACE_OC20NEB_HYBRID_MUON_ADAM_VARIANT:-adamw}
 HYBRID_MUON_LR_SCALE_MODE=${MACE_OC20NEB_HYBRID_MUON_LR_SCALE_MODE:-original}
+HYBRID_MUON_MATCH_RMS_COEFF=${MACE_OC20NEB_HYBRID_MUON_MATCH_RMS_COEFF:-0.18}
+HYBRID_MUON_MAGMA_LITE=${MACE_OC20NEB_HYBRID_MUON_MAGMA_LITE:-False}
+HYBRID_MUON_MAGMA_INITIAL_SCORE=${MACE_OC20NEB_HYBRID_MUON_MAGMA_INITIAL_SCORE:-0.5}
+HYBRID_MUON_MAGMA_WARMUP_STEPS=${MACE_OC20NEB_HYBRID_MUON_MAGMA_WARMUP_STEPS:-0}
+HYBRID_MUON_MAGMA_BYPASS_FIRST_STEP=${MACE_OC20NEB_HYBRID_MUON_MAGMA_BYPASS_FIRST_STEP:-False}
 
 export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
@@ -164,6 +169,11 @@ cat > "${RUN_ROOT}/manifest.json" <<JSON
   "hybrid_muon_weight_decay": ${HYBRID_MUON_WEIGHT_DECAY},
   "hybrid_muon_adam_variant": "${HYBRID_MUON_ADAM_VARIANT}",
   "hybrid_muon_lr_scale_mode": "${HYBRID_MUON_LR_SCALE_MODE}",
+  "hybrid_muon_match_rms_coeff": ${HYBRID_MUON_MATCH_RMS_COEFF},
+  "hybrid_muon_magma_lite": "${HYBRID_MUON_MAGMA_LITE}",
+  "hybrid_muon_magma_initial_score": ${HYBRID_MUON_MAGMA_INITIAL_SCORE},
+  "hybrid_muon_magma_warmup_steps": ${HYBRID_MUON_MAGMA_WARMUP_STEPS},
+  "hybrid_muon_magma_bypass_first_step": "${HYBRID_MUON_MAGMA_BYPASS_FIRST_STEP}",
   "slurm_gpus_per_node": "${SLURM_GPUS_PER_NODE:-${SLURM_GPUS_ON_NODE:-unknown}}",
   "stage1_energy_weight": ${STAGE1_ENERGY_WEIGHT},
   "stage1_forces_weight": ${STAGE1_FORCES_WEIGHT},
@@ -372,6 +382,30 @@ case "${COMPILE_PARITY_CHECK_STRICT}" in
     ;;
 esac
 
+hybrid_muon_magma_flags=()
+case "${HYBRID_MUON_MAGMA_LITE}" in
+  True|true|1|yes|YES|on|ON)
+    hybrid_muon_magma_flags+=(--hybrid_muon_magma_lite)
+    ;;
+  False|false|0|no|NO|off|OFF)
+    ;;
+  *)
+    echo "Invalid MACE_OC20NEB_HYBRID_MUON_MAGMA_LITE=${HYBRID_MUON_MAGMA_LITE}; expected True or False" >&2
+    exit 2
+    ;;
+esac
+case "${HYBRID_MUON_MAGMA_BYPASS_FIRST_STEP}" in
+  True|true|1|yes|YES|on|ON)
+    hybrid_muon_magma_flags+=(--hybrid_muon_magma_bypass_first_step)
+    ;;
+  False|false|0|no|NO|off|OFF)
+    ;;
+  *)
+    echo "Invalid MACE_OC20NEB_HYBRID_MUON_MAGMA_BYPASS_FIRST_STEP=${HYBRID_MUON_MAGMA_BYPASS_FIRST_STEP}; expected True or False" >&2
+    exit 2
+    ;;
+esac
+
 hybrid_muon_args=(
   --optimizer=hybrid_muon
   --hybrid_muon_mode="${HYBRID_MUON_MODE}"
@@ -382,6 +416,10 @@ hybrid_muon_args=(
   --hybrid_muon_weight_decay="${HYBRID_MUON_WEIGHT_DECAY}"
   --hybrid_muon_adam_variant="${HYBRID_MUON_ADAM_VARIANT}"
   --hybrid_muon_lr_scale_mode="${HYBRID_MUON_LR_SCALE_MODE}"
+  --hybrid_muon_match_rms_coeff="${HYBRID_MUON_MATCH_RMS_COEFF}"
+  --hybrid_muon_magma_initial_score="${HYBRID_MUON_MAGMA_INITIAL_SCORE}"
+  --hybrid_muon_magma_warmup_steps="${HYBRID_MUON_MAGMA_WARMUP_STEPS}"
+  "${hybrid_muon_magma_flags[@]}"
 )
 
 hybrid_muon_tace_args=(

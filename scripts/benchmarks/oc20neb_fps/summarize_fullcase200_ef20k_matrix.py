@@ -274,6 +274,11 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         "hybrid_muon_weight_decay": manifest.get("hybrid_muon_weight_decay"),
         "hybrid_muon_adam_variant": manifest.get("hybrid_muon_adam_variant"),
         "hybrid_muon_lr_scale_mode": manifest.get("hybrid_muon_lr_scale_mode"),
+        "hybrid_muon_match_rms_coeff": manifest.get("hybrid_muon_match_rms_coeff"),
+        "hybrid_muon_magma_lite": manifest.get("hybrid_muon_magma_lite"),
+        "hybrid_muon_magma_initial_score": manifest.get("hybrid_muon_magma_initial_score"),
+        "hybrid_muon_magma_warmup_steps": manifest.get("hybrid_muon_magma_warmup_steps"),
+        "hybrid_muon_magma_bypass_first_step": manifest.get("hybrid_muon_magma_bypass_first_step"),
         "compile_setup_gate": manifest.get("compile_setup_gate"),
         "compile_max_cache_entries": manifest.get("compile_max_cache_entries"),
         "compile_parity_gradients": manifest.get("compile_parity_gradients"),
@@ -628,6 +633,9 @@ def _ablation_label(row: dict[str, Any]) -> str:
             ("hybrid_muon_stage_two_lr_factor", "stage2_lr_factor"),
             ("hybrid_muon_stage_two_route", "stage2_route"),
             ("hybrid_muon_lr_scale_mode", "scale"),
+            ("hybrid_muon_match_rms_coeff", "match_rms"),
+            ("hybrid_muon_magma_lite", "magma"),
+            ("hybrid_muon_magma_warmup_steps", "magma_warmup"),
         ):
             value = row.get(key)
             if value is not None:
@@ -689,6 +697,11 @@ def _ablation_row(
         "hybrid_muon_stage_two_lr_factor": row.get("hybrid_muon_stage_two_lr_factor"),
         "hybrid_muon_stage_two_route": row.get("hybrid_muon_stage_two_route"),
         "hybrid_muon_lr_scale_mode": row.get("hybrid_muon_lr_scale_mode"),
+        "hybrid_muon_match_rms_coeff": row.get("hybrid_muon_match_rms_coeff"),
+        "hybrid_muon_magma_lite": row.get("hybrid_muon_magma_lite"),
+        "hybrid_muon_magma_initial_score": row.get("hybrid_muon_magma_initial_score"),
+        "hybrid_muon_magma_warmup_steps": row.get("hybrid_muon_magma_warmup_steps"),
+        "hybrid_muon_magma_bypass_first_step": row.get("hybrid_muon_magma_bypass_first_step"),
         "scheduler": row.get("scheduler"),
         "lr_scheduler_interval": row.get("lr_scheduler_interval"),
         "stage_two_start_update": row.get("stage_two_start_update"),
