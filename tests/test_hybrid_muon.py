@@ -148,7 +148,7 @@ def test_hybrid_muon_routes_singleton_matrix_views_to_adam():
             "shape": (1, 128),
             "numel": 128,
             "route": "adam",
-            "reason": "effective-rank<2",
+            "reason": "sensitive-name",
         }
     ]
     assert len(groups) == 1
@@ -855,9 +855,45 @@ def test_hybrid_muon_state_dict_contains_route_manifest_hash():
     assert manifest["spec_version"] == 1
     assert manifest["parameters"]["block.weight"]["shape"] == [4, 4]
     assert manifest["parameters"]["block.weight"]["route"] == "muon"
+    assert manifest["parameters"]["block.weight"]["reason"] == "module-declared"
+    assert manifest["parameters"]["block.weight"]["module_type"].endswith(
+        "DeclaredModule"
+    )
     assert manifest["parameters"]["block.weight"]["matrix_views"] == [
         {"kind": "layout", "shape": [4, 4]}
     ]
+
+
+def test_hybrid_muon_mace_route_manifest_snapshot_records_safe_defaults():
+    model = TinyMaceLike()
+    groups, _ = build_hybrid_muon_param_groups(
+        model.named_parameters(),
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="mace",
+        module_map=dict(model.named_modules()),
+    )
+    manifest = HybridMuon(groups, lr=1.0e-3).state_dict()[
+        "hybrid_muon_route_manifest"
+    ]
+    parameters = manifest["parameters"]
+
+    assert parameters["radial_embedding.0.weight"] == {
+        "shape": [8, 4],
+        "route": "muon",
+        "group_route": "muon",
+        "reason": "safe-dense-name",
+        "module_type": "torch.nn.modules.linear.Linear",
+        "matrix_views": [{"kind": "view", "shape": [8, 4]}],
+        "structure": "real",
+        "muon_mode": "2d",
+    }
+    assert parameters["readouts.0.weight"]["route"] == "adamw"
+    assert parameters["readouts.0.weight"]["reason"] == "sensitive-name"
+    assert parameters["products"]["route"] == "adamw"
+    assert parameters["products"]["reason"] == "sensitive-name"
 
 
 def test_hybrid_muon_load_state_rejects_route_manifest_drift():

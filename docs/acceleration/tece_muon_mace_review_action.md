@@ -99,7 +99,9 @@ After freezing that experiment source, apply these changes:
    route manifest/hash landed in `HybridMuon.state_dict()`; `load_state_dict()`
    now rejects saved route hashes that differ from the current optimizer route.
 6. Add architecture-level route snapshot tests for MACE/e3nn, CUEQ-converted
-   flat weights, and any future TACE/TECE/DPA4 modules.
+   flat weights, and any future TACE/TECE/DPA4 modules. Status: initial MACE
+   safe-default route manifest snapshot landed with per-parameter reason and
+   owner module type recorded in the checkpoint manifest.
 7. Only after the Muon route contract is stable, revisit edge-force-virial:
    document edge-vector sign, add explicit `edge_vec`, `shifts`, `cell`, and PBC
    inputs, and validate force/virial signs with position and strain finite
