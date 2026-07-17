@@ -621,6 +621,43 @@ def test_hybrid_muon_optim_spec_rejects_unsupported_matrix_structures():
             )
 
 
+def test_hybrid_muon_manifest_records_complex_adamw_structure():
+    class ComplexSO2Module(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(2, 8, 8))
+            self.hybrid_muon_optim_specs = {
+                "weight": OptimSpec(
+                    route="adamw",
+                    matrix_structure="complex",
+                    semantic_axes=("complex_component", "channel_out", "channel_in"),
+                    spec_version=3,
+                )
+            }
+
+    module = ComplexSO2Module()
+    groups, summary = build_hybrid_muon_param_groups(
+        [("block.weight", module.weight)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"block": module},
+    )
+    manifest = HybridMuon(groups, lr=1.0e-3).state_dict()[
+        "hybrid_muon_route_manifest"
+    ]
+    parameter = manifest["parameters"]["block.weight"]
+
+    assert summary[0]["route"] == "adamw"
+    assert summary[0]["reason"] == "module-declared"
+    assert parameter["route"] == "adamw"
+    assert parameter["structure"] == "complex"
+    assert parameter["optim_spec_version"] == 3
+    assert parameter["reason"] == "module-declared"
+
+
 def test_hybrid_muon_optim_spec_matrix_size_gates_fallback_to_adamw():
     class SmallOrSkinnyModule(torch.nn.Module):
         def __init__(self):

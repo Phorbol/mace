@@ -823,6 +823,7 @@ def build_hybrid_muon_param_groups(
     muon_param_route_reasons: dict[str, str] = {}
     muon_param_module_types: dict[str, str] = {}
     muon_param_optim_spec_versions: dict[str, int] = {}
+    muon_param_matrix_structures: dict[str, str] = {}
     adam_group_buckets: dict[tuple, dict] = {}
     muon_matrix_specs: dict[str, list[dict]] = {}
     summary: list[dict] = []
@@ -946,6 +947,7 @@ def build_hybrid_muon_param_groups(
                 muon_param_module_types[name] = module_type_name
             if optim_spec is not None:
                 muon_param_optim_spec_versions[name] = int(optim_spec.spec_version)
+                muon_param_matrix_structures[name] = str(optim_spec.matrix_structure)
                 if effective_muon_lr_scale is None:
                     effective_muon_lr_scale = float(optim_spec.lr_scale)
                 if effective_muon_lr_scale != 1.0:
@@ -993,6 +995,7 @@ def build_hybrid_muon_param_groups(
                     "param_route_reasons": {},
                     "param_module_types": {},
                     "param_optim_spec_versions": {},
+                    "param_matrix_structures": {},
                 },
             )
             bucket["params"].append(param)
@@ -1002,6 +1005,7 @@ def build_hybrid_muon_param_groups(
                 bucket["param_module_types"][name] = module_type_name
             if optim_spec is not None:
                 bucket["param_optim_spec_versions"][name] = int(optim_spec.spec_version)
+                bucket["param_matrix_structures"][name] = str(optim_spec.matrix_structure)
         matrix_view = _matrix_view_shape(tuple(int(dim) for dim in param.shape), muon_mode)
         matrix_batch = matrix_view[0] if route == "muon" and matrix_view else None
         matrix_shape = matrix_view[-2:] if route == "muon" and matrix_view else None
@@ -1051,6 +1055,7 @@ def build_hybrid_muon_param_groups(
                 "param_route_reasons": muon_param_route_reasons,
                 "param_module_types": muon_param_module_types,
                 "param_optim_spec_versions": muon_param_optim_spec_versions,
+                "param_matrix_structures": muon_param_matrix_structures,
                 "muon_lr_scale_mode": muon_lr_scale_mode,
                 "muon_match_rms_coeff": float(muon_match_rms_coeff),
                 "magma_lite": bool(magma_lite),
@@ -1189,6 +1194,7 @@ _RUNTIME_PARAM_GROUP_METADATA_KEYS = (
     "param_weight_decays",
     "param_matrix_layouts",
     "param_optim_spec_versions",
+    "param_matrix_structures",
 )
 _ROUTE_MANIFEST_STATE_KEYS = (
     "hybrid_muon_route_manifest",
@@ -1236,6 +1242,9 @@ def _hybrid_muon_route_manifest_from_groups(param_groups: Iterable[dict]) -> dic
         optim_spec_versions = group.get("param_optim_spec_versions", {})
         if not isinstance(optim_spec_versions, dict):
             optim_spec_versions = {}
+        matrix_structures = group.get("param_matrix_structures", {})
+        if not isinstance(matrix_structures, dict):
+            matrix_structures = {}
         muon_mode = str(group.get("muon_mode", "2d"))
         adam_variant = str(group.get("adam_variant", "adamw"))
         for param_index, param in enumerate(group.get("params", [])):
@@ -1249,7 +1258,7 @@ def _hybrid_muon_route_manifest_from_groups(param_groups: Iterable[dict]) -> dic
                 "route": parameter_route,
                 "group_route": str(route),
                 "matrix_views": [],
-                "structure": "real",
+                "structure": str(matrix_structures.get(name, "real")),
             }
             if name in route_reasons:
                 item["reason"] = str(route_reasons[name])
