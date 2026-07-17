@@ -416,3 +416,54 @@ Structured outputs used here:
 - `runs/oc20neb_fullcase200_ef_20k/676251/matrix_summary.csv`
 - `runs/oc20neb_fullcase200_ef_20k/676250/cueq_hybrid_muon_tace/logs/oc20neb_fullcase200_ef20k_cueq_hybrid_muon_tace_run-456.log`
 - `runs/oc20neb_fullcase200_ef_20k/676251/cueq_hybrid_muon_tace/logs/oc20neb_fullcase200_ef20k_cueq_hybrid_muon_tace_run-456.log`
+
+
+## 2026-07-17 Smooth 50:1 Full-TACE Stage-Two Check
+
+Job `676273` tested whether the broad CUEQ `routing=tace` HybridMuon recipe
+benefits from the same delayed energy ramp used in job `676044`. It reused the
+OC20NEB fullcase-200 FPS split, single V100, CUEQ, batch size `8`, WSD
+per-step scheduling, `hybrid_muon_lr_factor=3.0`, `match_rms`, Magma-lite, full
+module include `*`, and module LR scale `1.0`. The loss was `energy:forces =
+1:100` until update `15000`, then used the `step_linear` schedule to ramp toward
+`50:1` by update `20000`. During stage two,
+`MACE_OC20NEB_HYBRID_MUON_STAGE_TWO_ROUTE=adamw` moved the Muon-routed
+parameters to AdamW for the high-energy-weight tail.
+
+| Case | Job | Routing / schedule | Final E MAE | Final F MAE | Best F MAE | Seconds/update | Optimizer s/update | Peak FB memory |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| CUEQ + AdamW 50:1 ramp | 676044 | AdamW, step-linear | 54.78 | 52.02 | 40.63 | 0.04990 | 0.00085 | n/a |
+| CUEQ + HybridMuon radial 50:1 ramp | 676044 | mace/radial, step-linear | 36.51 | 47.84 | 43.65 | 0.05008 | 0.00061 | n/a |
+| CUEQ + HybridMuon full TACE no-stage | 676176 | tace/broad, 1:100 | 112.74 | 39.00 | 39.00 | 0.06064 | 0.00859 | 10154 MB |
+| CUEQ + HybridMuon full TACE 50:1 ramp | 676273 | tace/broad -> AdamW tail | 25.64 | 45.40 | 43.22 | 0.05786 | 0.00667 | 8894 MB |
+
+Matched-update validation confirms that the run is identical to no-stage full
+TACE before the ramp, then trades force for energy after update `15000`:
+
+| Job | Schedule | E/F @4k | E/F @8k | E/F @12k | E/F @16k | E/F @20k |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 676176 | off, 1:100 | 150.43 / 45.11 | 147.33 / 46.73 | 134.14 / 43.54 | 119.67 / 41.09 | 112.74 / 39.00 |
+| 676273 | step-linear 1:100 -> 50:1 | 150.43 / 45.11 | 147.33 / 46.73 | 134.14 / 43.54 | 78.77 / 43.22 | 25.64 / 45.40 |
+
+Interpretation:
+
+- The delayed 50:1 ramp is very effective for energy. Full-TACE HybridMuon
+  reached the best 20k energy MAE in this matrix (`25.64 meV/atom`), beating the
+  radial HybridMuon ramp (`36.51`) and AdamW ramp (`54.78`).
+- The same ramp worsens force relative to no-stage full TACE. Final force moved
+  from `39.00` to `45.40 meV/A`, and best force moved from `39.00` to
+  `43.22 meV/A`.
+- Switching Muon-routed parameters to AdamW in stage two reduces optimizer-step
+  cost in the tail: the last-1000-step optimizer time was about
+  `0.00055 s/update`, close to AdamW and far below no-stage full TACE
+  (`0.00858 s/update`). The whole-run average still includes the first 15k Muon
+  steps.
+- The current smooth stage-two recipe is useful when energy MAE is the primary
+  objective, but it is not the force-accuracy answer. For force-focused OC20NEB
+  20k, the best measured endpoint remains no-stage AdamW (`38.09 meV/A`), with
+  no-stage full TACE HybridMuon close behind (`39.00 meV/A`) but slower.
+
+Structured outputs used here:
+
+- `runs/oc20neb_fullcase200_ef_20k/676273/matrix_summary.csv`
+- `runs/oc20neb_fullcase200_ef_20k/676273/cueq_hybrid_muon_tace/logs/oc20neb_fullcase200_ef20k_cueq_hybrid_muon_tace_run-456.log`
