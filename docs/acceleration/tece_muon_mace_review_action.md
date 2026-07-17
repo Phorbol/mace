@@ -1,0 +1,114 @@
+# TECE Muon MACE Review Action Notes
+
+Date: 2026-07-17
+
+Source review: `/home/gengjianrui/bin/TECE_Muon_MACE_review.md`.
+
+This note records how the TECE/Muon review changes the immediate engineering
+priority for `dpa4-training-accel-20260703`. It is intentionally shorter than
+the source review and focuses on current branch facts and actionable decisions.
+
+## Current Branch Facts
+
+HybridMuon already has several correctness fixes and useful building blocks:
+
+- `OptimSpec(route, matrix_axes, batch_axes, slice_specs, lr_scale, weight_decay)`
+  exists and validates matrix/batch axis coverage.
+- e3nn flat-weight instruction reconstruction uses stable parameter names rather
+  than Python object ids.
+- runtime-only metadata such as `matrix_specs`, per-parameter LR scales, and
+  matrix layouts is stripped from optimizer `state_dict()` and restored from the
+  live optimizer on load.
+- Muon-routed tensors without a valid `MatrixSpec`, `OptimSpec` layout, or
+  matrix view now raise instead of silently skipping the update.
+- match-RMS scaling, rectangular canonicalization, same-short-side batching,
+  Magma-lite warmup controls, per-parameter LR scales, and DTensor/sharded
+  rejection are present.
+
+The main remaining issue is semantic, not mechanical: `routing="tace"` still
+falls back to `tace-matrix-muon` for any matrix-like tensor that survives the
+MACE hard Adam name exclusions. That is too broad for TECE/TACE/DPA4 semantics.
+
+## Accepted Review Conclusions
+
+1. Muon should only operate on true channel-input to channel-output matrices.
+   Degree, parity, local `m`, CG path, correlation order, species, focus, head,
+   expert, and low-rank coefficient axes must be independent blocks unless a
+   module explicitly declares otherwise.
+2. `routing="module"` is the correct long-term default. It should route
+   declared matrices through `OptimSpec` and send unknown tensors to AdamW.
+3. `routing="tace"` should become a deprecated conservative compatibility mode,
+   not a broad matrix-like heuristic.
+4. Final readout and calibration parameters should default to AdamW. Hidden
+   readout-like MLP matrices can use Muon only through a module declaration.
+5. Complex SO(2) `w1_w2` parameters should not be split into independent real
+   and imaginary Muon updates. Until complex Muon is implemented, they should be
+   routed to AdamW.
+6. Route manifests should become JSON-compatible artifacts that can be compared
+   on resume. Shape or route drift should fail by default.
+7. The current edge-force compile path should continue to reject edge-mode
+   stress/virial training. Position-gradient compile can handle stress/virial
+   tensor losses, but edge-force-virial needs explicit edge-vector/cell/PBC ABI
+   and finite-difference parity before enabling.
+
+## Current Compile Capability Reading
+
+The current `training_compile.py` capability table is conservative in the way
+the review asks for:
+
+- `WeightedEnergyForcesLoss`, `WeightedForcesLoss`, and
+  `WeightedEnergyForcesL1L2Loss` are edge-force supported.
+- `WeightedEnergyForcesStressLoss`, `WeightedHuberEnergyForcesStressLoss`,
+  `UniversalLoss`, and `WeightedEnergyForcesVirialsLoss` have
+  `edge_force_supported=False` but `compiled_tensor_loss_supported=True`.
+- `TrainingCompileManager` falls back to eager if `stress` or `virials` is
+  requested while `force_gradient_mode != "positions"`.
+- `_EDGE_FORCE_INPUT_KEYS` still lacks explicit `shifts` and `cell`; these are
+  only present in `_POSITION_FORCE_INPUT_KEYS`.
+
+So it is accurate to say: stress/virial losses can use the compiled tensor-loss
+adapter in position-gradient mode, but edge-force mode is not yet an
+edge-force-virial implementation.
+
+## Implementation Order After The Running 200k Job
+
+Do not change `mace/tools/hybrid_muon.py` while Slurm job `676304` is between
+its AdamW and HybridMuon cases; changing the checkout could alter the second
+case and invalidate the 200k comparison. After that job is complete or moved to
+a frozen copy, apply these changes:
+
+1. Add semantic fields to optimizer specs, initially backwards-compatible:
+   `semantic_axes`, `matrix_structure`, `min_matrix_dim`, `max_aspect_ratio`,
+   and `spec_version`.
+2. Add validation rules that reject Muon for semantic axes such as `degree`,
+   `m`, `parity`, `path`, `correlation`, `species`, `focus`, `head`, and
+   `expert` when they appear as matrix axes.
+3. Change `routing="tace"` fallback from broad `tace-matrix-muon` to a
+   conservative allowlist: module-declared specs, known e3nn flat instruction
+   specs, and safe dense hidden matrices only.
+4. Prefer `routing="module"` in new experiment scripts and manifests; keep
+   `routing="tace"` only for compatibility/ablation runs with an explicit
+   warning in route summaries.
+5. Emit a route manifest/hash into experiment artifacts and checkpoint metadata.
+   Compare it on resume and fail on route or shape drift.
+6. Add architecture-level route snapshot tests for MACE/e3nn, CUEQ-converted
+   flat weights, and any future TACE/TECE/DPA4 modules.
+7. Only after the Muon route contract is stable, revisit edge-force-virial:
+   document edge-vector sign, add explicit `edge_vec`, `shifts`, `cell`, and PBC
+   inputs, and validate force/virial signs with position and strain finite
+   differences.
+
+## Experiment Interpretation
+
+The review also changes how to interpret current HybridMuon results:
+
+- Full broad `routing="tace"` experiments are useful as stress tests, but they
+  should not be treated as the final TECE/DPA4 optimizer policy.
+- The more defensible comparison is `routing="module"` or a conservative TACE
+  route with explicit semantic manifests.
+- If broad TACE Muon improves 20k/200k metrics, the next question is which
+  declared channel blocks drive the gain, not whether every matrix-like tensor
+  should stay on Muon.
+- Muon bulk training followed by lower-LR AdamW tail calibration is consistent
+  with the review and should be tested after the no-stage 200k AdamW vs
+  HybridMuon run finishes.
