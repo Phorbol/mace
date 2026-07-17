@@ -95,7 +95,9 @@ After freezing that experiment source, apply these changes:
    `routing="tace"` only for compatibility/ablation runs with an explicit
    warning in route summaries.
 5. Emit a route manifest/hash into experiment artifacts and checkpoint metadata.
-   Compare it on resume and fail on route or shape drift.
+   Compare it on resume and fail on route or shape drift. Status: checkpoint
+   route manifest/hash landed in `HybridMuon.state_dict()`; `load_state_dict()`
+   now rejects saved route hashes that differ from the current optimizer route.
 6. Add architecture-level route snapshot tests for MACE/e3nn, CUEQ-converted
    flat weights, and any future TACE/TECE/DPA4 modules.
 7. Only after the Muon route contract is stable, revisit edge-force-virial:

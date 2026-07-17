@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
+import json
 import math
 from dataclasses import dataclass
 from typing import Iterable
@@ -1133,6 +1135,98 @@ _RUNTIME_PARAM_GROUP_METADATA_KEYS = (
     "param_weight_decays",
     "param_matrix_layouts",
 )
+_ROUTE_MANIFEST_STATE_KEYS = (
+    "hybrid_muon_route_manifest",
+    "hybrid_muon_route_manifest_hash",
+)
+
+
+def _jsonify_route_value(value):
+    if isinstance(value, dict):
+        return {str(key): _jsonify_route_value(val) for key, val in sorted(value.items())}
+    if isinstance(value, (list, tuple)):
+        return [_jsonify_route_value(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _route_manifest_hash(manifest: dict) -> str:
+    payload = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _hybrid_muon_route_manifest_from_groups(param_groups: Iterable[dict]) -> dict:
+    parameters: dict[str, dict] = {}
+    for group_index, group in enumerate(param_groups):
+        route = group.get("route", "adam")
+        param_names = group.get("param_names")
+        if not isinstance(param_names, (list, tuple)):
+            param_names = [
+                f"<unnamed group {group_index} parameter {param_index}>"
+                for param_index, _ in enumerate(group.get("params", []))
+            ]
+        matrix_specs = group.get("matrix_specs", {})
+        if not isinstance(matrix_specs, dict):
+            matrix_specs = {}
+        matrix_layouts = group.get("param_matrix_layouts", {})
+        if not isinstance(matrix_layouts, dict):
+            matrix_layouts = {}
+        muon_mode = str(group.get("muon_mode", "2d"))
+        adam_variant = str(group.get("adam_variant", "adamw"))
+        for param_index, param in enumerate(group.get("params", [])):
+            name = str(param_names[param_index])
+            if route == "muon":
+                parameter_route = "muon"
+            else:
+                parameter_route = adam_variant if adam_variant in _ADAM_VARIANTS else "adam"
+            item = {
+                "shape": [int(dim) for dim in param.shape],
+                "route": parameter_route,
+                "group_route": str(route),
+                "matrix_views": [],
+                "structure": "real",
+            }
+            if parameter_route == "muon":
+                if name in matrix_specs:
+                    item["matrix_views"] = [
+                        {
+                            "kind": "flat_spec",
+                            "offset": int(spec["offset"]),
+                            "numel": int(spec["numel"]),
+                            "shape": [
+                                int(dim) for dim in spec["matrix_view_shape"][-2:]
+                            ],
+                        }
+                        for spec in matrix_specs[name]
+                    ]
+                elif name in matrix_layouts:
+                    layout = matrix_layouts[name]
+                    item["matrix_views"] = [
+                        {
+                            "kind": "layout",
+                            "shape": [
+                                int(dim) for dim in layout["matrix_view_shape"][-2:]
+                            ],
+                        }
+                    ]
+                else:
+                    matrix_view = _matrix_view_shape(
+                        tuple(int(dim) for dim in param.shape), muon_mode
+                    )
+                    if matrix_view is not None:
+                        item["matrix_views"] = [
+                            {
+                                "kind": "view",
+                                "shape": [int(dim) for dim in matrix_view[-2:]],
+                            }
+                        ]
+                item["muon_mode"] = muon_mode
+            parameters[name] = item
+    return {
+        "spec_version": 1,
+        "parameters": _jsonify_route_value(parameters),
+    }
 
 
 class HybridMuon(Optimizer):
@@ -1161,14 +1255,28 @@ class HybridMuon(Optimizer):
         for group in state_dict.get("param_groups", []):
             for key in _RUNTIME_PARAM_GROUP_METADATA_KEYS:
                 group.pop(key, None)
+        manifest = _hybrid_muon_route_manifest_from_groups(self.param_groups)
+        state_dict["hybrid_muon_route_manifest"] = manifest
+        state_dict["hybrid_muon_route_manifest_hash"] = _route_manifest_hash(manifest)
         return state_dict
 
     def load_state_dict(self, state_dict):
+        saved_route_hash = state_dict.get("hybrid_muon_route_manifest_hash")
+        if saved_route_hash is not None:
+            current_manifest = _hybrid_muon_route_manifest_from_groups(self.param_groups)
+            current_hash = _route_manifest_hash(current_manifest)
+            if str(saved_route_hash) != current_hash:
+                raise ValueError(
+                    "HybridMuon route manifest hash mismatch; checkpoint routes "
+                    "do not match the current optimizer routing"
+                )
         runtime_metadata = [
             {key: group.get(key) for key in _RUNTIME_PARAM_GROUP_METADATA_KEYS}
             for group in self.param_groups
         ]
         sanitized_state_dict = dict(state_dict)
+        for key in _ROUTE_MANIFEST_STATE_KEYS:
+            sanitized_state_dict.pop(key, None)
         sanitized_groups = []
         for group in state_dict.get("param_groups", []):
             sanitized_group = dict(group)

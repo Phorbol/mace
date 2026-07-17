@@ -827,6 +827,84 @@ def test_hybrid_muon_module_routing_uses_declared_slice_specs(monkeypatch):
     assert torch.allclose(module.weight, before - 1.0)
 
 
+def test_hybrid_muon_state_dict_contains_route_manifest_hash():
+    class DeclaredModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(4, 4))
+            self.hybrid_muon_optim_specs = {
+                "weight": OptimSpec(route="muon", matrix_axes=(0, 1))
+            }
+
+    module = DeclaredModule()
+    groups, _ = build_hybrid_muon_param_groups(
+        [("block.weight", module.weight)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"block": module},
+    )
+    optimizer = HybridMuon(groups, lr=1.0e-3)
+
+    state_dict = optimizer.state_dict()
+
+    assert state_dict["hybrid_muon_route_manifest_hash"]
+    manifest = state_dict["hybrid_muon_route_manifest"]
+    assert manifest["spec_version"] == 1
+    assert manifest["parameters"]["block.weight"]["shape"] == [4, 4]
+    assert manifest["parameters"]["block.weight"]["route"] == "muon"
+    assert manifest["parameters"]["block.weight"]["matrix_views"] == [
+        {"kind": "layout", "shape": [4, 4]}
+    ]
+
+
+def test_hybrid_muon_load_state_rejects_route_manifest_drift():
+    class SourceModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(4, 4))
+            self.hybrid_muon_optim_specs = {
+                "weight": OptimSpec(route="muon", matrix_axes=(0, 1))
+            }
+
+    class DriftedModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(4, 4))
+            self.hybrid_muon_optim_specs = {
+                "weight": OptimSpec(route="adamw")
+            }
+
+    source = SourceModule()
+    source_groups, _ = build_hybrid_muon_param_groups(
+        [("block.weight", source.weight)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"block": source},
+    )
+    checkpoint = HybridMuon(source_groups, lr=1.0e-3).state_dict()
+
+    drifted = DriftedModule()
+    drifted_groups, _ = build_hybrid_muon_param_groups(
+        [("block.weight", drifted.weight)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"block": drifted},
+    )
+    optimizer = HybridMuon(drifted_groups, lr=1.0e-3)
+
+    with pytest.raises(ValueError, match="HybridMuon route manifest hash mismatch"):
+        optimizer.load_state_dict(checkpoint)
+
+
 def test_hybrid_muon_load_state_ignores_serialized_matrix_specs(monkeypatch):
     class FakeInstruction:
         path_shape = (2, 3)
