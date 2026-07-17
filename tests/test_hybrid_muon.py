@@ -1,4 +1,5 @@
 import argparse
+import json
 import math
 
 import pytest
@@ -1919,6 +1920,59 @@ def test_get_optimizer_builds_hybrid_muon():
     assert muon_group["muon_mode"] == "slice"
     assert muon_group["magma_lite"] is True
     assert next(group for group in optimizer.param_groups if group["route"] == "adam")["lr"] == 1.0e-3
+
+
+def test_get_optimizer_writes_hybrid_muon_route_manifest_artifact(tmp_path):
+    class DeclaredBlock(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = torch.nn.Linear(4, 3, bias=False)
+            self.hybrid_muon_optim_specs = {
+                "linear.weight": OptimSpec(route="muon", matrix_axes=(0, 1)),
+            }
+
+    model = torch.nn.Module()
+    model.block = DeclaredBlock()
+    args = argparse.Namespace(
+        name="route_artifact",
+        log_dir=str(tmp_path),
+        optimizer="hybrid_muon",
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        hybrid_muon_weight_decay=0.0,
+        hybrid_muon_lr_factor=0.1,
+        hybrid_muon_mode="2d",
+        hybrid_muon_routing="module",
+        hybrid_muon_magma_lite=False,
+        beta=0.9,
+        amsgrad=False,
+    )
+    param_options = {
+        "params": [{"name": "all", "params": list(model.parameters()), "lr": args.lr}],
+        "lr": args.lr,
+        "amsgrad": args.amsgrad,
+        "betas": (args.beta, 0.999),
+    }
+
+    optimizer = get_optimizer(
+        args,
+        param_options,
+        named_parameters=model.named_parameters(),
+        named_modules=model.named_modules(),
+    )
+
+    artifact = tmp_path / "route_artifact_hybrid_muon_route_manifest.json"
+    payload = json.loads(artifact.read_text())
+    state_dict = optimizer.state_dict()
+    assert payload["hybrid_muon_route_manifest_hash"] == state_dict[
+        "hybrid_muon_route_manifest_hash"
+    ]
+    assert payload["hybrid_muon_route_manifest"] == state_dict[
+        "hybrid_muon_route_manifest"
+    ]
+    assert payload["hybrid_muon_route_manifest"]["parameters"][
+        "block.linear.weight"
+    ]["reason"] == "module-declared"
 
 
 def test_get_optimizer_defaults_hybrid_muon_to_module_routing_with_modules():

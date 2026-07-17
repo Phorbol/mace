@@ -962,6 +962,39 @@ def get_params_options(
     return param_options
 
 
+def _write_hybrid_muon_route_manifest_artifact(
+    args: argparse.Namespace, optimizer: torch.optim.Optimizer
+) -> None:
+    artifact_dir = getattr(args, "log_dir", None) or getattr(args, "model_dir", None)
+    if not artifact_dir:
+        return
+    if (
+        torch.distributed.is_available()
+        and torch.distributed.is_initialized()
+        and torch.distributed.get_rank() != 0
+    ):
+        return
+    state_dict = optimizer.state_dict()
+    manifest = state_dict.get("hybrid_muon_route_manifest")
+    manifest_hash = state_dict.get("hybrid_muon_route_manifest_hash")
+    if manifest is None or manifest_hash is None:
+        return
+    run_name = str(getattr(args, "name", "hybrid_muon")) or "hybrid_muon"
+    safe_name = "".join(
+        char if char.isalnum() or char in {"-", "_", "."} else "_"
+        for char in run_name
+    )
+    path = Path(artifact_dir) / f"{safe_name}_hybrid_muon_route_manifest.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "hybrid_muon_route_manifest_hash": manifest_hash,
+        "hybrid_muon_route_manifest": manifest,
+    }
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    os.replace(tmp_path, path)
+
+
 def get_optimizer(
     args: argparse.Namespace,
     param_options: Dict[str, Any],
@@ -1031,6 +1064,7 @@ def get_optimizer(
         )
         logging.info(summarize_hybrid_muon_routes(route_summary))
         optimizer = HybridMuon(groups, lr=args.lr, weight_decay=args.weight_decay)
+        _write_hybrid_muon_route_manifest_artifact(args, optimizer)
     elif args.optimizer == "schedulefree":
         try:
             from schedulefree import adamw_schedulefree
