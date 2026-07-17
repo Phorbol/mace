@@ -865,7 +865,9 @@ def test_hybrid_muon_state_dict_contains_route_manifest_hash():
             super().__init__()
             self.weight = torch.nn.Parameter(torch.ones(4, 4))
             self.hybrid_muon_optim_specs = {
-                "weight": OptimSpec(route="muon", matrix_axes=(0, 1))
+                "weight": OptimSpec(
+                    route="muon", matrix_axes=(0, 1), spec_version=2
+                )
             }
 
     module = DeclaredModule()
@@ -888,6 +890,7 @@ def test_hybrid_muon_state_dict_contains_route_manifest_hash():
     assert manifest["parameters"]["block.weight"]["shape"] == [4, 4]
     assert manifest["parameters"]["block.weight"]["route"] == "muon"
     assert manifest["parameters"]["block.weight"]["reason"] == "module-declared"
+    assert manifest["parameters"]["block.weight"]["optim_spec_version"] == 2
     assert manifest["parameters"]["block.weight"]["module_type"].endswith(
         "DeclaredModule"
     )

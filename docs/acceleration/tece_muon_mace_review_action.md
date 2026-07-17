@@ -103,7 +103,8 @@ After freezing that experiment source, apply these changes:
    route manifest/hash landed in `HybridMuon.state_dict()`; `load_state_dict()`
    now rejects saved route hashes that differ from the current optimizer route;
    `get_optimizer()` now writes a rank-0 JSON route manifest artifact under
-   `log_dir` (or `model_dir`) for each HybridMuon run.
+   `log_dir` (or `model_dir`) for each HybridMuon run; module-declared
+   `OptimSpec.spec_version` is included per parameter in route manifests.
 6. Add architecture-level route snapshot tests for MACE/e3nn, CUEQ-converted
    flat weights, and any future TACE/TECE/DPA4 modules. Status: initial MACE
    safe-default route manifest snapshot landed with per-parameter reason and
