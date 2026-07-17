@@ -1008,6 +1008,84 @@ def test_hybrid_muon_cueq_slice_route_manifest_records_module_spec_source():
     ]
 
 
+def test_hybrid_muon_dp4_so2_module_snapshot_batches_nonchannel_axes():
+    class FakeDPA4SO2Block(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(2, 3, 4, 5))
+            self.coeff = torch.nn.Parameter(torch.ones(2, 3, 4))
+            self.hybrid_muon_optim_specs = {
+                "weight": OptimSpec(
+                    route="muon",
+                    matrix_axes=(2, 3),
+                    batch_axes=(0, 1),
+                    semantic_axes=("focus", "m", "channel_in", "channel_out"),
+                    min_matrix_dim=4,
+                    max_aspect_ratio=2.0,
+                    lr_scale=0.5,
+                    weight_decay=1.0e-5,
+                    spec_version=3,
+                ),
+                "coeff": OptimSpec(
+                    route="adamw",
+                    matrix_structure="scalar_coeff",
+                    semantic_axes=("focus", "m", "channel"),
+                    spec_version=3,
+                ),
+            }
+
+    module = FakeDPA4SO2Block()
+    groups, summary = build_hybrid_muon_param_groups(
+        [("block.weight", module.weight), ("block.coeff", module.coeff)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"block": module},
+    )
+    manifest = HybridMuon(groups, lr=1.0e-3).state_dict()[
+        "hybrid_muon_route_manifest"
+    ]
+    parameters = manifest["parameters"]
+    summary_by_name = {item["name"]: item for item in summary}
+
+    assert summary_by_name["block.weight"]["route"] == "muon"
+    assert summary_by_name["block.weight"]["matrix_batch"] == 6
+    assert summary_by_name["block.weight"]["matrix_shape"] == (4, 5)
+    assert summary_by_name["block.weight"]["lr_scale"] == 0.5
+    assert parameters["block.weight"]["route"] == "muon"
+    assert parameters["block.weight"]["matrix_views"] == [
+        {"kind": "layout", "shape": [4, 5]}
+    ]
+    assert parameters["block.weight"]["optim_spec_contract"] == {
+        "route": "muon",
+        "matrix_axes": [2, 3],
+        "batch_axes": [0, 1],
+        "semantic_axes": ["focus", "m", "channel_in", "channel_out"],
+        "matrix_structure": "real",
+        "min_matrix_dim": 4,
+        "max_aspect_ratio": 2.0,
+        "lr_scale": 0.5,
+        "weight_decay": 1.0e-5,
+        "spec_version": 3,
+    }
+    assert parameters["block.coeff"]["route"] == "adamw"
+    assert parameters["block.coeff"]["structure"] == "scalar_coeff"
+    assert parameters["block.coeff"]["optim_spec_contract"] == {
+        "route": "adamw",
+        "matrix_axes": None,
+        "batch_axes": [],
+        "semantic_axes": ["focus", "m", "channel"],
+        "matrix_structure": "scalar_coeff",
+        "min_matrix_dim": 1,
+        "max_aspect_ratio": None,
+        "lr_scale": 1.0,
+        "weight_decay": None,
+        "spec_version": 3,
+    }
+
+
 def test_hybrid_muon_mace_route_manifest_snapshot_records_safe_defaults():
     model = TinyMaceLike()
     groups, _ = build_hybrid_muon_param_groups(

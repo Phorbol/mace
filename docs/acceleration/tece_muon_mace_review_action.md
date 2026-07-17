@@ -120,7 +120,9 @@ After freezing that experiment source, apply these changes:
    metadata is now recorded as `[instruction_index, i_in, i_out]` in matrix views;
    module-declared CUEQ-like slice specs are snapshot as `module_slice_spec`
    views with path metadata so they are distinguishable from e3nn-reconstructed
-   flat specs on checkpoint resume.
+   flat specs on checkpoint resume; a DPA4/SO2-like module snapshot now records
+   `focus` and `m` as batch axes while only channel axes form Muon matrices, and
+   keeps scalar/path-like coefficients on AdamW.
 7. Only after the Muon route contract is stable, revisit edge-force-virial:
    document edge-vector sign, add explicit `edge_vec`, `shifts`, `cell`, and PBC
    inputs, and validate force/virial signs with position and strain finite
