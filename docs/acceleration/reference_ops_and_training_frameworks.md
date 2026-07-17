@@ -264,22 +264,19 @@ outputs and losses, rather than changing the semantics of existing keys.
 
 ## Proposed Priority Order
 
-1. Training framework cleanup:
-   introduce a reusable update-based LR schedule object with warmup and WSD,
-   and use it in the current MACE training loop.
-2. Loss schedule:
+1. Loss schedule:
    support both hard stage switch and smooth LR-coupled E/F/stress prefactors.
    Re-run the 20k then 200k OC20NEB AdamW vs HybridMuon matrix under both.
+2. HybridMuon polish:
+   compare current MACE implementation against latest DeepMD/TACE HybridMuon
+   for foreach coverage, Magma defaults, and DTensor/FSDP guard behavior.
 3. Direct-force design spike:
    prototype the config, output keys, losses, metrics, and curl diagnostics for
    optional non-conservative `direct_forces`, but do not make it default.
-4. HybridMuon polish:
-   compare current MACE implementation against latest DeepMD/TACE HybridMuon
-   for foreach coverage, Magma defaults, and DTensor/FSDP guard behavior.
-5. NVIDIA neighbor backend prototype:
+4. NVIDIA neighbor backend prototype:
    optional preprocessing/inference backend first; training path only after
    parity and speed are measured.
-6. MACELES long-range prototype:
+5. MACELES long-range prototype:
    scalar-charge Ewald/PME energy-only training contract first; forces/stress
    derived by autograd and validated by finite differences.
 
@@ -332,3 +329,52 @@ They may provide a speed path because they avoid mixed second derivatives, but
 all reports must keep direct-force MAE separate from conservative force MAE and
 must include at least curl/integrability diagnostics before using them for MD or
 stress-sensitive workflows.
+
+## 2026-07-17 Follow-up Source Check
+
+This follow-up checked the same local reference revisions while job `676304`
+was running. The main conclusion is that the current MACE branch already has
+the core update-budget training mechanics; the remaining work should focus on
+loss scheduling, experiment configs, and optimizer evidence rather than
+rewriting the training loop.
+
+Confirmed MACE branch state:
+
+- `max_num_updates`, `eval_interval_updates`, update checkpoints, and
+  `start_stage_two_update` are already wired through CLI and `train()`.
+- `LRScheduler` supports `scheduler=WSD` with warmup steps/ratio, warmup start
+  factor, stop LR ratio, decay phase ratio, and `inverse_linear|cosine|linear`
+  decay.
+- `--lr_scheduler_interval=auto` resolves WSD to per-step scheduling. In that
+  mode the epoch-level `LRScheduler.step()` is a no-op, and
+  `train_one_epoch()` advances LR only after a non-skipped optimizer step via
+  `step_batch(global_step=...)`.
+- The current OC20NEB sbatch scripts therefore already match the DeepMD/TACE
+  update-budget style for 20k/200k experiments.
+
+Additional DeepMD/TACE details to absorb:
+
+- DeepMD's `LearningRateWSD` uses a simple `value(step)` abstraction and wraps
+  it in `LambdaLR(last_epoch=start_step - 1)` for resume. MACE has the same
+  practical behavior through `step_batch(global_step=...)`; the missing piece
+  is recording completed optimizer updates in a more explicit scheduler
+  resume summary.
+- TACE's WSD scheduler exposes explicit `extra.interval: step` in config. MACE
+  currently has equivalent CLI control, but experiments would benefit from a
+  typed config/manifest layer so optimizer/scheduler/loss ablations are not
+  encoded only in shell variables.
+- TACE direct-force support is broad: losses, metrics, model readouts, compile
+  wrapper, and inference interfaces all use separate `direct_*` keys. A MACE
+  prototype should follow that separation and should not overload existing
+  conservative `forces`, `stress`, or `virials` keys.
+
+Near-term engineering decision:
+
+- Do not spend the next pass on a scheduler rewrite. The first code change
+  should be a smooth loss-prefactor controller and manifest/logging cleanup so
+  AdamW and HybridMuon can be compared under the same batch budget, warmup, WSD
+  decay, and hard-vs-smooth stage policy.
+- Keep direct-force as a design spike after CUEQ + HybridMuon 200k evidence is
+  available. The expected speed benefit is real because it avoids conservative
+  force mixed second derivatives, but it changes the physical contract and
+  requires separate diagnostics.
