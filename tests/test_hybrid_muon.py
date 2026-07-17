@@ -1028,6 +1028,54 @@ def test_hybrid_muon_mace_route_manifest_snapshot_records_safe_defaults():
     assert parameters["products"]["reason"] == "sensitive-name"
 
 
+def test_hybrid_muon_load_state_accepts_own_stage_two_route_switch():
+    from mace.tools.train import _apply_hybrid_muon_stage_two_route
+
+    class DeclaredModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(4, 4))
+            self.hybrid_muon_optim_specs = {
+                "weight": OptimSpec(route="muon", matrix_axes=(0, 1))
+            }
+
+    first = DeclaredModule()
+    first_groups, _ = build_hybrid_muon_param_groups(
+        [("block.weight", first.weight)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"block": first},
+    )
+    first_optimizer = HybridMuon(first_groups, lr=1.0e-3)
+    switched = _apply_hybrid_muon_stage_two_route(
+        first_optimizer, lr_scheduler=None, route="adamw"
+    )
+    checkpoint = first_optimizer.state_dict()
+
+    resumed = DeclaredModule()
+    resumed_groups, _ = build_hybrid_muon_param_groups(
+        [("block.weight", resumed.weight)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"block": resumed},
+    )
+    resumed_optimizer = HybridMuon(resumed_groups, lr=1.0e-3)
+
+    assert switched == 1
+    resumed_optimizer.load_state_dict(checkpoint)
+    assert resumed_optimizer.param_groups[0]["route"] == "adam"
+    assert resumed_optimizer.param_groups[0]["adam_variant"] == "adamw"
+    assert (
+        resumed_optimizer.param_groups[0]["hybrid_muon_stage_two_route_applied"] is True
+    )
+
+
 def test_hybrid_muon_load_state_rejects_route_manifest_drift():
     class SourceModule(torch.nn.Module):
         def __init__(self):

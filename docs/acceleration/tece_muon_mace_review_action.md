@@ -103,7 +103,8 @@ After freezing that experiment source, apply these changes:
 5. Emit a route manifest/hash into experiment artifacts and checkpoint metadata.
    Compare it on resume and fail on route or shape drift. Status: checkpoint
    route manifest/hash landed in `HybridMuon.state_dict()`; `load_state_dict()`
-   now rejects saved route hashes that differ from the current optimizer route;
+   now rejects saved route hashes that differ from the current optimizer route,
+   except for its own recorded Stage Two Muon-to-Adam/AdamW route transition;
    `get_optimizer()` now writes a rank-0 JSON route manifest artifact under
    `log_dir` (or `model_dir`) for each HybridMuon run; module-declared
    `OptimSpec.spec_version` is included per parameter in route manifests.

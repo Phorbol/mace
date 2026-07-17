@@ -1217,6 +1217,54 @@ def _route_manifest_hash(manifest: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _manifest_allows_stage_two_route_switch(
+    saved_manifest: dict | None, current_manifest: dict, state_dict: dict
+) -> bool:
+    if not isinstance(saved_manifest, dict):
+        return False
+    if not any(
+        bool(group.get("hybrid_muon_stage_two_route_applied", False))
+        for group in state_dict.get("param_groups", [])
+    ):
+        return False
+    if saved_manifest.get("spec_version") != current_manifest.get("spec_version"):
+        return False
+    saved_parameters = saved_manifest.get("parameters")
+    current_parameters = current_manifest.get("parameters")
+    if not isinstance(saved_parameters, dict) or not isinstance(current_parameters, dict):
+        return False
+    if set(saved_parameters) != set(current_parameters):
+        return False
+    stable_keys = {
+        "shape",
+        "reason",
+        "module_type",
+        "optim_spec_version",
+        "structure",
+    }
+    for name, saved_item in saved_parameters.items():
+        current_item = current_parameters[name]
+        if not isinstance(saved_item, dict) or not isinstance(current_item, dict):
+            return False
+        for key in stable_keys:
+            if saved_item.get(key) != current_item.get(key):
+                return False
+        if saved_item.get("route") == current_item.get("route"):
+            if saved_item.get("group_route") != current_item.get("group_route"):
+                return False
+            if saved_item.get("matrix_views") != current_item.get("matrix_views"):
+                return False
+            continue
+        if not (
+            current_item.get("route") == "muon"
+            and current_item.get("group_route") == "muon"
+            and saved_item.get("route") in {"adam", "adamw"}
+            and saved_item.get("group_route") == "adam"
+        ):
+            return False
+    return True
+
+
 def _hybrid_muon_route_manifest_from_groups(param_groups: Iterable[dict]) -> dict:
     parameters: dict[str, dict] = {}
     for group_index, group in enumerate(param_groups):
@@ -1349,7 +1397,14 @@ class HybridMuon(Optimizer):
         if saved_route_hash is not None:
             current_manifest = _hybrid_muon_route_manifest_from_groups(self.param_groups)
             current_hash = _route_manifest_hash(current_manifest)
-            if str(saved_route_hash) != current_hash:
+            if (
+                str(saved_route_hash) != current_hash
+                and not _manifest_allows_stage_two_route_switch(
+                    state_dict.get("hybrid_muon_route_manifest"),
+                    current_manifest,
+                    state_dict,
+                )
+            ):
                 raise ValueError(
                     "HybridMuon route manifest hash mismatch; checkpoint routes "
                     "do not match the current optimizer routing"
