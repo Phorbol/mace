@@ -1787,6 +1787,7 @@ def test_arg_parser_accepts_hybrid_muon_magma_lite_flag():
     assert args.hybrid_muon_magma_bypass_first_step is True
     assert args.hybrid_muon_stage_two_lr_factor == 0.25
     assert args.hybrid_muon_stage_two_route == "adamw"
+    assert args.hybrid_muon_routing == "module"
     assert (
         args.hybrid_muon_tace_module_include
         == "interactions.*,products.*.linear.weight"
@@ -1826,6 +1827,74 @@ def test_get_optimizer_builds_hybrid_muon():
     assert muon_group["muon_mode"] == "slice"
     assert muon_group["magma_lite"] is True
     assert next(group for group in optimizer.param_groups if group["route"] == "adam")["lr"] == 1.0e-3
+
+
+def test_get_optimizer_defaults_hybrid_muon_to_module_routing_with_modules():
+    class DeclaredBlock(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = torch.nn.Linear(4, 3, bias=False)
+            self.hybrid_muon_optim_specs = {
+                "linear.weight": OptimSpec(route="muon", matrix_axes=(0, 1)),
+            }
+
+    model = torch.nn.Module()
+    model.block = DeclaredBlock()
+    args = argparse.Namespace(
+        optimizer="hybrid_muon",
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        hybrid_muon_weight_decay=0.0,
+        hybrid_muon_lr_factor=0.1,
+        hybrid_muon_mode="2d",
+        hybrid_muon_magma_lite=False,
+        beta=0.9,
+        amsgrad=False,
+    )
+    param_options = {
+        "params": [{"name": "all", "params": list(model.parameters()), "lr": args.lr}],
+        "lr": args.lr,
+        "amsgrad": args.amsgrad,
+        "betas": (args.beta, 0.999),
+    }
+
+    optimizer = get_optimizer(
+        args,
+        param_options,
+        named_parameters=model.named_parameters(),
+        named_modules=model.named_modules(),
+    )
+
+    muon_group = next(
+        group for group in optimizer.param_groups if group["route"] == "muon"
+    )
+    assert muon_group["param_names"] == ["block.linear.weight"]
+    assert muon_group["routing"] == "module"
+
+
+def test_get_optimizer_module_routing_requires_named_modules():
+    model = TinyMaceLike()
+    args = argparse.Namespace(
+        optimizer="hybrid_muon",
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        hybrid_muon_weight_decay=0.0,
+        hybrid_muon_lr_factor=0.1,
+        hybrid_muon_mode="2d",
+        hybrid_muon_routing="module",
+        hybrid_muon_magma_lite=False,
+        beta=0.9,
+        amsgrad=False,
+    )
+    param_options = {
+        "params": [{"name": "all", "params": list(model.parameters()), "lr": args.lr}],
+        "lr": args.lr,
+        "amsgrad": args.amsgrad,
+        "betas": (args.beta, 0.999),
+    }
+
+    with pytest.raises(ValueError, match="routing='module'.*named_modules"):
+        get_optimizer(args, param_options, named_parameters=model.named_parameters())
 
 
 def test_get_optimizer_preserves_mace_adam_fallback_weight_decay_groups():

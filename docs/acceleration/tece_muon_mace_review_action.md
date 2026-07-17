@@ -93,7 +93,10 @@ After freezing that experiment source, apply these changes:
    landed; unknown tensors now default to AdamW.
 4. Prefer `routing="module"` in new experiment scripts and manifests; keep
    `routing="tace"` only for compatibility/ablation runs with an explicit
-   warning in route summaries.
+   warning in route summaries. Status: CLI and `get_optimizer()` now default
+   HybridMuon to module-declared routing, `routing="module"` fails early when
+   the model's `named_modules()` are unavailable, and the current OC20NEB
+   fullcase/FPS scripts default new HybridMuon runs to module routing.
 5. Emit a route manifest/hash into experiment artifacts and checkpoint metadata.
    Compare it on resume and fail on route or shape drift. Status: checkpoint
    route manifest/hash landed in `HybridMuon.state_dict()`; `load_state_dict()`

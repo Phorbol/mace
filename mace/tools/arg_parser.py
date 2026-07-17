@@ -1270,14 +1270,15 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--hybrid_muon_routing",
         help=(
-            "HybridMuon parameter coverage policy. 'mace' keeps conservative "
-            "MACE-safe routing; 'tace' follows TACE/DPA4-style broad matrix "
-            "routing with MACE hard exclusions for embeddings, atomic heads, "
-            "biases, norms, and scales; 'module' uses OptimSpec declarations "
-            "on owning modules."
+            "HybridMuon parameter coverage policy. 'module' uses OptimSpec "
+            "declarations on owning modules and routes unknown tensors to "
+            "AdamW; 'mace' keeps legacy conservative MACE-safe name routing; "
+            "'tace' is a deprecated compatibility policy that allows only "
+            "module-declared specs, known e3nn flat instruction specs, and "
+            "safe dense hidden matrices."
         ),
         type=str,
-        default="mace",
+        default="module",
         choices=["mace", "tace", "module"],
     )
     parser.add_argument(

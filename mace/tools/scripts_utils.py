@@ -996,6 +996,12 @@ def get_optimizer(
             for param in param_group.get("params", []):
                 adam_param_options_by_id[id(param)] = group_options
 
+        hybrid_muon_routing = getattr(args, "hybrid_muon_routing", "module")
+        if hybrid_muon_routing == "module" and named_modules is None:
+            raise ValueError(
+                "HybridMuon routing='module' requires named_modules from the model"
+            )
+
         groups, route_summary = build_hybrid_muon_param_groups(
             named_parameters,
             lr=args.lr,
@@ -1009,7 +1015,7 @@ def get_optimizer(
             muon_match_rms_coeff=getattr(args, "hybrid_muon_match_rms_coeff", 0.18),
             amsgrad=args.amsgrad,
             muon_mode=getattr(args, "hybrid_muon_mode", "2d"),
-            routing=getattr(args, "hybrid_muon_routing", "mace"),
+            routing=hybrid_muon_routing,
             module_map=dict(named_modules) if named_modules is not None else None,
             tace_module_include=getattr(args, "hybrid_muon_tace_module_include", "*"),
             tace_module_lr_scale=getattr(
