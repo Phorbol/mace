@@ -251,11 +251,12 @@ framework work is already present in the current branch:
   summary reporting.
 
 The remaining training-control gap is therefore not a wholesale scheduler
-rewrite. The next useful change is a loss-prefactor controller that can update
-energy/force/stress weights from the current global step or LR factor, while
-preserving the existing hard stage-two switch as an ablation. Current loss
-classes store static weight buffers, and stage two swaps the whole loss object.
-That is adequate for hard switches but not for DeePMD-style smooth prefactors.
+rewrite. The current branch already includes `LossPrefactorController` with
+`lr_factor` and `step_linear` modes, and `train_one_epoch()` applies it before
+loss evaluation while logging the effective E/F/stress/virial weights. The next
+useful change is to make this easier to drive from typed experiment manifests
+and to report resume/scheduler state more explicitly, not to reimplement the
+controller.
 
 The current model-output gap is also clear: `mace.modules.utils.get_outputs()`
 only derives conservative `forces`, `stress`, and `virials` from energy. A
@@ -370,10 +371,10 @@ Additional DeepMD/TACE details to absorb:
 
 Near-term engineering decision:
 
-- Do not spend the next pass on a scheduler rewrite. The first code change
-  should be a smooth loss-prefactor controller and manifest/logging cleanup so
-  AdamW and HybridMuon can be compared under the same batch budget, warmup, WSD
-  decay, and hard-vs-smooth stage policy.
+- Do not spend the next pass on a scheduler rewrite. Smooth loss-prefactor
+  support already exists; the next code change should be manifest/logging
+  cleanup so AdamW and HybridMuon can be compared under the same batch budget,
+  warmup, WSD decay, and hard-vs-smooth stage policy.
 - Keep direct-force as a design spike after CUEQ + HybridMuon 200k evidence is
   available. The expected speed benefit is real because it avoids conservative
   force mixed second derivatives, but it changes the physical contract and
