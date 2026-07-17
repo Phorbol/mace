@@ -232,6 +232,21 @@ The review also changes how to interpret current HybridMuon results:
   change the Stage Two dynamics itself, such as a smoother or earlier energy
   prefactor transition, rather than only changing Muon LR or route at the same
   hard 15k boundary.
+- The earlier Stage Two follow-up was run from committed source `9065d3a` in
+  `runs/oc20neb_fullcase200_ef_20k/module-lrf003-tail-stage50-9065d3a-20260717-20k/`.
+  It kept `hybrid_muon_lr_factor=0.03` and the AdamW Stage Two route, but moved
+  Stage Two and the loss-prefactor ramp start from 15k to 10k updates. This
+  largely fixes the energy calibration failure but still does not preserve the
+  force advantage. Same-run `cueq_adamw` reached final energy/force `16.82`/
+  `50.34`, while `cueq_hybrid_muon_module_adamw_tail` reached `19.44`/`56.52`
+  meV units. The candidate still had a much better best force before the switch
+  (`25.07` vs AdamW `42.02` meV/A), but final force became worse after the long
+  AdamW energy-calibration phase. Throughput was close to AdamW (`0.968x`) and
+  optimizer-step cost fell to about `4.18x` AdamW because half the run used the
+  AdamW route. This is the best energy result for the HybridMuon line so far,
+  but not yet a production recipe: it suggests the next experiment should keep
+  the earlier energy emphasis while making the E/F prefactor transition smoother
+  or less force-destructive, rather than using a hard 10k route/loss boundary.
 - The AdamW-tail run also exposed a checkpoint/evaluation correctness bug: after
   Stage Two changes the optimizer route, result evaluation tried to load the
   pre-Stage-Two checkpoint including optimizer state and correctly hit
