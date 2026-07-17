@@ -1282,6 +1282,46 @@ def test_hybrid_muon_load_state_rejects_route_manifest_drift():
         optimizer.load_state_dict(checkpoint)
 
 
+def test_hybrid_muon_load_state_accepts_equivalent_optim_spec_axis_aliases():
+    class DeclaredModule(torch.nn.Module):
+        def __init__(self, matrix_axes):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(4, 4))
+            self.hybrid_muon_optim_specs = {
+                "weight": OptimSpec(
+                    route="muon",
+                    matrix_axes=tuple(matrix_axes),
+                    semantic_axes=("channel_in", "channel_out"),
+                )
+            }
+
+    source = DeclaredModule((-2, -1))
+    source_groups, _ = build_hybrid_muon_param_groups(
+        [("block.weight", source.weight)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"block": source},
+    )
+    checkpoint = HybridMuon(source_groups, lr=1.0e-3).state_dict()
+
+    resumed = DeclaredModule((0, 1))
+    resumed_groups, _ = build_hybrid_muon_param_groups(
+        [("block.weight", resumed.weight)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"block": resumed},
+    )
+    resumed_optimizer = HybridMuon(resumed_groups, lr=1.0e-3)
+
+    resumed_optimizer.load_state_dict(checkpoint)
+
+
 def test_hybrid_muon_load_state_rejects_module_semantic_contract_drift():
     class DeclaredModule(torch.nn.Module):
         def __init__(self, semantic_axes):

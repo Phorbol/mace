@@ -172,15 +172,24 @@ _MACE_HARD_ADAM_NAME_TOKENS = (
 )
 
 
-def _optim_spec_manifest_contract(optim_spec: OptimSpec) -> dict:
+def _optim_spec_manifest_contract(
+    optim_spec: OptimSpec, param: torch.nn.Parameter
+) -> dict:
+    ndim = int(param.ndim)
     return {
         "route": str(optim_spec.route),
         "matrix_axes": (
-            [int(axis) for axis in optim_spec.matrix_axes]
+            [
+                _normalize_axis(axis, ndim, label="matrix_axes")
+                for axis in optim_spec.matrix_axes
+            ]
             if optim_spec.matrix_axes is not None
             else None
         ),
-        "batch_axes": [int(axis) for axis in optim_spec.batch_axes],
+        "batch_axes": [
+            _normalize_axis(axis, ndim, label="batch_axes")
+            for axis in optim_spec.batch_axes
+        ],
         "semantic_axes": [str(axis) for axis in optim_spec.semantic_axes],
         "matrix_structure": str(optim_spec.matrix_structure),
         "min_matrix_dim": int(optim_spec.min_matrix_dim),
@@ -976,8 +985,8 @@ def build_hybrid_muon_param_groups(
             if optim_spec is not None:
                 muon_param_optim_spec_versions[name] = int(optim_spec.spec_version)
                 muon_param_matrix_structures[name] = str(optim_spec.matrix_structure)
-                muon_param_optim_spec_contracts[name] = _optim_spec_manifest_contract(
-                    optim_spec
+                muon_param_optim_spec_contracts[name] = (
+                    _optim_spec_manifest_contract(optim_spec, param)
                 )
                 if effective_muon_lr_scale is None:
                     effective_muon_lr_scale = float(optim_spec.lr_scale)
@@ -1038,8 +1047,8 @@ def build_hybrid_muon_param_groups(
             if optim_spec is not None:
                 bucket["param_optim_spec_versions"][name] = int(optim_spec.spec_version)
                 bucket["param_matrix_structures"][name] = str(optim_spec.matrix_structure)
-                bucket["param_optim_spec_contracts"][name] = _optim_spec_manifest_contract(
-                    optim_spec
+                bucket["param_optim_spec_contracts"][name] = (
+                    _optim_spec_manifest_contract(optim_spec, param)
                 )
         matrix_view = _matrix_view_shape(tuple(int(dim) for dim in param.shape), muon_mode)
         matrix_batch = matrix_view[0] if route == "muon" and matrix_view else None
