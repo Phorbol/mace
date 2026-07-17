@@ -172,6 +172,33 @@ _MACE_HARD_ADAM_NAME_TOKENS = (
 )
 
 
+def _optim_spec_manifest_contract(optim_spec: OptimSpec) -> dict:
+    return {
+        "route": str(optim_spec.route),
+        "matrix_axes": (
+            [int(axis) for axis in optim_spec.matrix_axes]
+            if optim_spec.matrix_axes is not None
+            else None
+        ),
+        "batch_axes": [int(axis) for axis in optim_spec.batch_axes],
+        "semantic_axes": [str(axis) for axis in optim_spec.semantic_axes],
+        "matrix_structure": str(optim_spec.matrix_structure),
+        "min_matrix_dim": int(optim_spec.min_matrix_dim),
+        "max_aspect_ratio": (
+            float(optim_spec.max_aspect_ratio)
+            if optim_spec.max_aspect_ratio is not None
+            else None
+        ),
+        "lr_scale": float(optim_spec.lr_scale),
+        "weight_decay": (
+            float(optim_spec.weight_decay)
+            if optim_spec.weight_decay is not None
+            else None
+        ),
+        "spec_version": int(optim_spec.spec_version),
+    }
+
+
 def _normalize_tace_module_include(
     patterns: str | Iterable[str] | None,
 ) -> tuple[str, ...]:
@@ -824,6 +851,7 @@ def build_hybrid_muon_param_groups(
     muon_param_module_types: dict[str, str] = {}
     muon_param_optim_spec_versions: dict[str, int] = {}
     muon_param_matrix_structures: dict[str, str] = {}
+    muon_param_optim_spec_contracts: dict[str, dict] = {}
     adam_group_buckets: dict[tuple, dict] = {}
     muon_matrix_specs: dict[str, list[dict]] = {}
     summary: list[dict] = []
@@ -948,6 +976,9 @@ def build_hybrid_muon_param_groups(
             if optim_spec is not None:
                 muon_param_optim_spec_versions[name] = int(optim_spec.spec_version)
                 muon_param_matrix_structures[name] = str(optim_spec.matrix_structure)
+                muon_param_optim_spec_contracts[name] = _optim_spec_manifest_contract(
+                    optim_spec
+                )
                 if effective_muon_lr_scale is None:
                     effective_muon_lr_scale = float(optim_spec.lr_scale)
                 if effective_muon_lr_scale != 1.0:
@@ -996,6 +1027,7 @@ def build_hybrid_muon_param_groups(
                     "param_module_types": {},
                     "param_optim_spec_versions": {},
                     "param_matrix_structures": {},
+                    "param_optim_spec_contracts": {},
                 },
             )
             bucket["params"].append(param)
@@ -1006,6 +1038,9 @@ def build_hybrid_muon_param_groups(
             if optim_spec is not None:
                 bucket["param_optim_spec_versions"][name] = int(optim_spec.spec_version)
                 bucket["param_matrix_structures"][name] = str(optim_spec.matrix_structure)
+                bucket["param_optim_spec_contracts"][name] = _optim_spec_manifest_contract(
+                    optim_spec
+                )
         matrix_view = _matrix_view_shape(tuple(int(dim) for dim in param.shape), muon_mode)
         matrix_batch = matrix_view[0] if route == "muon" and matrix_view else None
         matrix_shape = matrix_view[-2:] if route == "muon" and matrix_view else None
@@ -1056,6 +1091,7 @@ def build_hybrid_muon_param_groups(
                 "param_module_types": muon_param_module_types,
                 "param_optim_spec_versions": muon_param_optim_spec_versions,
                 "param_matrix_structures": muon_param_matrix_structures,
+                "param_optim_spec_contracts": muon_param_optim_spec_contracts,
                 "muon_lr_scale_mode": muon_lr_scale_mode,
                 "muon_match_rms_coeff": float(muon_match_rms_coeff),
                 "magma_lite": bool(magma_lite),
@@ -1195,6 +1231,7 @@ _RUNTIME_PARAM_GROUP_METADATA_KEYS = (
     "param_matrix_layouts",
     "param_optim_spec_versions",
     "param_matrix_structures",
+    "param_optim_spec_contracts",
 )
 _ROUTE_MANIFEST_STATE_KEYS = (
     "hybrid_muon_route_manifest",
@@ -1241,6 +1278,7 @@ def _manifest_allows_stage_two_route_switch(
         "module_type",
         "optim_spec_version",
         "structure",
+        "optim_spec_contract",
     }
     for name, saved_item in saved_parameters.items():
         current_item = current_parameters[name]
@@ -1297,6 +1335,9 @@ def _hybrid_muon_route_manifest_from_groups(param_groups: Iterable[dict]) -> dic
         matrix_structures = group.get("param_matrix_structures", {})
         if not isinstance(matrix_structures, dict):
             matrix_structures = {}
+        optim_spec_contracts = group.get("param_optim_spec_contracts", {})
+        if not isinstance(optim_spec_contracts, dict):
+            optim_spec_contracts = {}
         muon_mode = str(group.get("muon_mode", "2d"))
         adam_variant = str(group.get("adam_variant", "adamw"))
         for param_index, param in enumerate(group.get("params", [])):
@@ -1318,6 +1359,8 @@ def _hybrid_muon_route_manifest_from_groups(param_groups: Iterable[dict]) -> dic
                 item["module_type"] = str(module_types[name])
             if name in optim_spec_versions:
                 item["optim_spec_version"] = int(optim_spec_versions[name])
+            if name in optim_spec_contracts:
+                item["optim_spec_contract"] = optim_spec_contracts[name]
             records_muon_matrix_views = parameter_route == "muon" or bool(
                 group.get("hybrid_muon_stage_two_route_applied", False)
             )

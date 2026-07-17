@@ -934,6 +934,18 @@ def test_hybrid_muon_state_dict_contains_route_manifest_hash():
     assert manifest["parameters"]["block.weight"]["matrix_views"] == [
         {"kind": "layout", "shape": [4, 4]}
     ]
+    assert manifest["parameters"]["block.weight"]["optim_spec_contract"] == {
+        "route": "muon",
+        "matrix_axes": [0, 1],
+        "batch_axes": [],
+        "semantic_axes": [],
+        "matrix_structure": "real",
+        "min_matrix_dim": 1,
+        "max_aspect_ratio": None,
+        "lr_scale": 1.0,
+        "weight_decay": None,
+        "spec_version": 2,
+    }
 
 
 def test_hybrid_muon_cueq_slice_route_manifest_records_module_spec_source():
@@ -1190,6 +1202,47 @@ def test_hybrid_muon_load_state_rejects_route_manifest_drift():
 
     with pytest.raises(ValueError, match="HybridMuon route manifest hash mismatch"):
         optimizer.load_state_dict(checkpoint)
+
+
+def test_hybrid_muon_load_state_rejects_module_semantic_contract_drift():
+    class DeclaredModule(torch.nn.Module):
+        def __init__(self, semantic_axes):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(4, 4))
+            self.hybrid_muon_optim_specs = {
+                "weight": OptimSpec(
+                    route="muon",
+                    matrix_axes=(0, 1),
+                    semantic_axes=tuple(semantic_axes),
+                )
+            }
+
+    source = DeclaredModule(("channel_in", "channel_out"))
+    source_groups, _ = build_hybrid_muon_param_groups(
+        [("block.weight", source.weight)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"block": source},
+    )
+    checkpoint = HybridMuon(source_groups, lr=1.0e-3).state_dict()
+
+    drifted = DeclaredModule(("feature_in", "feature_out"))
+    drifted_groups, _ = build_hybrid_muon_param_groups(
+        [("block.weight", drifted.weight)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"block": drifted},
+    )
+    drifted_optimizer = HybridMuon(drifted_groups, lr=1.0e-3)
+
+    with pytest.raises(ValueError, match="HybridMuon route manifest hash mismatch"):
+        drifted_optimizer.load_state_dict(checkpoint)
 
 
 def test_hybrid_muon_load_state_ignores_serialized_matrix_specs(monkeypatch):
