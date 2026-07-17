@@ -1679,6 +1679,27 @@ def test_hybrid_muon_route_summary_is_loggable():
     assert "radial_embedding.0.weight" in text
 
 
+def test_hybrid_muon_route_summary_warns_for_tace_compatibility_routing():
+    text = summarize_hybrid_muon_routes(
+        [
+            {
+                "name": "interactions.0.linear.weight",
+                "shape": (16, 16),
+                "numel": 256,
+                "route": "muon",
+                "reason": "tace-e3nn-linear-muon",
+                "muon_mode": "slice",
+                "matrix_batch": 1,
+                "matrix_shape": (16, 16),
+            }
+        ]
+    )
+
+    assert "routing='tace'" in text
+    assert "deprecated compatibility" in text
+    assert "module-declared" in text
+
+
 def test_hybrid_muon_route_summary_logs_per_parameter_lr_scale():
     text = summarize_hybrid_muon_routes(
         [

@@ -1064,6 +1064,11 @@ def summarize_hybrid_muon_routes(summary: list[dict]) -> str:
         f"Muon tensors: {len(muon)} ({sum(item['numel'] for item in muon)} parameters)",
         f"Adam tensors: {len(adam)} ({sum(item['numel'] for item in adam)} parameters)",
     ]
+    if any(str(item.get("reason", "")).startswith("tace-") for item in summary):
+        lines.append(
+            "Warning: routing='tace' is deprecated compatibility routing; "
+            "prefer module-declared OptimSpec routing for TECE/DPA4-style blocks."
+        )
     for title, items in (("Muon", muon), ("Adam", adam)):
         for item in items:
             suffix = ""
