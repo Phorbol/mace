@@ -142,9 +142,15 @@ The review also changes how to interpret current HybridMuon results:
   route with explicit semantic manifests. New default OC20NEB demo cases now use
   explicit `hybrid_muon_module` and `cueq_hybrid_muon_module` names so summaries
   cannot be confused with deprecated broad routing.
-- The next review-aligned 20k CUEQ comparison should be
-  `cueq_adamw` vs `cueq_hybrid_muon_module`, Stage One `E:F=1:100`, Stage Two
-  at 15k updates with `E:F=100:1`, using a committed source tree.
+- The review-aligned 20k CUEQ comparison completed from committed source
+  `020e12d` with Stage One `E:F=1:100` and Stage Two at 15k updates with
+  `E:F=100:1`. The stable machine-readable comparison is now generated in
+  `runs/oc20neb_fullcase200_ef_20k/module-stage-cueq-020e12d-20260717-20k/matrix_comparisons.json`:
+  `cueq_hybrid_muon_module` reached final force MAE 36.29 meV/A versus
+  53.88 meV/A for `cueq_adamw` (delta -17.59 meV/A, ratio 0.674), but final
+  energy MAE was 150.06 meV/atom versus 33.70 meV/atom (delta +116.36 meV/atom,
+  ratio 4.45). It ran about 0.905x as fast by train-metrics updates/s, with
+  optimizer step time about 7.97x higher and no meaningful memory increase.
 - If module-declared Muon improves 20k/200k metrics, the next question is which
   declared channel blocks drive the gain. If it does not, sweep LR scale mode,
   Muon LR factor, and Stage Two route before broadening the routed parameter set.
