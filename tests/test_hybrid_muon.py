@@ -217,6 +217,26 @@ def test_hybrid_muon_tace_routing_recovers_flattened_e3nn_linear_blocks(monkeypa
     assert summary[0]["matrix_shape"] == (4, 4)
 
     optimizer = HybridMuon(groups, lr=1.0e-3)
+    manifest = optimizer.state_dict()["hybrid_muon_route_manifest"]
+    matrix_views = manifest["parameters"]["interactions.0.linear.weight"][
+        "matrix_views"
+    ]
+    assert matrix_views == [
+        {
+            "kind": "flat_spec",
+            "offset": 0,
+            "numel": 16,
+            "shape": [4, 4],
+            "path": [0, 0, 0],
+        },
+        {
+            "kind": "flat_spec",
+            "offset": 16,
+            "numel": 16,
+            "shape": [4, 4],
+            "path": [1, 1, 1],
+        },
+    ]
     calls = []
 
     def fake_batched(updates, steps=None):

@@ -333,6 +333,9 @@ def _normalize_optim_spec_slice_specs(
             "numel": numel,
             "matrix_view_shape": matrix_view_shape,
         }
+        if "path" in raw_spec:
+            path = tuple(int(item) for item in raw_spec["path"])
+            normalized["path"] = path
         if "source_shape" in raw_spec:
             source_shape = tuple(int(dim) for dim in raw_spec["source_shape"])
             if not source_shape or any(dim <= 0 for dim in source_shape):
@@ -568,8 +571,13 @@ def _flat_e3nn_linear_matrix_specs(
     specs: list[dict] = []
     offset = 0
     lower = name.lower()
-    for instruction in instructions:
+    for instruction_index, instruction in enumerate(instructions):
         path_shape = tuple(int(dim) for dim in getattr(instruction, "path_shape", ()))
+        path = (
+            int(instruction_index),
+            int(getattr(instruction, "i_in", -1)),
+            int(getattr(instruction, "i_out", -1)),
+        )
         numel = math.prod(path_shape) if path_shape else 0
         if numel <= 0:
             return None
@@ -580,6 +588,7 @@ def _flat_e3nn_linear_matrix_specs(
                     "offset": int(offset),
                     "numel": int(numel),
                     "matrix_view_shape": (1, int(rows), int(cols)),
+                    "path": path,
                 }
             )
         elif len(path_shape) == 3 and ".skip_tp.weight" in lower:
@@ -600,6 +609,7 @@ def _flat_e3nn_linear_matrix_specs(
                         int(channels_in),
                         int(channels_out),
                     ),
+                    "path": path,
                 }
             )
         else:
@@ -1231,8 +1241,9 @@ def _hybrid_muon_route_manifest_from_groups(param_groups: Iterable[dict]) -> dic
                 item["module_type"] = str(module_types[name])
             if parameter_route == "muon":
                 if name in matrix_specs:
-                    item["matrix_views"] = [
-                        {
+                    item["matrix_views"] = []
+                    for spec in matrix_specs[name]:
+                        view = {
                             "kind": "flat_spec",
                             "offset": int(spec["offset"]),
                             "numel": int(spec["numel"]),
@@ -1240,8 +1251,9 @@ def _hybrid_muon_route_manifest_from_groups(param_groups: Iterable[dict]) -> dic
                                 int(dim) for dim in spec["matrix_view_shape"][-2:]
                             ],
                         }
-                        for spec in matrix_specs[name]
-                    ]
+                        if "path" in spec:
+                            view["path"] = [int(item) for item in spec["path"]]
+                        item["matrix_views"].append(view)
                 elif name in matrix_layouts:
                     layout = matrix_layouts[name]
                     item["matrix_views"] = [
