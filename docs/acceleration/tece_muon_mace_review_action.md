@@ -187,6 +187,20 @@ The review also changes how to interpret current HybridMuon results:
   by train-metrics throughput (`14.49` vs `15.67` updates/s, `0.925x`) with an
   optimizer-step cost about `5.45x` AdamW. This rules out simply removing
   embedding/readout matrices from Muon as the next production recipe.
+- A same-route match-RMS CUEQ 20k ablation was run from committed source
+  `4d55850` in
+  `runs/oc20neb_fullcase200_ef_20k/module-matchrms-4d55850-20260717-20k/`.
+  It kept the full module-declared Muon route and changed only
+  `hybrid_muon_lr_scale_mode=match_rms` with `hybrid_muon_lr_factor=0.1` and
+  `hybrid_muon_match_rms_coeff=0.18`. The result is effectively the same
+  tradeoff as the original full module-Muon run, not a fix for the energy
+  problem. Versus same-run `cueq_adamw`, final energy was `151.22` vs `33.79`
+  meV/atom, final force was `36.16` vs `53.97` meV/A, and best force was
+  `25.16` vs `40.63` meV/A. The train-metrics throughput ratio was `0.880x`
+  and optimizer-step cost was about `8.36x` AdamW. This says the force advantage
+  is robust to match-RMS scaling, but the Stage Two energy recovery problem is
+  not caused only by the old `original` scale mode or by oversized readout
+  matrices.
 - The AdamW-tail run also exposed a checkpoint/evaluation correctness bug: after
   Stage Two changes the optimizer route, result evaluation tried to load the
   pre-Stage-Two checkpoint including optimizer state and correctly hit
