@@ -155,5 +155,8 @@ The review also changes how to interpret current HybridMuon results:
   declared channel blocks drive the gain. If it does not, sweep LR scale mode,
   Muon LR factor, and Stage Two route before broadening the routed parameter set.
 - Muon bulk training followed by lower-LR AdamW tail calibration remains
-  consistent with the review, but should be tested only after the module-routing
-  baseline is measured.
+  consistent with the review. The module-routing baseline has now exposed the
+  energy-calibration failure, so the OC20NEB 20k script supports explicit
+  `hybrid_muon_module_adamw_tail` and `cueq_hybrid_muon_module_adamw_tail`
+  cases that keep module Muon in Stage One and switch Muon-routed groups to
+  AdamW at Stage Two. This ablation is scripted and summarized, but not yet run.

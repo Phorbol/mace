@@ -30,7 +30,7 @@ STAGE1_FORCES_WEIGHT=${MACE_OC20NEB_STAGE1_FORCES_WEIGHT:-100.0}
 STAGE2_ENERGY_WEIGHT=${MACE_OC20NEB_STAGE2_ENERGY_WEIGHT:-100.0}
 STAGE2_FORCES_WEIGHT=${MACE_OC20NEB_STAGE2_FORCES_WEIGHT:-1.0}
 LOSS_PREFACTOR_SCHEDULE=${MACE_OC20NEB_LOSS_PREFACTOR_SCHEDULE:-step_linear}
-CASES=${MACE_OC20NEB_CASES:-adamw,hybrid_muon_module,cueq_adamw,cueq_hybrid_muon_module}
+CASES=${MACE_OC20NEB_CASES:-adamw,hybrid_muon_module,cueq_adamw,cueq_hybrid_muon_module,cueq_hybrid_muon_module_adamw_tail}
 BASE_OPTIMIZER=${MACE_OC20NEB_BASE_OPTIMIZER:-adamw}
 ENFORCE_STATIC_SOURCE=${MACE_OC20NEB_ENFORCE_STATIC_SOURCE:-True}
 COMPILE_BUCKET_ATOMS=${MACE_OC20NEB_COMPILE_BUCKET_ATOMS:-384,512,640,800}
@@ -447,6 +447,11 @@ hybrid_muon_module_args=(
   --hybrid_muon_routing=module
 )
 
+hybrid_muon_module_adamw_tail_args=(
+  "${hybrid_muon_module_args[@]}"
+  --hybrid_muon_stage_two_route=adamw
+)
+
 cueq_args=(
   --enable_cueq=True
 )
@@ -464,10 +469,12 @@ run_selected_case adamw "${extra_args[@]}" "${post_args[@]}"
 run_selected_case hybrid_muon "${extra_args[@]}" "${hybrid_muon_args[@]}" "${post_args[@]}"
 run_selected_case hybrid_muon_tace "${extra_args[@]}" "${hybrid_muon_tace_args[@]}" "${post_args[@]}"
 run_selected_case hybrid_muon_module "${extra_args[@]}" "${hybrid_muon_module_args[@]}" "${post_args[@]}"
+run_selected_case hybrid_muon_module_adamw_tail "${extra_args[@]}" "${hybrid_muon_module_adamw_tail_args[@]}" "${post_args[@]}"
 run_selected_case cueq_adamw "${extra_args[@]}" "${cueq_args[@]}" "${post_args[@]}"
 run_selected_case cueq_hybrid_muon "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_args[@]}" "${post_args[@]}"
 run_selected_case cueq_hybrid_muon_tace "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_tace_args[@]}" "${post_args[@]}"
 run_selected_case cueq_hybrid_muon_module "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_module_args[@]}" "${post_args[@]}"
+run_selected_case cueq_hybrid_muon_module_adamw_tail "${extra_args[@]}" "${cueq_args[@]}" "${hybrid_muon_module_adamw_tail_args[@]}" "${post_args[@]}"
 
 run_selected_case eager "${extra_args[@]}" "${post_args[@]}"
 run_selected_case cueq "${extra_args[@]}" "${cueq_args[@]}" "${post_args[@]}"

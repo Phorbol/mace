@@ -259,7 +259,7 @@ def test_fullcase200_ef20k_demo_defaults_focus_noncompile_cueq_muon_matrix():
 
     assert (
         "MACE_OC20NEB_CASES:-adamw,hybrid_muon_module,cueq_adamw,"
-        "cueq_hybrid_muon_module"
+        "cueq_hybrid_muon_module,cueq_hybrid_muon_module_adamw_tail"
     ) in text
     assert "MACE_OC20NEB_CASES:-eager,compile,cueq,cueq_compile" not in text
     assert "MACE_OC20NEB_COMPILE_PARITY_GRADIENTS:-False" in text
@@ -279,6 +279,17 @@ def test_fullcase200_ef20k_demo_supports_hybrid_muon_module_routing_cases():
     assert '--hybrid_muon_routing=module' in text
     assert "run_selected_case hybrid_muon_module" in text
     assert "run_selected_case cueq_hybrid_muon_module" in text
+
+
+def test_fullcase200_ef20k_demo_supports_module_muon_adamw_tail_cases():
+    sbatch = SCRIPT_ROOT / "fullcase200-ef-20k-demo.sbatch"
+    text = sbatch.read_text()
+
+    assert "hybrid_muon_module_adamw_tail_args=(" in text
+    assert "${hybrid_muon_module_args[@]}" in text
+    assert "--hybrid_muon_stage_two_route=adamw" in text
+    assert "run_selected_case hybrid_muon_module_adamw_tail" in text
+    assert "run_selected_case cueq_hybrid_muon_module_adamw_tail" in text
 
 
 def test_fullcase200_ef20k_demo_supports_hybrid_muon_tace_routing_cases():
@@ -369,7 +380,7 @@ def test_fullcase200_ef_20k_demo_sbatch_targets_current_env_and_compile():
     assert "--no-edge_force_compile_allow_fallback" in text
     assert (
         "MACE_OC20NEB_CASES:-adamw,hybrid_muon_module,cueq_adamw,"
-        "cueq_hybrid_muon_module"
+        "cueq_hybrid_muon_module,cueq_hybrid_muon_module_adamw_tail"
     ) in text
     assert "run_selected_case hybrid_muon" in text
     assert "run_selected_case hybrid_muon_compile" in text
@@ -741,4 +752,59 @@ def test_summarize_fullcase200_ef20k_matrix_compares_cueq_adamw_to_module_muon(t
     assert comparison["seconds_per_epoch_ratio"] == pytest.approx(44.0 / 40.0)
     assert comparison["speedup_vs_baseline"] == pytest.approx(40.0 / 44.0)
     assert comparison["max_fb_memory_delta_mb"] == -4
+
+
+def test_summarize_fullcase200_ef20k_matrix_compares_cueq_adamw_to_module_muon_adamw_tail(tmp_path):
+    summarizer = load_script("summarize_fullcase200_ef20k_matrix.py")
+    root = tmp_path / "matrix_cueq_module_muon_adamw_tail"
+    manifest = {
+        "batch_size": 8,
+        "target_steps": 20000,
+        "train_size": 5000,
+        "max_num_updates": 20000,
+        "stage_two_start_update": 15000,
+        "hybrid_muon_stage_two_route": "keep",
+    }
+    root.mkdir()
+    (root / "manifest.json").write_text(json.dumps(manifest))
+
+    for case_name, epoch_seconds, mae_e, mae_f, fb_memory in (
+        ("cueq_adamw", 40.0, 33.70, 53.88, 10160),
+        ("cueq_hybrid_muon_module_adamw_tail", 43.0, 48.00, 34.00, 10158),
+    ):
+        case_dir = root / case_name
+        log_dir = case_dir / "logs"
+        log_dir.mkdir(parents=True)
+        second = int(epoch_seconds)
+        log_dir.joinpath("train.log").write_text(
+            "2026-07-12 10:20:00.000 INFO: Epoch 0: head: Default, loss=0.12, "
+            f"MAE_E_per_atom= {mae_e:8.2f} meV, MAE_F= {mae_f:8.2f} meV / A\n"
+            f"2026-07-12 10:20:{second:02d}.000 INFO: Epoch 1: head: Default, loss=0.10, "
+            f"MAE_E_per_atom= {mae_e:8.2f} meV, MAE_F= {mae_f:8.2f} meV / A\n"
+        )
+        case_dir.joinpath(f"nvdmon_job-1_{case_name}.log").write_text(
+            "# gpu pwr gtemp mtemp sm mem enc dec mclk pclk pviol tviol fb bar1 ccpm\n"
+            f"0 0 250 45 40 50 20 0 0 877 1380 0 0 0 0 {fb_memory}\n"
+        )
+
+    rows = summarizer.summarize_roots([root])
+    comparisons = summarizer.summarize_pairwise_comparisons(rows)
+
+    candidate = next(
+        row for row in rows if row["case"] == "cueq_hybrid_muon_module_adamw_tail"
+    )
+    assert candidate["hybrid_muon_routing"] == "module"
+    assert candidate["hybrid_muon_stage_two_route"] == "adamw"
+    comparison = next(
+        item
+        for item in comparisons
+        if item["baseline_case"] == "cueq_adamw"
+        and item["candidate_case"] == "cueq_hybrid_muon_module_adamw_tail"
+    )
+    assert comparison["mae_e_delta_mev_atom"] == pytest.approx(14.3)
+    assert comparison["mae_f_delta_mev_a"] == pytest.approx(-19.88)
+    assert comparison["mae_f_ratio"] == pytest.approx(34.0 / 53.88)
+    assert comparison["seconds_per_epoch_ratio"] == pytest.approx(43.0 / 40.0)
+    assert comparison["speedup_vs_baseline"] == pytest.approx(40.0 / 43.0)
+    assert comparison["max_fb_memory_delta_mb"] == -2
 

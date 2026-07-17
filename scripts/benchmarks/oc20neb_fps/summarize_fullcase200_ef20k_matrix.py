@@ -87,6 +87,18 @@ def _hybrid_muon_routing_from_case(
     return manifest.get("hybrid_muon_routing")
 
 
+def _hybrid_muon_stage_two_route_from_case(
+    case_name: str, manifest: dict[str, Any]
+) -> str | None:
+    if "hybrid_muon" not in case_name:
+        return manifest.get("hybrid_muon_stage_two_route")
+    if case_name.endswith("_adamw_tail") or "_adamw_tail" in case_name:
+        return "adamw"
+    if case_name.endswith("_adam_tail") or "_adam_tail" in case_name:
+        return "adam"
+    return manifest.get("hybrid_muon_stage_two_route")
+
+
 def _steps_per_epoch(manifest: dict[str, Any]) -> int | None:
     train_size = manifest.get("train_size")
     batch_size = manifest.get("batch_size")
@@ -281,7 +293,9 @@ def summarize_case(root: Path, case_dir: Path, manifest: dict[str, Any]) -> dict
         ),
         "hybrid_muon_lr_factor": manifest.get("hybrid_muon_lr_factor"),
         "hybrid_muon_stage_two_lr_factor": manifest.get("hybrid_muon_stage_two_lr_factor"),
-        "hybrid_muon_stage_two_route": manifest.get("hybrid_muon_stage_two_route"),
+        "hybrid_muon_stage_two_route": _hybrid_muon_stage_two_route_from_case(
+            case_name, manifest
+        ),
         "hybrid_muon_weight_decay": manifest.get("hybrid_muon_weight_decay"),
         "hybrid_muon_adam_variant": manifest.get("hybrid_muon_adam_variant"),
         "hybrid_muon_lr_scale_mode": manifest.get("hybrid_muon_lr_scale_mode"),
@@ -417,16 +431,20 @@ PAIRWISE_COMPARISONS = (
     ("adamw", "cueq_adamw"),
     ("adamw", "hybrid_muon"),
     ("adamw", "hybrid_muon_module"),
+    ("adamw", "hybrid_muon_module_adamw_tail"),
     ("adamw", "hybrid_muon_tace"),
     ("hybrid_muon", "cueq_hybrid_muon"),
     ("hybrid_muon_module", "cueq_hybrid_muon_module"),
+    ("hybrid_muon_module", "hybrid_muon_module_adamw_tail"),
     ("hybrid_muon_tace", "cueq_hybrid_muon_tace"),
     ("eager", "hybrid_muon"),
     ("cueq_adamw", "cueq_hybrid_muon"),
     ("cueq_adamw", "cueq_hybrid_muon_module"),
+    ("cueq_adamw", "cueq_hybrid_muon_module_adamw_tail"),
     ("cueq_adamw", "cueq_hybrid_muon_tace"),
     ("cueq", "cueq_hybrid_muon"),
     ("cueq", "cueq_hybrid_muon_module"),
+    ("cueq", "cueq_hybrid_muon_module_adamw_tail"),
     ("compile", "hybrid_muon_compile"),
     ("cueq_compile", "cueq_hybrid_muon_compile"),
 )
