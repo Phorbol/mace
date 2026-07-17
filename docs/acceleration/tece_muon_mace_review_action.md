@@ -201,6 +201,20 @@ The review also changes how to interpret current HybridMuon results:
   is robust to match-RMS scaling, but the Stage Two energy recovery problem is
   not caused only by the old `original` scale mode or by oversized readout
   matrices.
+- A lower-Muon-LR CUEQ 20k ablation was run from committed source `da3a934`
+  in `runs/oc20neb_fullcase200_ef_20k/module-lrf003-da3a934-20260717-20k/`.
+  It kept the full module-declared Muon route and changed only
+  `hybrid_muon_lr_factor=0.03` with the default `original` scale mode. This
+  strengthened the force result but did not recover energy. Versus same-run
+  `cueq_adamw`, final energy was `155.58` vs `33.89` meV/atom, final force was
+  `26.83` vs `53.74` meV/A, and best force was `25.07` vs `40.63` meV/A. The
+  train-metrics throughput ratio was `0.912x`, with optimizer-step cost about
+  `7.81x` AdamW. This rules out oversized Muon LR as the main cause of the
+  energy failure. The current evidence says module-Muon is very effective at
+  force fitting under the Stage One-dominated objective, but keeping Muon active
+  through Stage Two prevents energy calibration. The next targeted experiment
+  should combine the lower-LR Muon phase with an AdamW Stage Two route, rather
+  than lowering the Muon LR further or returning to broad routing.
 - The AdamW-tail run also exposed a checkpoint/evaluation correctness bug: after
   Stage Two changes the optimizer route, result evaluation tried to load the
   pre-Stage-Two checkpoint including optimizer state and correctly hit
