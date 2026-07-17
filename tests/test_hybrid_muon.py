@@ -65,6 +65,30 @@ def test_hybrid_muon_routes_only_safe_dense_mace_weights():
     assert next(group for group in groups if group["route"] == "adam")["lr"] == 1.0e-3
 
 
+def test_hybrid_muon_keeps_readout_matrices_on_adam_by_default():
+    readout_matrix = torch.nn.Parameter(torch.ones(64, 64))
+
+    _, summary = build_hybrid_muon_param_groups(
+        [("readouts.0.hidden.weight", readout_matrix)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        muon_mode="slice",
+        routing="mace",
+    )
+
+    assert summary == [
+        {
+            "name": "readouts.0.hidden.weight",
+            "shape": (64, 64),
+            "numel": 4096,
+            "route": "adam",
+            "reason": "sensitive-name",
+        }
+    ]
+
+
 def test_hybrid_muon_rejects_duplicate_trainable_parameter_routes():
     param = torch.nn.Parameter(torch.ones(4, 4))
 
@@ -848,7 +872,7 @@ def test_hybrid_muon_tace_routing_recovers_skip_tp_species_blocks(monkeypatch):
     assert calls == [(3, 4, 4)]
 
 
-def test_hybrid_muon_tace_routing_routes_eligible_mace_matrices_broadly():
+def test_hybrid_muon_tace_routing_defaults_unknown_matrices_to_adamw():
     ambiguous_matrix = torch.nn.Parameter(torch.ones(32, 64))
     equivariant_tensor = torch.nn.Parameter(torch.ones(3, 16, 64))
     embedding_matrix = torch.nn.Parameter(torch.ones(5, 64))
@@ -872,13 +896,10 @@ def test_hybrid_muon_tace_routing_routes_eligible_mace_matrices_broadly():
     )
 
     by_name = {entry["name"]: entry for entry in summary}
-    assert by_name["interactions.0.linear_up.weight"]["route"] == "muon"
-    assert by_name["interactions.0.linear_up.weight"]["reason"] == "tace-matrix-muon"
-    assert by_name["interactions.0.linear_up.weight"]["matrix_shape"] == (32, 64)
-    assert by_name["interactions.0.skip_tp.weight"]["route"] == "muon"
-    assert by_name["interactions.0.skip_tp.weight"]["reason"] == "tace-matrix-muon"
-    assert by_name["interactions.0.skip_tp.weight"]["matrix_batch"] == 3
-    assert by_name["interactions.0.skip_tp.weight"]["matrix_shape"] == (16, 64)
+    assert by_name["interactions.0.linear_up.weight"]["route"] == "adamw"
+    assert by_name["interactions.0.linear_up.weight"]["reason"] == "tace-unknown-adamw"
+    assert by_name["interactions.0.skip_tp.weight"]["route"] == "adamw"
+    assert by_name["interactions.0.skip_tp.weight"]["reason"] == "tace-unknown-adamw"
     assert by_name["node_embedding.linear.weight"]["route"] == "adam"
     assert by_name["node_embedding.linear.weight"]["reason"] == "mace-sensitive-name"
     assert by_name["atomic_energies_fn.weight"]["route"] == "adam"
@@ -918,10 +939,10 @@ def test_hybrid_muon_mace_slice_keeps_symmetric_contractions_on_adam():
     assert groups[0]["route"] == "adam"
 
 
-def test_hybrid_muon_tace_slice_step_updates_rank3_slices_without_flattening(monkeypatch):
+def test_hybrid_muon_tace_keeps_undeclared_rank3_tensors_on_adamw(monkeypatch):
     param = torch.nn.Parameter(torch.randn(2, 3, 4))
     param.grad = torch.randn_like(param)
-    groups, _ = build_hybrid_muon_param_groups(
+    groups, summary = build_hybrid_muon_param_groups(
         [("products.0.symmetric_contractions.contractions.0.weights.0", param)],
         lr=1.0e-3,
         weight_decay=0.0,
@@ -944,7 +965,9 @@ def test_hybrid_muon_tace_slice_step_updates_rank3_slices_without_flattening(mon
 
     optimizer.step()
 
-    assert calls == [(2, 3, 4)]
+    assert summary[0]["route"] == "adamw"
+    assert summary[0]["reason"] == "tace-unknown-adamw"
+    assert calls == []
 
 
 def test_newton_schulz_two_stage_produces_tight_polar_factor():

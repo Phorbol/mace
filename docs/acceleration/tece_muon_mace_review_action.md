@@ -72,10 +72,12 @@ edge-force-virial implementation.
 
 ## Implementation Order After The Running 200k Job
 
-Do not change `mace/tools/hybrid_muon.py` while Slurm job `676304` is between
-its AdamW and HybridMuon cases; changing the checkout could alter the second
-case and invalidate the 200k comparison. After that job is complete or moved to
-a frozen copy, apply these changes:
+Slurm job `676508` now runs the missing broad-TACE HybridMuon 200k leg from a
+frozen detached checkout at commit `4a21a2f`, so current development can proceed
+without changing that experiment source. That running result remains a legacy
+broad-routing stress test, not the final TECE/DPA4 optimizer policy.
+
+After freezing that experiment source, apply these changes:
 
 1. Add semantic fields to optimizer specs, initially backwards-compatible:
    `semantic_axes`, `matrix_structure`, `min_matrix_dim`, `max_aspect_ratio`,
@@ -85,7 +87,8 @@ a frozen copy, apply these changes:
    `expert` when they appear as matrix axes.
 3. Change `routing="tace"` fallback from broad `tace-matrix-muon` to a
    conservative allowlist: module-declared specs, known e3nn flat instruction
-   specs, and safe dense hidden matrices only.
+   specs, and safe dense hidden matrices only. Status: initial fallback removal
+   landed; unknown tensors now default to AdamW.
 4. Prefer `routing="module"` in new experiment scripts and manifests; keep
    `routing="tace"` only for compatibility/ablation runs with an explicit
    warning in route summaries.

@@ -78,6 +78,8 @@ _ADAM_NAME_TOKENS = (
     "atomic_energies",
     "atomic_energy",
     "embedding",
+    "readout",
+    "readouts",
     "selector",
     "core",
     "products",
@@ -90,8 +92,6 @@ _ADAM_NAME_TOKENS = (
 
 _MUON_NAME_TOKENS = (
     "radial",
-    "readout",
-    "readouts",
     "mlp",
     "fitting",
 )
@@ -583,9 +583,17 @@ def _route_parameter(
     if len(effective_shape) < 2:
         return "adam", "effective-rank<2"
     if routing == "tace":
-        if _matrix_view_shape(tuple(int(dim) for dim in param.shape), muon_mode) is None:
-            return "adam", "non-matrix-for-mode"
-        return "muon", "tace-matrix-muon"
+        if (
+            len(effective_shape) == 2
+            and ".conv_tp_weights." in lower
+            and lower.endswith(".weight")
+        ):
+            return "muon", "radial-tp-weight-mlp"
+        if len(effective_shape) == 2 and any(
+            token in lower for token in _MUON_NAME_TOKENS
+        ):
+            return "muon", "safe-dense-name"
+        return "adamw", "tace-unknown-adamw"
     if (
         len(effective_shape) == 2
         and ".conv_tp_weights." in lower

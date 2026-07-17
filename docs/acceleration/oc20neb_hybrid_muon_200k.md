@@ -369,8 +369,11 @@ shortfall: the module-declared CUEQ flat specs might need a smaller Muon LR than
 the radial tensor-product MLP matrices. Commit `2231efe` added
 `--hybrid_muon_tace_module_lr_scale`, an extra positive per-parameter LR
 multiplier that applies only to module-declared Muon specs under
-`routing=tace`. Radial `tace-matrix-muon` dense matrices keep the base
-`hybrid_muon_lr_factor=3.0` setting. Commit `610b900` then made non-default
+`routing=tace`. At the time of those legacy broad-routing runs, radial generic
+TACE dense matrices kept the base `hybrid_muon_lr_factor=3.0` setting. Current
+development has since removed the broad `tace-matrix-muon` fallback; unknown
+tensors now default to AdamW unless declared by module/e3nn specs or a narrow
+safe dense allowlist. Commit `610b900` then made non-default
 per-parameter LR scales visible in the HybridMuon route summary for future runs.
 
 Jobs `676250` and `676251` reran the no-stage, force-focused `1:100` 20k setup
