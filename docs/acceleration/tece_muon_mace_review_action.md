@@ -154,9 +154,28 @@ The review also changes how to interpret current HybridMuon results:
 - If module-declared Muon improves 20k/200k metrics, the next question is which
   declared channel blocks drive the gain. If it does not, sweep LR scale mode,
   Muon LR factor, and Stage Two route before broadening the routed parameter set.
-- Muon bulk training followed by lower-LR AdamW tail calibration remains
-  consistent with the review. The module-routing baseline has now exposed the
-  energy-calibration failure, so the OC20NEB 20k script supports explicit
-  `hybrid_muon_module_adamw_tail` and `cueq_hybrid_muon_module_adamw_tail`
-  cases that keep module Muon in Stage One and switch Muon-routed groups to
-  AdamW at Stage Two. This ablation is scripted and summarized, but not yet run.
+- Muon bulk training followed by an AdamW tail is now measured on the same
+  committed source `ae243d8` in
+  `runs/oc20neb_fullcase200_ef_20k/cueq-module-tail-ae243d8-20260717-20k/`.
+  The `cueq_hybrid_muon_module_adamw_tail` log confirms the intended Stage Two
+  transition at 15k updates with `Switched 1 HybridMuon param group from Muon
+  to AdamW for Stage Two`. The ablation is therefore valid, but the result is a
+  mixed/negative one: final energy improves substantially versus module-Muon
+  keep (`51.97` vs `150.06` meV/atom), yet remains worse than `cueq_adamw`
+  (`33.70` meV/atom), and final force becomes worse than both (`61.64` meV/A
+  versus `36.29` for module-Muon keep and `53.86` for AdamW). The best force
+  before Stage Two remains `25.20` meV/A because the first 12k updates match the
+  module-Muon keep trajectory. AdamW-tail also remains slower than AdamW by
+  train-metrics throughput (`15.12` vs `16.12` updates/s, `0.938x`) while being
+  slightly faster than module-Muon keep (`15.12` vs `14.77` updates/s) after the
+  Stage Two switch reduces optimizer-step cost. This rules out a simple
+  keep-Muon-then-AdamW-tail recipe as the current answer; the next ablation
+  should address Muon LR scale/match-RMS and which declared readout/embedding
+  matrices are allowed to remain on Muon, rather than broadening routing.
+- The AdamW-tail run also exposed a checkpoint/evaluation correctness bug: after
+  Stage Two changes the optimizer route, result evaluation tried to load the
+  pre-Stage-Two checkpoint including optimizer state and correctly hit
+  `HybridMuon route manifest hash mismatch`. Full training resume should keep
+  that strict failure mode, but result evaluation only needs model weights. The
+  checkpoint loader now supports model-only loads, and `run_train.py` uses that
+  path for post-training Stage One/Stage Two evaluation.

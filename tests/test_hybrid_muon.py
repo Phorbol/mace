@@ -1166,6 +1166,58 @@ def test_hybrid_muon_load_state_accepts_own_stage_two_route_switch():
     )
 
 
+def test_checkpoint_model_only_load_skips_hybrid_muon_route_state_after_stage_two():
+    from mace.tools.checkpoint import CheckpointBuilder, CheckpointState
+    from mace.tools.train import _apply_hybrid_muon_stage_two_route
+
+    class DeclaredModule(torch.nn.Module):
+        def __init__(self, initial):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.full((4, 4), initial))
+            self.hybrid_muon_optim_specs = {
+                "weight": OptimSpec(route="muon", matrix_axes=(0, 1))
+            }
+
+    def make_state(initial):
+        model = DeclaredModule(initial)
+        groups, _ = build_hybrid_muon_param_groups(
+            [("block.weight", model.weight)],
+            lr=1.0e-3,
+            weight_decay=1.0e-4,
+            muon_weight_decay=0.0,
+            muon_lr_factor=0.1,
+            routing="module",
+            module_map={"block": model},
+        )
+        optimizer = HybridMuon(groups, lr=1.0e-3)
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
+        return CheckpointState(model, optimizer, scheduler)
+
+    stage_one_state = make_state(1.0)
+    checkpoint = CheckpointBuilder.create_checkpoint(stage_one_state)
+
+    stage_two_state = make_state(2.0)
+    switched = _apply_hybrid_muon_stage_two_route(
+        stage_two_state.optimizer, lr_scheduler=None, route="adamw"
+    )
+
+    assert switched == 1
+    with pytest.raises(ValueError, match="HybridMuon route manifest hash mismatch"):
+        CheckpointBuilder.load_checkpoint(stage_two_state, checkpoint, strict=False)
+
+    CheckpointBuilder.load_checkpoint(
+        stage_two_state,
+        checkpoint,
+        strict=False,
+        load_optimizer=False,
+        load_lr_scheduler=False,
+    )
+
+    assert torch.equal(stage_two_state.model.weight, stage_one_state.model.weight)
+    assert stage_two_state.optimizer.param_groups[0]["route"] == "adam"
+    assert stage_two_state.optimizer.param_groups[0]["adam_variant"] == "adamw"
+
+
 def test_hybrid_muon_load_state_rejects_stage_two_matrix_view_drift():
     from mace.tools.train import _apply_hybrid_muon_stage_two_route
 

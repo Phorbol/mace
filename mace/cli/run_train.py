@@ -1302,6 +1302,8 @@ def run(args) -> None:
             state=tools.CheckpointState(model, optimizer, lr_scheduler),
             swa=swa_eval,
             device=device,
+            load_optimizer=False,
+            load_lr_scheduler=False,
         )
         model.to(device)
         if args.distributed:

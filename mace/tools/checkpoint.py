@@ -38,11 +38,17 @@ class CheckpointBuilder:
 
     @staticmethod
     def load_checkpoint(
-        state: CheckpointState, checkpoint: Checkpoint, strict: bool
+        state: CheckpointState,
+        checkpoint: Checkpoint,
+        strict: bool,
+        load_optimizer: bool = True,
+        load_lr_scheduler: bool = True,
     ) -> None:
         state.model.load_state_dict(checkpoint["model"], strict=strict)  # type: ignore
-        state.optimizer.load_state_dict(checkpoint["optimizer"])
-        state.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+        if load_optimizer:
+            state.optimizer.load_state_dict(checkpoint["optimizer"])
+        if load_lr_scheduler:
+            state.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
 
 
 @dataclasses.dataclass
@@ -362,13 +368,21 @@ class CheckpointHandler:
         swa: Optional[bool] = False,
         device: Optional[torch.device] = None,
         strict=False,
+        load_optimizer: bool = True,
+        load_lr_scheduler: bool = True,
     ) -> Optional[int]:
         result = self.io.load_latest(swa=swa, device=device)
         if result is None:
             return None
 
         checkpoint, epochs = result
-        self.builder.load_checkpoint(state=state, checkpoint=checkpoint, strict=strict)
+        self.builder.load_checkpoint(
+            state=state,
+            checkpoint=checkpoint,
+            strict=strict,
+            load_optimizer=load_optimizer,
+            load_lr_scheduler=load_lr_scheduler,
+        )
         return epochs
 
     def load_latest_with_metadata(
@@ -378,6 +392,8 @@ class CheckpointHandler:
         device: Optional[torch.device] = None,
         strict=False,
         prefer_update: bool = False,
+        load_optimizer: bool = True,
+        load_lr_scheduler: bool = True,
     ) -> Optional[CheckpointLoadResult]:
         result = self.io.load_latest_with_metadata(
             swa=swa, device=device, prefer_update=prefer_update
@@ -386,7 +402,13 @@ class CheckpointHandler:
             return None
 
         checkpoint, checkpoint_result = result
-        self.builder.load_checkpoint(state=state, checkpoint=checkpoint, strict=strict)
+        self.builder.load_checkpoint(
+            state=state,
+            checkpoint=checkpoint,
+            strict=strict,
+            load_optimizer=load_optimizer,
+            load_lr_scheduler=load_lr_scheduler,
+        )
         return checkpoint_result
 
     def load(
