@@ -134,11 +134,20 @@ The review also changes how to interpret current HybridMuon results:
 
 - Full broad `routing="tace"` experiments are useful as stress tests, but they
   should not be treated as the final TECE/DPA4 optimizer policy.
+- The completed no-stage 200k broad-TACE stress test supports that caution:
+  `cueq_adamw` reached 45.01 meV/atom energy MAE and 28.00 meV/A force MAE,
+  while `cueq_hybrid_muon_tace` reached 77.78 meV/atom and 41.18 meV/A and ran
+  about 6.6% slower per update.
 - The more defensible comparison is `routing="module"` or a conservative TACE
-  route with explicit semantic manifests.
-- If broad TACE Muon improves 20k/200k metrics, the next question is which
-  declared channel blocks drive the gain, not whether every matrix-like tensor
-  should stay on Muon.
-- Muon bulk training followed by lower-LR AdamW tail calibration is consistent
-  with the review and should be tested after the no-stage 200k AdamW vs
-  HybridMuon run finishes.
+  route with explicit semantic manifests. New default OC20NEB demo cases now use
+  explicit `hybrid_muon_module` and `cueq_hybrid_muon_module` names so summaries
+  cannot be confused with deprecated broad routing.
+- The next review-aligned 20k CUEQ comparison should be
+  `cueq_adamw` vs `cueq_hybrid_muon_module`, Stage One `E:F=1:100`, Stage Two
+  at 15k updates with `E:F=100:1`, using a committed source tree.
+- If module-declared Muon improves 20k/200k metrics, the next question is which
+  declared channel blocks drive the gain. If it does not, sweep LR scale mode,
+  Muon LR factor, and Stage Two route before broadening the routed parameter set.
+- Muon bulk training followed by lower-LR AdamW tail calibration remains
+  consistent with the review, but should be tested only after the module-routing
+  baseline is measured.
