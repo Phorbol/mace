@@ -81,10 +81,12 @@ After freezing that experiment source, apply these changes:
 
 1. Add semantic fields to optimizer specs, initially backwards-compatible:
    `semantic_axes`, `matrix_structure`, `min_matrix_dim`, `max_aspect_ratio`,
-   and `spec_version`.
+   and `spec_version`. Status: fields landed; `min_matrix_dim` is explicit
+   opt-in by default for backward compatibility with existing module specs.
 2. Add validation rules that reject Muon for semantic axes such as `degree`,
    `m`, `parity`, `path`, `correlation`, `species`, `focus`, `head`, and
-   `expert` when they appear as matrix axes.
+   `expert` when they appear as matrix axes. Status: initial validation landed,
+   along with non-real matrix-structure rejection and explicit size/aspect gates.
 3. Change `routing="tace"` fallback from broad `tace-matrix-muon` to a
    conservative allowlist: module-declared specs, known e3nn flat instruction
    specs, and safe dense hidden matrices only. Status: initial fallback removal

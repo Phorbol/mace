@@ -29,16 +29,32 @@ class OptimSpec:
     matrix_axes: tuple[int, int] | None = None
     batch_axes: tuple[int, ...] = ()
     slice_specs: tuple[dict, ...] = ()
+    semantic_axes: tuple[str, ...] = ()
+    matrix_structure: str = "real"
+    min_matrix_dim: int = 1
+    max_aspect_ratio: float | None = None
     lr_scale: float = 1.0
     weight_decay: float | None = None
+    spec_version: int = 1
 
     def __post_init__(self) -> None:
         if self.route not in {"muon", "adam", "adamw"}:
             raise ValueError("OptimSpec.route must be 'muon', 'adam', or 'adamw'")
+        if self.matrix_structure not in _OPTIM_SPEC_MATRIX_STRUCTURES:
+            raise ValueError(
+                "OptimSpec.matrix_structure must be one of "
+                f"{sorted(_OPTIM_SPEC_MATRIX_STRUCTURES)}"
+            )
+        if self.min_matrix_dim <= 0:
+            raise ValueError("OptimSpec.min_matrix_dim must be positive")
+        if self.max_aspect_ratio is not None and self.max_aspect_ratio <= 0.0:
+            raise ValueError("OptimSpec.max_aspect_ratio must be positive")
         if self.lr_scale <= 0.0:
             raise ValueError("OptimSpec.lr_scale must be positive")
         if self.weight_decay is not None and self.weight_decay < 0.0:
             raise ValueError("OptimSpec.weight_decay must be non-negative")
+        if self.spec_version <= 0:
+            raise ValueError("OptimSpec.spec_version must be positive")
 
 
 @dataclass(frozen=True)
@@ -105,6 +121,37 @@ _MUON_MODES = {"2d", "slice"}
 _ROUTINGS = {"mace", "tace", "module"}
 _ADAM_VARIANTS = {"adam", "adamw"}
 _MUON_LR_SCALE_MODES = {"original", "match_rms", "none"}
+_OPTIM_SPEC_MATRIX_STRUCTURES = {
+    "real",
+    "complex",
+    "shared_complex",
+    "diagonal",
+    "scalar_coeff",
+}
+_FORBIDDEN_MUON_MATRIX_SEMANTIC_AXES = {
+    "degree",
+    "ell",
+    "l",
+    "m",
+    "parity",
+    "path",
+    "correlation",
+    "species",
+    "focus",
+    "head",
+    "expert",
+}
+_ALLOWED_MUON_MATRIX_SEMANTIC_AXES = {
+    "channel",
+    "channel_in",
+    "channel_out",
+    "multiplicity",
+    "multiplicity_in",
+    "multiplicity_out",
+    "feature",
+    "feature_in",
+    "feature_out",
+}
 _MACE_HARD_ADAM_NAME_TOKENS = (
     "bias",
     "norm",
@@ -188,6 +235,49 @@ def _normalize_axis(axis: int, ndim: int, *, label: str) -> int:
     if axis < 0 or axis >= ndim:
         raise ValueError(f"{label} axis {axis} out of bounds for rank-{ndim} tensor")
     return axis
+
+
+def _validate_optim_spec_muon_contract(
+    name: str, param: torch.nn.Parameter, optim_spec: OptimSpec
+) -> None:
+    if optim_spec.route != "muon":
+        return
+    if optim_spec.matrix_structure != "real":
+        raise ValueError(
+            f"OptimSpec for {name!r} has matrix_structure="
+            f"{optim_spec.matrix_structure!r}; route it to AdamW until a "
+            "matching Muon structure is implemented"
+        )
+    if not optim_spec.semantic_axes:
+        return
+    ndim = int(param.ndim)
+    if len(optim_spec.semantic_axes) != ndim:
+        raise ValueError(
+            f"OptimSpec.semantic_axes for {name!r} must have length {ndim}, "
+            f"got {len(optim_spec.semantic_axes)}"
+        )
+    if optim_spec.matrix_axes is None:
+        return
+    matrix_axes = tuple(
+        _normalize_axis(axis, ndim, label="matrix_axes")
+        for axis in optim_spec.matrix_axes
+    )
+    for axis in matrix_axes:
+        semantic_axis = str(optim_spec.semantic_axes[axis]).strip()
+        if not semantic_axis:
+            raise ValueError(
+                f"OptimSpec.semantic_axes for {name!r} includes an empty axis label"
+            )
+        if semantic_axis in _FORBIDDEN_MUON_MATRIX_SEMANTIC_AXES:
+            raise ValueError(
+                f"OptimSpec for {name!r} cannot use semantic axis "
+                f"{semantic_axis!r} as a Muon matrix axis"
+            )
+        if semantic_axis not in _ALLOWED_MUON_MATRIX_SEMANTIC_AXES:
+            raise ValueError(
+                f"OptimSpec for {name!r} cannot route unknown semantic axis "
+                f"{semantic_axis!r} to Muon"
+            )
 
 
 def _normalize_optim_spec_slice_specs(
@@ -559,6 +649,42 @@ def _spec_summary_shape(specs: list[dict]) -> tuple[int, tuple[int, int] | None]
     return matrix_batch, matrix_shape
 
 
+def _optim_spec_matrix_gate_reason(
+    param: torch.nn.Parameter,
+    optim_spec: OptimSpec,
+    *,
+    flat_specs: list[dict] | None,
+    matrix_layout: dict | None,
+    muon_mode: str,
+) -> str | None:
+    if optim_spec.route != "muon":
+        return None
+    matrix_shapes: list[tuple[int, int]] = []
+    if flat_specs is not None:
+        matrix_shapes.extend(
+            tuple(int(dim) for dim in spec["matrix_view_shape"][-2:])
+            for spec in flat_specs
+        )
+    elif matrix_layout is not None:
+        matrix_shapes.append(
+            tuple(int(dim) for dim in matrix_layout["matrix_view_shape"][-2:])
+        )
+    else:
+        matrix_view = _matrix_view_shape(tuple(int(dim) for dim in param.shape), muon_mode)
+        if matrix_view is not None:
+            matrix_shapes.append(tuple(int(dim) for dim in matrix_view[-2:]))
+    for rows, cols in matrix_shapes:
+        short_side = min(rows, cols)
+        long_side = max(rows, cols)
+        if short_side < int(optim_spec.min_matrix_dim):
+            return "module-matrix-dim-gate"
+        if optim_spec.max_aspect_ratio is not None:
+            aspect_ratio = long_side / max(short_side, 1)
+            if aspect_ratio > float(optim_spec.max_aspect_ratio):
+                return "module-matrix-aspect-gate"
+    return None
+
+
 def _route_parameter(
     name: str,
     param: torch.nn.Parameter,
@@ -703,6 +829,7 @@ def build_hybrid_muon_param_groups(
                         adam_variant_override = "adamw"
                 else:
                     route, reason = optim_spec.route, "module-declared"
+                    _validate_optim_spec_muon_contract(name, param, optim_spec)
                     flat_specs = _normalize_optim_spec_slice_specs(name, param, optim_spec)
                     matrix_layout = _optim_spec_matrix_layout(name, param, optim_spec)
                     if flat_specs is not None:
@@ -723,6 +850,7 @@ def build_hybrid_muon_param_groups(
                         adam_variant_override = "adamw"
                     else:
                         route, reason = optim_spec.route, "module-declared"
+                        _validate_optim_spec_muon_contract(name, param, optim_spec)
                         if optim_spec.route == "muon":
                             effective_muon_lr_scale = (
                                 float(optim_spec.lr_scale) * float(tace_module_lr_scale)
@@ -751,6 +879,21 @@ def build_hybrid_muon_param_groups(
                     route, reason = _route_parameter(
                         name, param, muon_mode=muon_mode, routing=routing
                     )
+        if route == "muon" and optim_spec is not None:
+            gate_reason = _optim_spec_matrix_gate_reason(
+                param,
+                optim_spec,
+                flat_specs=flat_specs,
+                matrix_layout=matrix_layout,
+                muon_mode=muon_mode,
+            )
+            if gate_reason is not None:
+                route, reason = "adamw", gate_reason
+                adam_variant_override = "adamw"
+                effective_muon_lr_scale = None
+                flat_specs = None
+                matrix_layout = None
+                muon_matrix_specs.pop(name, None)
         if route == "frozen":
             continue
         if route == "muon" and _is_sharded_or_distributed_parameter(param):

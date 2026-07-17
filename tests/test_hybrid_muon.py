@@ -1,6 +1,7 @@
 import argparse
 import math
 
+import pytest
 import torch
 
 from mace.tools.scripts_utils import get_optimizer
@@ -540,6 +541,101 @@ def test_hybrid_muon_module_routing_accepts_ancestor_declarations():
     adam_group = next(group for group in groups if group["route"] == "adam")
     assert set(muon_group["param_matrix_layouts"]) == {"block.linear.weight"}
     assert adam_group["param_names"] == ["block.linear.bias"]
+
+
+def test_hybrid_muon_optim_spec_rejects_forbidden_semantic_matrix_axes():
+    class BadSemanticModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(2, 4, 4))
+            self.hybrid_muon_optim_specs = {
+                "weight": OptimSpec(
+                    route="muon",
+                    matrix_axes=(0, 2),
+                    batch_axes=(1,),
+                    semantic_axes=("degree", "path", "channel_out"),
+                )
+            }
+
+    module = BadSemanticModule()
+
+    with pytest.raises(ValueError, match="semantic axis 'degree'.*matrix axis"):
+        build_hybrid_muon_param_groups(
+            [("block.weight", module.weight)],
+            lr=1.0e-3,
+            weight_decay=1.0e-4,
+            muon_weight_decay=0.0,
+            muon_lr_factor=0.1,
+            routing="module",
+            module_map={"block": module},
+        )
+
+
+def test_hybrid_muon_optim_spec_rejects_unsupported_matrix_structures():
+    for structure in ("complex", "shared_complex", "diagonal", "scalar_coeff"):
+        class StructuredModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight = torch.nn.Parameter(torch.ones(8, 8))
+                self.hybrid_muon_optim_specs = {
+                    "weight": OptimSpec(
+                        route="muon",
+                        matrix_axes=(0, 1),
+                        matrix_structure=structure,
+                    )
+                }
+
+        module = StructuredModule()
+
+        with pytest.raises(ValueError, match=f"matrix_structure={structure!r}"):
+            build_hybrid_muon_param_groups(
+                [(f"block_{structure}.weight", module.weight)],
+                lr=1.0e-3,
+                weight_decay=1.0e-4,
+                muon_weight_decay=0.0,
+                muon_lr_factor=0.1,
+                routing="module",
+                module_map={f"block_{structure}": module},
+            )
+
+
+def test_hybrid_muon_optim_spec_matrix_size_gates_fallback_to_adamw():
+    class SmallOrSkinnyModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.small = torch.nn.Parameter(torch.ones(4, 4))
+            self.skinny = torch.nn.Parameter(torch.ones(8, 40))
+            self.hybrid_muon_optim_specs = {
+                "small": OptimSpec(
+                    route="muon",
+                    matrix_axes=(0, 1),
+                    min_matrix_dim=8,
+                ),
+                "skinny": OptimSpec(
+                    route="muon",
+                    matrix_axes=(0, 1),
+                    max_aspect_ratio=4.0,
+                ),
+            }
+
+    module = SmallOrSkinnyModule()
+    groups, summary = build_hybrid_muon_param_groups(
+        [(f"block.{name}", param) for name, param in module.named_parameters()],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"block": module},
+    )
+
+    by_name = {entry["name"]: entry for entry in summary}
+    assert by_name["block.small"]["route"] == "adamw"
+    assert by_name["block.small"]["reason"] == "module-matrix-dim-gate"
+    assert by_name["block.skinny"]["route"] == "adamw"
+    assert by_name["block.skinny"]["reason"] == "module-matrix-aspect-gate"
+    assert {group["route"] for group in groups} == {"adam"}
+    assert next(group for group in groups)["adam_variant"] == "adamw"
 
 
 def test_hybrid_muon_module_routing_uses_radial_mlp_declarations():
