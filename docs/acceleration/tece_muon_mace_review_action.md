@@ -172,10 +172,27 @@ The review also changes how to interpret current HybridMuon results:
   keep-Muon-then-AdamW-tail recipe as the current answer; the next ablation
   should address Muon LR scale/match-RMS and which declared readout/embedding
   matrices are allowed to remain on Muon, rather than broadening routing.
+- A follow-up core-filtered CUEQ 20k ablation was run from committed source
+  `41ba6fc` in
+  `runs/oc20neb_fullcase200_ef_20k/core-filter-41ba6fc-20260717-20k/`. It used
+  `routing=tace` only as the existing include-filter mechanism with
+  `hybrid_muon_tace_module_include=interactions.*,products.*`. The route
+  manifest confirms the intended filtered route: 16 Muon tensors, all under
+  `interactions.*` or `products.*.linear.weight`; `node_embedding.linear.weight`
+  and all `readouts.*` weights were Adam-routed. This isolated core route did
+  not solve the optimizer issue. Versus same-commit `cueq_adamw`, final energy
+  was `107.59` vs `33.73` meV/atom and final force was `58.32` vs `53.88`
+  meV/A. It retained only a weakened early force advantage (`36.82` best force
+  vs AdamW `40.63`, much worse than full module-Muon's `25.20`) and ran slower
+  by train-metrics throughput (`14.49` vs `15.67` updates/s, `0.925x`) with an
+  optimizer-step cost about `5.45x` AdamW. This rules out simply removing
+  embedding/readout matrices from Muon as the next production recipe.
 - The AdamW-tail run also exposed a checkpoint/evaluation correctness bug: after
   Stage Two changes the optimizer route, result evaluation tried to load the
   pre-Stage-Two checkpoint including optimizer state and correctly hit
   `HybridMuon route manifest hash mismatch`. Full training resume should keep
   that strict failure mode, but result evaluation only needs model weights. The
   checkpoint loader now supports model-only loads, and `run_train.py` uses that
-  path for post-training Stage One/Stage Two evaluation.
+  path for post-training Stage One/Stage Two evaluation. The later core-filter
+  run completed both AdamW and HybridMuon post-training result evaluation without
+  this failure, exercising the fix on the live OC20NEB path.
