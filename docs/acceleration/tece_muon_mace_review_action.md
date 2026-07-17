@@ -25,9 +25,10 @@ HybridMuon already has several correctness fixes and useful building blocks:
   Magma-lite warmup controls, per-parameter LR scales, and DTensor/sharded
   rejection are present.
 
-The main remaining issue is semantic, not mechanical: `routing="tace"` still
-falls back to `tace-matrix-muon` for any matrix-like tensor that survives the
-MACE hard Adam name exclusions. That is too broad for TECE/TACE/DPA4 semantics.
+The main remaining issue is semantic coverage, not mechanical plumbing:
+`routing="tace"` no longer falls back to a broad matrix-like Muon route, but
+the module-declared route contract still needs broader architecture snapshots
+and future complex-Muon support before TECE/TACE/DPA4 semantics are complete.
 
 ## Accepted Review Conclusions
 
@@ -105,6 +106,8 @@ After freezing that experiment source, apply these changes:
    route manifest/hash landed in `HybridMuon.state_dict()`; `load_state_dict()`
    now rejects saved route hashes that differ from the current optimizer route,
    except for its own recorded Stage Two Muon-to-Adam/AdamW route transition;
+   Stage Two manifests retain former-Muon matrix views so slice/layout drift is
+   still rejected on resume;
    `get_optimizer()` now writes a rank-0 JSON route manifest artifact under
    `log_dir` (or `model_dir`) for each HybridMuon run; module-declared
    `OptimSpec.spec_version` is included per parameter in route manifests.

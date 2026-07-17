@@ -1262,6 +1262,10 @@ def _manifest_allows_stage_two_route_switch(
             and saved_item.get("group_route") == "adam"
         ):
             return False
+        if saved_item.get("matrix_views") != current_item.get("matrix_views"):
+            return False
+        if saved_item.get("muon_mode") != current_item.get("muon_mode"):
+            return False
     return True
 
 
@@ -1314,7 +1318,10 @@ def _hybrid_muon_route_manifest_from_groups(param_groups: Iterable[dict]) -> dic
                 item["module_type"] = str(module_types[name])
             if name in optim_spec_versions:
                 item["optim_spec_version"] = int(optim_spec_versions[name])
-            if parameter_route == "muon":
+            records_muon_matrix_views = parameter_route == "muon" or bool(
+                group.get("hybrid_muon_stage_two_route_applied", False)
+            )
+            if records_muon_matrix_views:
                 if name in matrix_specs:
                     item["matrix_views"] = []
                     for spec in matrix_specs[name]:
@@ -1353,7 +1360,10 @@ def _hybrid_muon_route_manifest_from_groups(param_groups: Iterable[dict]) -> dic
                                 "shape": [int(dim) for dim in matrix_view[-2:]],
                             }
                         ]
-                item["muon_mode"] = muon_mode
+                if item["matrix_views"]:
+                    item["muon_mode"] = muon_mode
+                    if parameter_route != "muon":
+                        item["stage_two_from_route"] = "muon"
             parameters[name] = item
     return {
         "spec_version": 1,

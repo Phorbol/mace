@@ -1076,6 +1076,77 @@ def test_hybrid_muon_load_state_accepts_own_stage_two_route_switch():
     )
 
 
+def test_hybrid_muon_load_state_rejects_stage_two_matrix_view_drift():
+    from mace.tools.train import _apply_hybrid_muon_stage_two_route
+
+    class SliceDeclaredModule(torch.nn.Module):
+        def __init__(self, slice_specs):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(12))
+            self.hybrid_muon_optim_specs = {
+                "weight": OptimSpec(route="muon", slice_specs=tuple(slice_specs))
+            }
+
+    source_specs = (
+        {
+            "offset": 0,
+            "numel": 6,
+            "matrix_view_shape": (1, 2, 3),
+            "path": (0, 1, 2),
+        },
+        {
+            "offset": 6,
+            "numel": 6,
+            "matrix_view_shape": (1, 3, 2),
+            "path": (1, 2, 3),
+        },
+    )
+    drifted_specs = (
+        {
+            "offset": 0,
+            "numel": 6,
+            "matrix_view_shape": (1, 3, 2),
+            "path": (0, 1, 2),
+        },
+        {
+            "offset": 6,
+            "numel": 6,
+            "matrix_view_shape": (1, 2, 3),
+            "path": (1, 2, 3),
+        },
+    )
+    source = SliceDeclaredModule(source_specs)
+    source_groups, _ = build_hybrid_muon_param_groups(
+        [("block.weight", source.weight)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"block": source},
+    )
+    source_optimizer = HybridMuon(source_groups, lr=1.0e-3)
+    _apply_hybrid_muon_stage_two_route(
+        source_optimizer, lr_scheduler=None, route="adamw"
+    )
+    checkpoint = source_optimizer.state_dict()
+
+    drifted = SliceDeclaredModule(drifted_specs)
+    drifted_groups, _ = build_hybrid_muon_param_groups(
+        [("block.weight", drifted.weight)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"block": drifted},
+    )
+    drifted_optimizer = HybridMuon(drifted_groups, lr=1.0e-3)
+
+    with pytest.raises(ValueError, match="HybridMuon route manifest hash mismatch"):
+        drifted_optimizer.load_state_dict(checkpoint)
+
+
 def test_hybrid_muon_load_state_rejects_route_manifest_drift():
     class SourceModule(torch.nn.Module):
         def __init__(self):
