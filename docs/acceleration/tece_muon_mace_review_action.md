@@ -215,6 +215,23 @@ The review also changes how to interpret current HybridMuon results:
   through Stage Two prevents energy calibration. The next targeted experiment
   should combine the lower-LR Muon phase with an AdamW Stage Two route, rather
   than lowering the Muon LR further or returning to broad routing.
+- The lower-LR Muon plus AdamW-tail follow-up was run from committed source
+  `1999d84` in
+  `runs/oc20neb_fullcase200_ef_20k/module-lrf003-tail-1999d84-20260717-20k/`.
+  The candidate log confirms the intended transition with `Switched 1
+  HybridMuon param group from Muon to AdamW for Stage Two`, and the comparison
+  artifact records `hybrid_muon_stage_two_route=adamw`. It recovers energy
+  relative to keeping low-LR Muon through Stage Two, but it loses the force
+  advantage: final energy/force were `61.22`/`62.00` versus same-run AdamW
+  `33.83`/`53.94` meV units, while best force before Stage Two remained
+  `25.07` vs AdamW `40.63` meV/A. Throughput was `0.925x` AdamW and
+  optimizer-step cost was about `6.14x`. This is another negative production
+  recipe: lower-LR Muon is excellent for the Stage One force objective, but a
+  hard AdamW switch at 15k updates still cannot preserve that force advantage
+  while matching AdamW energy. The next useful scheduler/loss experiment should
+  change the Stage Two dynamics itself, such as a smoother or earlier energy
+  prefactor transition, rather than only changing Muon LR or route at the same
+  hard 15k boundary.
 - The AdamW-tail run also exposed a checkpoint/evaluation correctness bug: after
   Stage Two changes the optimizer route, result evaluation tried to load the
   pre-Stage-Two checkpoint including optimizer state and correctly hit
