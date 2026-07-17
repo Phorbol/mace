@@ -106,7 +106,10 @@ After freezing that experiment source, apply these changes:
    flat weights, and any future TACE/TECE/DPA4 modules. Status: initial MACE
    safe-default route manifest snapshot landed with per-parameter reason and
    owner module type recorded in the checkpoint manifest; e3nn flat-weight path
-   metadata is now recorded as `[instruction_index, i_in, i_out]` in matrix views.
+   metadata is now recorded as `[instruction_index, i_in, i_out]` in matrix views;
+   module-declared CUEQ-like slice specs are snapshot as `module_slice_spec`
+   views with path metadata so they are distinguishable from e3nn-reconstructed
+   flat specs on checkpoint resume.
 7. Only after the Muon route contract is stable, revisit edge-force-virial:
    document edge-vector sign, add explicit `edge_vec`, `shifts`, `cell`, and PBC
    inputs, and validate force/virial signs with position and strain finite

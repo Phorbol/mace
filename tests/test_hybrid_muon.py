@@ -294,6 +294,7 @@ def test_hybrid_muon_tace_routing_uses_cueq_module_slice_specs():
                 "offset": 0,
                 "numel": 6,
                 "matrix_view_shape": (1, 2, 3),
+                "source": "module_slice_spec",
             }
         ]
     }
@@ -819,8 +820,18 @@ def test_hybrid_muon_module_routing_uses_declared_slice_specs(monkeypatch):
     )
     assert runtime_group["matrix_specs"] == {
         "interactions.0.flat.weight": [
-            {"offset": 0, "numel": 6, "matrix_view_shape": (1, 2, 3)},
-            {"offset": 6, "numel": 4, "matrix_view_shape": (1, 2, 2)},
+            {
+                "offset": 0,
+                "numel": 6,
+                "matrix_view_shape": (1, 2, 3),
+                "source": "module_slice_spec",
+            },
+            {
+                "offset": 6,
+                "numel": 4,
+                "matrix_view_shape": (1, 2, 2),
+                "source": "module_slice_spec",
+            },
         ]
     }
     assert "matrix_specs" not in next(
@@ -881,6 +892,66 @@ def test_hybrid_muon_state_dict_contains_route_manifest_hash():
     )
     assert manifest["parameters"]["block.weight"]["matrix_views"] == [
         {"kind": "layout", "shape": [4, 4]}
+    ]
+
+
+def test_hybrid_muon_cueq_slice_route_manifest_records_module_spec_source():
+    class FakeCueqLinear(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.arange(12.0).reshape(1, 12))
+            self.hybrid_muon_optim_specs = {
+                "weight": OptimSpec(
+                    route="muon",
+                    slice_specs=(
+                        {
+                            "offset": 0,
+                            "numel": 6,
+                            "matrix_view_shape": (1, 2, 3),
+                            "path": (0, 1, 2),
+                        },
+                        {
+                            "offset": 6,
+                            "numel": 6,
+                            "matrix_view_shape": (1, 3, 2),
+                            "path": (1, 2, 3),
+                        },
+                    ),
+                )
+            }
+
+    module = FakeCueqLinear()
+    groups, _ = build_hybrid_muon_param_groups(
+        [("interactions.0.cueq_linear.weight", module.weight)],
+        lr=1.0e-3,
+        weight_decay=1.0e-4,
+        muon_weight_decay=0.0,
+        muon_lr_factor=0.1,
+        routing="module",
+        module_map={"interactions.0.cueq_linear": module},
+    )
+    manifest = HybridMuon(groups, lr=1.0e-3).state_dict()[
+        "hybrid_muon_route_manifest"
+    ]
+    parameter = manifest["parameters"]["interactions.0.cueq_linear.weight"]
+
+    assert parameter["reason"] == "module-declared"
+    assert parameter["module_type"].endswith("FakeCueqLinear")
+    assert parameter["matrix_views"] == [
+        {
+            "kind": "module_slice_spec",
+            "offset": 0,
+            "numel": 6,
+            "shape": [2, 3],
+            "path": [0, 1, 2],
+        },
+        {
+            "kind": "module_slice_spec",
+            "offset": 6,
+            "numel": 6,
+            "shape": [3, 2],
+            "path": [1, 2, 3],
+        },
     ]
 
 

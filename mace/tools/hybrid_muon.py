@@ -332,6 +332,7 @@ def _normalize_optim_spec_slice_specs(
             "offset": offset,
             "numel": numel,
             "matrix_view_shape": matrix_view_shape,
+            "source": "module_slice_spec",
         }
         if "path" in raw_spec:
             path = tuple(int(item) for item in raw_spec["path"])
@@ -1248,8 +1249,11 @@ def _hybrid_muon_route_manifest_from_groups(param_groups: Iterable[dict]) -> dic
                 if name in matrix_specs:
                     item["matrix_views"] = []
                     for spec in matrix_specs[name]:
+                        view_kind = str(spec.get("source", "flat_spec"))
+                        if view_kind not in {"flat_spec", "module_slice_spec"}:
+                            view_kind = "flat_spec"
                         view = {
-                            "kind": "flat_spec",
+                            "kind": view_kind,
                             "offset": int(spec["offset"]),
                             "numel": int(spec["numel"]),
                             "shape": [
