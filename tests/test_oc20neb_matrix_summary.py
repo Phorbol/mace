@@ -30,10 +30,15 @@ def test_summarize_case_reports_update_runtime_and_manifest_metadata(tmp_path):
         "batch_size": 8,
         "scheduler": "WSD",
         "lr_scheduler_interval": "step",
+        "lr_wsd_warmup_steps": 600,
         "lr_wsd_warmup_ratio": 0.03,
+        "lr_wsd_warmup_start_factor": 0.1,
         "lr_wsd_stop_lr_ratio": 0.001,
         "lr_wsd_decay_phase_ratio": 0.1,
         "lr_wsd_decay_type": "inverse_linear",
+        "loss_prefactor_schedule": "step_linear",
+        "loss_prefactor_start_update": 15000,
+        "loss_prefactor_end_update": 20000,
         "lr": 0.001,
         "weight_decay": 0.001,
         "hybrid_muon_mode": "2d",
@@ -58,6 +63,11 @@ def test_summarize_case_reports_update_runtime_and_manifest_metadata(tmp_path):
     assert row["steps_per_epoch"] == 625
     assert row["scheduler"] == "WSD"
     assert row["lr_scheduler_interval"] == "step"
+    assert row["lr_wsd_warmup_steps"] == 600
+    assert row["lr_wsd_warmup_start_factor"] == 0.1
+    assert row["loss_prefactor_schedule"] == "step_linear"
+    assert row["loss_prefactor_start_update"] == 15000
+    assert row["loss_prefactor_end_update"] == 20000
     assert row["lr"] == 0.001
     assert row["weight_decay"] == 0.001
     assert row["hybrid_muon_adam_variant"] == "adamw"
